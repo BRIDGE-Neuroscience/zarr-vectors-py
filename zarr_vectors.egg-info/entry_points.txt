@@ -1,0 +1,2 @@
+[console_scripts]
+zarr-vectors = zarr_vectors.cli.main:main

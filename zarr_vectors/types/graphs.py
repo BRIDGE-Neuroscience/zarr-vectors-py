@@ -64,11 +64,14 @@ from zarr_vectors.spatial.boundary import (
     partition_edges,
 )
 from zarr_vectors.spatial.chunking import (
+    assign_bins,
     assign_chunks,
     chunks_intersecting_bbox,
     compute_bounds,
+    group_bins_by_chunk,
 )
 from zarr_vectors.typing import (
+    BinShape,
     BoundingBox,
     ChunkCoords,
     ChunkShape,
@@ -87,6 +90,7 @@ def write_graph(
     edges: npt.NDArray[np.integer],
     *,
     chunk_shape: ChunkShape,
+    bin_shape: BinShape | None = None,
     is_tree: bool = False,
     node_attributes: dict[str, npt.NDArray] | None = None,
     edge_attributes: dict[str, npt.NDArray] | None = None,
@@ -156,6 +160,7 @@ def write_graph(
         links_convention=links_conv,
         object_index_convention=OBJIDX_STANDARD,
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
+        base_bin_shape=bin_shape,
     )
     root = create_store(store_path, root_meta)
 

@@ -67,8 +67,10 @@ from zarr_vectors.spatial.boundary import (
 from zarr_vectors.spatial.chunking import (
     chunks_intersecting_bbox,
     compute_bounds,
+    bin_to_chunk,
 )
 from zarr_vectors.typing import (
+    BinShape,
     BoundingBox,
     ChunkCoords,
     ChunkShape,
@@ -83,6 +85,7 @@ def write_polylines(
     polylines: list[npt.NDArray[np.floating]],
     *,
     chunk_shape: ChunkShape,
+    bin_shape: BinShape | None = None,
     vertex_attributes: dict[str, list[npt.NDArray]] | None = None,
     object_attributes: dict[str, npt.NDArray] | None = None,
     groups: dict[int, list[int]] | None = None,
@@ -129,6 +132,11 @@ def write_polylines(
         for i in range(ndim)
     ]
 
+    effective_bin = bin_shape if bin_shape is not None else chunk_shape
+    bins_per_chunk = tuple(
+        int(round(cs / bs)) for cs, bs in zip(chunk_shape, effective_bin)
+    )
+
     root_meta = RootMetadata(
         spatial_index_dims=axes,
         chunk_shape=chunk_shape,
@@ -137,6 +145,7 @@ def write_polylines(
         links_convention=LINKS_IMPLICIT_SEQUENTIAL,
         object_index_convention=OBJIDX_STANDARD,
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
+        base_bin_shape=bin_shape,
     )
     root = create_store(store_path, root_meta)
 
@@ -169,8 +178,8 @@ def write_polylines(
     for poly_id, poly_verts in enumerate(polylines):
         poly_verts = np.asarray(poly_verts, dtype=np_dtype)
 
-        # Split at chunk boundaries
-        segments = split_polyline_at_boundaries(poly_verts, chunk_shape)
+        # Split at bin boundaries (finer than chunk boundaries when bin_shape < chunk_shape)
+        segments = split_polyline_at_boundaries(poly_verts, effective_bin)
 
         if not segments:
             object_manifests[poly_id] = []
@@ -192,9 +201,10 @@ def write_polylines(
         else:
             seg_attrs_list = [{} for _ in segments]
 
-        # Assign segments to chunks
+        # Assign segments to chunks (bin_coords from splitter → chunk_coords)
         manifest: ObjectManifest = []
-        for seg_idx, (chunk_coords, seg_verts) in enumerate(segments):
+        for seg_idx, (bin_coords, seg_verts) in enumerate(segments):
+            chunk_coords = bin_to_chunk(bin_coords, bins_per_chunk)
             if chunk_coords not in chunk_data:
                 chunk_data[chunk_coords] = []
             vg_idx = len(chunk_data[chunk_coords])
@@ -205,11 +215,13 @@ def write_polylines(
 
         object_manifests[poly_id] = manifest
 
-        # Cross-chunk links between consecutive segments
-        if len(segments) > 1:
-            vg_indices = [m[1] for m in manifest]
-            ccl = cross_chunk_links_for_segments(segments, vg_indices)
-            all_cross_links.extend(ccl)
+        # Cross-chunk links: only between consecutive segments in DIFFERENT chunks
+        if len(manifest) > 1:
+            for i in range(len(manifest) - 1):
+                cc_a, vg_a = manifest[i]
+                cc_b, vg_b = manifest[i + 1]
+                if cc_a != cc_b:
+                    all_cross_links.append(((cc_a, 0), (cc_b, 0)))
 
     # Write vertex groups per chunk
     for chunk_coords in sorted(chunk_data.keys()):

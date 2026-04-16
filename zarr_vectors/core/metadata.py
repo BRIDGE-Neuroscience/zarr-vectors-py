@@ -203,6 +203,9 @@ class RootMetadata:
     object_index_convention: str = OBJIDX_STANDARD
     cross_chunk_strategy: str = CROSS_CHUNK_EXPLICIT
     reduction_factor: int = DEFAULT_REDUCTION_FACTOR
+    base_bin_shape: tuple[float, ...] | None = None
+    """Supervoxel bin edge lengths at level 0. When None, defaults to
+    chunk_shape (one bin per chunk — backward compatible)."""
 
     def validate(self) -> None:
         """Validate this metadata object.
@@ -250,9 +253,43 @@ class RootMetadata:
                 f"reduction_factor must be ≥2, got {self.reduction_factor}"
             )
 
+        # Validate base_bin_shape if set
+        if self.base_bin_shape is not None:
+            if len(self.base_bin_shape) != sid_ndim:
+                raise MetadataError(
+                    f"base_bin_shape length {len(self.base_bin_shape)} != "
+                    f"spatial_index_dims length {sid_ndim}"
+                )
+            if any(b <= 0 for b in self.base_bin_shape):
+                raise MetadataError("All base_bin_shape values must be > 0")
+            # chunk_shape must be an integer multiple of base_bin_shape
+            for i, (cs, bs) in enumerate(
+                zip(self.chunk_shape, self.base_bin_shape)
+            ):
+                ratio = cs / bs
+                if abs(ratio - round(ratio)) > 1e-9:
+                    raise MetadataError(
+                        f"chunk_shape[{i}]={cs} is not an integer multiple "
+                        f"of base_bin_shape[{i}]={bs} (ratio={ratio:.6f})"
+                    )
+
+    @property
+    def effective_bin_shape(self) -> tuple[float, ...]:
+        """Base bin shape, defaulting to chunk_shape if not set."""
+        return self.base_bin_shape if self.base_bin_shape is not None else self.chunk_shape
+
+    @property
+    def bins_per_chunk(self) -> tuple[int, ...]:
+        """Number of supervoxel bins per chunk in each dimension."""
+        bbs = self.effective_bin_shape
+        return tuple(
+            int(round(cs / bs))
+            for cs, bs in zip(self.chunk_shape, bbs)
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-compatible dict."""
-        return {
+        d = {
             "zarr_vectors": {
                 "format_version": self.format_version,
                 "spatial_index_dims": self.spatial_index_dims,
@@ -266,6 +303,9 @@ class RootMetadata:
                 "reduction_factor": self.reduction_factor,
             }
         }
+        if self.base_bin_shape is not None:
+            d["zarr_vectors"]["base_bin_shape"] = list(self.base_bin_shape)
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> RootMetadata:
@@ -289,6 +329,7 @@ class RootMetadata:
             if key not in zv:
                 raise MetadataError(f"Missing required root metadata key: '{key}'")
 
+        bbs = zv.get("base_bin_shape")
         return cls(
             format_version=zv["format_version"],
             spatial_index_dims=zv["spatial_index_dims"],
@@ -300,6 +341,7 @@ class RootMetadata:
             object_index_convention=zv.get("object_index_convention", OBJIDX_STANDARD),
             cross_chunk_strategy=zv.get("cross_chunk_strategy", CROSS_CHUNK_EXPLICIT),
             reduction_factor=zv.get("reduction_factor", DEFAULT_REDUCTION_FACTOR),
+            base_bin_shape=tuple(bbs) if bbs else None,
         )
 
     @property
@@ -318,17 +360,23 @@ class LevelMetadata:
 
     Attributes:
         level: Integer level index (0 = full resolution).
-        bin_size: Spatial bin size at this level (None for level 0).
         vertex_count: Total vertices at this level.
+        arrays_present: List of array names present at this level.
+        bin_shape: Supervoxel edge lengths at this level (None for level 0,
+            which inherits base_bin_shape from root).
+        bin_ratio: Integer fold-change per axis relative to level 0.
+            ``(1,1,1)`` for level 0, ``(2,2,2)`` for 2× coarser bins, etc.
+        object_sparsity: Fraction of objects retained at this level (0,1].
         coarsening_method: How this level was generated.
         parent_level: Index of the source level (None for level 0).
-        arrays_present: List of array names present at this level.
     """
 
     level: int
     vertex_count: int
     arrays_present: list[str]
-    bin_size: tuple[float, ...] | None = None
+    bin_shape: tuple[float, ...] | None = None
+    bin_ratio: tuple[int, ...] | None = None
+    object_sparsity: float = 1.0
     coarsening_method: str = "none"
     parent_level: int | None = None
 
@@ -337,7 +385,9 @@ class LevelMetadata:
         return {
             "zarr_vectors_level": {
                 "level": self.level,
-                "bin_size": list(self.bin_size) if self.bin_size else None,
+                "bin_shape": list(self.bin_shape) if self.bin_shape else None,
+                "bin_ratio": list(self.bin_ratio) if self.bin_ratio else None,
+                "object_sparsity": self.object_sparsity,
                 "vertex_count": self.vertex_count,
                 "coarsening_method": self.coarsening_method,
                 "parent_level": self.parent_level,
@@ -348,6 +398,9 @@ class LevelMetadata:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> LevelMetadata:
         """Deserialise from a dict.
+
+        Supports both new ``bin_shape``/``bin_ratio`` fields and the
+        legacy ``bin_size`` field for backward compatibility.
 
         Raises:
             MetadataError: If the dict is malformed.
@@ -363,12 +416,16 @@ class LevelMetadata:
                 raise MetadataError(
                     f"Missing required level metadata key: '{key}'"
                 )
-        bs = lv.get("bin_size")
+        # Read bin_shape — fall back to legacy bin_size
+        bs = lv.get("bin_shape") or lv.get("bin_size")
+        br = lv.get("bin_ratio")
         return cls(
             level=lv["level"],
             vertex_count=lv["vertex_count"],
             arrays_present=lv["arrays_present"],
-            bin_size=tuple(bs) if bs else None,
+            bin_shape=tuple(bs) if bs else None,
+            bin_ratio=tuple(int(x) for x in br) if br else None,
+            object_sparsity=lv.get("object_sparsity", 1.0),
             coarsening_method=lv.get("coarsening_method", "none"),
             parent_level=lv.get("parent_level"),
         )
@@ -385,20 +442,107 @@ class LevelMetadata:
             raise MetadataError(
                 f"vertex_count must be ≥0, got {self.vertex_count}"
             )
+        if not (0.0 < self.object_sparsity <= 1.0):
+            raise MetadataError(
+                f"object_sparsity must be in (0, 1], got {self.object_sparsity}"
+            )
         if self.level == 0:
-            if self.bin_size is not None:
-                raise MetadataError("Level 0 should have bin_size=None")
+            # Level 0: bin_shape/bin_ratio may be None (inherits from root)
             if self.parent_level is not None:
                 raise MetadataError("Level 0 should have parent_level=None")
         else:
-            if self.bin_size is None:
+            if self.bin_shape is None:
                 raise MetadataError(
-                    f"Level {self.level} must have a bin_size"
+                    f"Level {self.level} must have a bin_shape"
                 )
             if self.parent_level is None:
                 raise MetadataError(
                     f"Level {self.level} must have a parent_level"
                 )
+            if self.bin_ratio is not None:
+                if any(r < 1 for r in self.bin_ratio):
+                    raise MetadataError(
+                        f"bin_ratio values must be ≥1, got {self.bin_ratio}"
+                    )
+
+
+# ===================================================================
+# Bin shape / ratio helpers
+# ===================================================================
+
+def compute_bin_shape(
+    base_bin_shape: tuple[float, ...],
+    bin_ratio: tuple[int, ...],
+) -> tuple[float, ...]:
+    """Compute the bin shape at a coarser level.
+
+    Args:
+        base_bin_shape: Supervoxel edge lengths at level 0.
+        bin_ratio: Integer fold-change per dimension.
+
+    Returns:
+        ``tuple(base * ratio for each dimension)``.
+
+    Raises:
+        MetadataError: If lengths don't match.
+    """
+    if len(base_bin_shape) != len(bin_ratio):
+        raise MetadataError(
+            f"base_bin_shape has {len(base_bin_shape)} dims, "
+            f"bin_ratio has {len(bin_ratio)} dims"
+        )
+    return tuple(b * r for b, r in zip(base_bin_shape, bin_ratio))
+
+
+def compute_bin_ratio(
+    base_bin_shape: tuple[float, ...],
+    level_bin_shape: tuple[float, ...],
+) -> tuple[int, ...]:
+    """Compute the bin ratio from base and level bin shapes.
+
+    Args:
+        base_bin_shape: Supervoxel edge lengths at level 0.
+        level_bin_shape: Supervoxel edge lengths at this level.
+
+    Returns:
+        Integer ratio per dimension.
+
+    Raises:
+        MetadataError: If the ratio is not integer in any dimension.
+    """
+    if len(base_bin_shape) != len(level_bin_shape):
+        raise MetadataError(
+            f"base_bin_shape has {len(base_bin_shape)} dims, "
+            f"level_bin_shape has {len(level_bin_shape)} dims"
+        )
+    ratios: list[int] = []
+    for i, (base, level) in enumerate(zip(base_bin_shape, level_bin_shape)):
+        r = level / base
+        if abs(r - round(r)) > 1e-9:
+            raise MetadataError(
+                f"Dimension {i}: level_bin_shape={level} / "
+                f"base_bin_shape={base} = {r:.6f} is not an integer"
+            )
+        ratios.append(int(round(r)))
+    return tuple(ratios)
+
+
+def validate_bin_shape_divides_chunk(
+    chunk_shape: tuple[float, ...],
+    bin_shape: tuple[float, ...],
+) -> None:
+    """Validate that chunk_shape is an integer multiple of bin_shape.
+
+    Raises:
+        MetadataError: If any dimension is not evenly divisible.
+    """
+    for i, (cs, bs) in enumerate(zip(chunk_shape, bin_shape)):
+        ratio = cs / bs
+        if abs(ratio - round(ratio)) > 1e-9:
+            raise MetadataError(
+                f"chunk_shape[{i}]={cs} is not an integer multiple "
+                f"of bin_shape[{i}]={bs} (ratio={ratio:.6f})"
+            )
 
 
 # ===================================================================

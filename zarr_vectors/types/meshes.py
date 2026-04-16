@@ -57,11 +57,14 @@ from zarr_vectors.spatial.boundary import (
     partition_faces,
 )
 from zarr_vectors.spatial.chunking import (
+    assign_bins,
     assign_chunks,
     chunks_intersecting_bbox,
     compute_bounds,
+    group_bins_by_chunk,
 )
 from zarr_vectors.typing import (
+    BinShape,
     BoundingBox,
     ChunkCoords,
     ChunkShape,
@@ -75,6 +78,7 @@ def write_mesh(
     faces: npt.NDArray[np.integer],
     *,
     chunk_shape: ChunkShape,
+    bin_shape: BinShape | None = None,
     encoding: str = ENCODING_RAW,
     vertex_attributes: dict[str, npt.NDArray] | None = None,
     object_ids: npt.NDArray[np.integer] | None = None,
@@ -122,6 +126,7 @@ def write_mesh(
         links_convention=LINKS_EXPLICIT,
         object_index_convention=OBJIDX_STANDARD,
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
+        base_bin_shape=bin_shape,
     )
     root = create_store(store_path, root_meta)
 

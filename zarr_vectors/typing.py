@@ -37,6 +37,18 @@ ChunkCoords: TypeAlias = tuple[int, ...]
 ChunkShape: TypeAlias = tuple[float, ...]
 """Physical size of a spatial chunk per dimension, e.g. (100.0, 100.0, 50.0)."""
 
+BinCoords: TypeAlias = tuple[int, ...]
+"""Integer coordinates identifying a supervoxel bin, e.g. (0, 3, 7) for 3D.
+Bins are a finer spatial grid than chunks — multiple bins tile each chunk."""
+
+BinShape: TypeAlias = tuple[float, ...]
+"""Physical edge lengths of a supervoxel bin, e.g. (25.0, 25.0, 25.0).
+Must evenly divide the chunk shape in every dimension."""
+
+BinRatio: TypeAlias = tuple[int, ...]
+"""Per-dimension integer fold-change of bin shape relative to level 0,
+e.g. (2, 2, 2) means the bin is 2× wider in each axis at this level."""
+
 BoundingBox: TypeAlias = tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
 """(min_corner, max_corner) arrays, each shape (D,)."""
 

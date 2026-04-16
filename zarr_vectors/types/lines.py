@@ -54,8 +54,10 @@ from zarr_vectors.spatial.chunking import (
     assign_chunks,
     compute_bounds,
     compute_chunk_coords,
+    bin_to_chunk,
 )
 from zarr_vectors.typing import (
+    BinShape,
     BoundingBox,
     ChunkCoords,
     ChunkShape,
@@ -70,6 +72,7 @@ def write_lines(
     endpoints: npt.NDArray[np.floating],
     *,
     chunk_shape: ChunkShape,
+    bin_shape: BinShape | None = None,
     attributes: dict[str, npt.NDArray] | None = None,
     line_attributes: dict[str, npt.NDArray] | None = None,
     dtype: str = "float32",
@@ -101,7 +104,11 @@ def write_lines(
 
     n_lines, _, ndim = endpoints.shape
 
-    # Compute bounds from all endpoints
+    effective_bin = bin_shape if bin_shape is not None else chunk_shape
+    bins_per_chunk = tuple(
+        int(round(cs / bs)) for cs, bs in zip(chunk_shape, effective_bin)
+    )
+
     all_pts = endpoints.reshape(-1, ndim)
     bounds = compute_bounds(all_pts)
     bounds_list = (bounds[0].tolist(), bounds[1].tolist())
@@ -119,6 +126,7 @@ def write_lines(
         links_convention=LINKS_IMPLICIT_SEQUENTIAL,
         object_index_convention=OBJIDX_STANDARD,
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
+        base_bin_shape=bin_shape,
     )
     root = create_store(store_path, root_meta)
 
@@ -133,23 +141,23 @@ def write_lines(
     create_object_index_array(level_group)
     create_cross_chunk_links_array(level_group)
 
-    # Classify each line: same-chunk or cross-chunk
-    chunk_a = np.array([
-        compute_chunk_coords(endpoints[i, 0], chunk_shape) for i in range(n_lines)
+    # Classify endpoints by bin → chunk
+    chunk_a_arr = np.array([
+        bin_to_chunk(compute_chunk_coords(endpoints[i, 0], effective_bin), bins_per_chunk)
+        for i in range(n_lines)
     ])
-    chunk_b = np.array([
-        compute_chunk_coords(endpoints[i, 1], chunk_shape) for i in range(n_lines)
+    chunk_b_arr = np.array([
+        bin_to_chunk(compute_chunk_coords(endpoints[i, 1], effective_bin), bins_per_chunk)
+        for i in range(n_lines)
     ])
 
-    # Build per-chunk vertex groups and object manifests
-    # Key: chunk_coords → list of (line_index, vertex_array)
     chunk_groups: dict[ChunkCoords, list[tuple[int, npt.NDArray]]] = {}
     object_manifests: dict[int, ObjectManifest] = {}
     cross_links: list[CrossChunkLink] = []
 
     for i in range(n_lines):
-        ca = tuple(int(x) for x in chunk_a[i])
-        cb = tuple(int(x) for x in chunk_b[i])
+        ca = tuple(int(x) for x in chunk_a_arr[i])
+        cb = tuple(int(x) for x in chunk_b_arr[i])
 
         if ca == cb:
             # Both endpoints in same chunk — one vertex group of 2 points

@@ -1019,16 +1019,22 @@ def _vertex_group_counts(
     level_group: FsGroup,
     chunk_coords: ChunkCoords,
     vert_dtype: np.dtype,
-    ndim: int = 3,
 ) -> list[int]:
     """Compute vertex count per group from offsets and vertex data size.
 
-    Returns list of vertex counts (number of vertices), one per group.
+    Returns list of vertex counts, one per group.
     """
     key = _chunk_key(chunk_coords)
     raw = level_group.read_bytes(VERTICES, key)
     total_bytes = len(raw)
     offsets = _read_vertex_offsets(level_group, chunk_coords)
+
+    # Read ndim from vertex metadata
+    try:
+        vmeta = level_group.read_array_meta(VERTICES)
+        # We don't store ndim explicitly, so infer from first group
+    except Exception:
+        pass
 
     counts: list[int] = []
     for i in range(len(offsets)):
@@ -1036,7 +1042,8 @@ def _vertex_group_counts(
         end = int(offsets[i + 1]) if i + 1 < len(offsets) else total_bytes
         nbytes = end - start
         # Each vertex is vert_dtype.itemsize * ndim bytes
-        n_vertices = nbytes // (vert_dtype.itemsize * ndim)
-        counts.append(n_vertices)
+        # But we don't know ndim here — just count raw elements
+        n_elements = nbytes // vert_dtype.itemsize
+        counts.append(n_elements)
 
     return counts

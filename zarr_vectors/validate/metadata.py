@@ -81,6 +81,33 @@ def validate_metadata(store_path: str | Path) -> ValidationResult:
     else:
         result.add_pass(f"geometry_types: {meta.geometry_types}")
 
+    # Bin shape / chunk divisibility validation
+    if meta.base_bin_shape is not None:
+        if len(meta.base_bin_shape) != sid_ndim:
+            result.add_error(
+                f"base_bin_shape has {len(meta.base_bin_shape)} dims, "
+                f"expected {sid_ndim}"
+            )
+        else:
+            result.add_pass(
+                f"base_bin_shape: {meta.base_bin_shape}"
+            )
+            for i, (cs, bs) in enumerate(zip(meta.chunk_shape, meta.base_bin_shape)):
+                if bs <= 0:
+                    result.add_error(
+                        f"base_bin_shape[{i}]={bs}, must be > 0"
+                    )
+                else:
+                    ratio = cs / bs
+                    if abs(ratio - round(ratio)) > 1e-9:
+                        result.add_error(
+                            f"chunk_shape[{i}]={cs} not integer multiple "
+                            f"of base_bin_shape[{i}]={bs}"
+                        )
+            result.add_pass(
+                f"bins_per_chunk: {meta.bins_per_chunk}"
+            )
+
     levels = list_resolution_levels(root)
     for li in levels:
         try:
@@ -93,6 +120,50 @@ def validate_metadata(store_path: str | Path) -> ValidationResult:
                     result.add_error(f"resolution_{li}: vertex_count={vc} invalid")
                 else:
                     result.add_pass(f"resolution_{li}: vertex_count={vc}")
+
+            # Validate per-level bin_shape divides chunk_shape
+            bin_shape = la.get("bin_shape")
+            if bin_shape is None:
+                bin_shape = la.get("bin_size")  # legacy fallback
+            if bin_shape is not None:
+                if len(bin_shape) != sid_ndim:
+                    result.add_error(
+                        f"resolution_{li}: bin_shape has {len(bin_shape)} dims"
+                    )
+                else:
+                    for i, (cs, bs) in enumerate(zip(meta.chunk_shape, bin_shape)):
+                        if bs <= 0:
+                            result.add_error(
+                                f"resolution_{li}: bin_shape[{i}]={bs} not > 0"
+                            )
+                        else:
+                            ratio = cs / bs
+                            if abs(ratio - round(ratio)) > 1e-9:
+                                result.add_error(
+                                    f"resolution_{li}: bin_shape[{i}]={bs} "
+                                    f"does not divide chunk_shape[{i}]={cs}"
+                                )
+
+            # Validate bin_ratio values
+            bin_ratio = la.get("bin_ratio")
+            if bin_ratio is not None:
+                if len(bin_ratio) != sid_ndim:
+                    result.add_error(
+                        f"resolution_{li}: bin_ratio has {len(bin_ratio)} dims"
+                    )
+                else:
+                    for i, r in enumerate(bin_ratio):
+                        if r < 1:
+                            result.add_error(
+                                f"resolution_{li}: bin_ratio[{i}]={r} < 1"
+                            )
+
+            # Validate object_sparsity in (0, 1]
+            sparsity = la.get("object_sparsity", 1.0)
+            if not (0.0 < sparsity <= 1.0):
+                result.add_error(
+                    f"resolution_{li}: object_sparsity={sparsity} not in (0, 1]"
+                )
         except Exception as e:
             result.add_error(f"resolution_{li}: cannot read metadata: {e}")
 

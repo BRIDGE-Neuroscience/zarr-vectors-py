@@ -111,6 +111,8 @@ def validate_multiresolution(store_path: str | Path) -> ValidationResult:
         result.add_pass(f"Levels {levels} contiguous")
 
     prev_count: int | None = None
+    prev_ratio_product: int = 1
+    prev_object_count: int | None = None
     for li in levels:
         try:
             lg = get_resolution_level(root, li)
@@ -130,6 +132,26 @@ def validate_multiresolution(store_path: str | Path) -> ValidationResult:
                 else:
                     result.add_pass(f"resolution_{li}: {vc} verts ({prev_count/max(vc,1):.1f}x reduction)")
             prev_count = vc
+
+            # Check bin_ratio is non-decreasing (in volume) across levels
+            bin_ratio = attrs.get("bin_ratio")
+            if bin_ratio is not None:
+                ratio_product = 1
+                for r in bin_ratio:
+                    ratio_product *= int(r)
+                if li > 0 and ratio_product < prev_ratio_product:
+                    result.add_error(
+                        f"resolution_{li}: bin_ratio volume {ratio_product} "
+                        f"< previous level {prev_ratio_product}"
+                    )
+                prev_ratio_product = ratio_product
+
+            # Check object_sparsity is in (0, 1]
+            sparsity = attrs.get("object_sparsity", 1.0)
+            if not (0.0 < sparsity <= 1.0):
+                result.add_error(
+                    f"resolution_{li}: object_sparsity={sparsity} out of range"
+                )
         except Exception as e:
             result.add_error(f"resolution_{li}: {e}")
 

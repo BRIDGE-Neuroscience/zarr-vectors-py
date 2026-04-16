@@ -145,6 +145,9 @@ DEFAULT_COMPRESSOR_OPTS: dict[str, object] = {
 DEFAULT_REDUCTION_FACTOR: int = 8
 """Default: only emit a new resolution level when vertex count drops by 8×."""
 
+DEFAULT_BIN_RATIO: tuple[int, ...] = (1, 1, 1)
+"""Bin ratio at level 0 (no downsampling)."""
+
 DEFAULT_COARSENING_METHOD: str = "grid_metanode"
 
 # ---------------------------------------------------------------------------

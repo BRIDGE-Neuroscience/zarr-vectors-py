@@ -45,6 +45,48 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
         total_verts = 0
         chunk_vg_counts: dict[tuple, int] = {}
 
+        # Determine effective bin shape for this level
+        try:
+            la = lg.attrs
+            level_bin_shape = la.get("bin_shape") or la.get("bin_size")
+            if level_bin_shape is not None:
+                level_bin_shape = tuple(float(x) for x in level_bin_shape)
+            elif li == 0:
+                level_bin_shape = meta.effective_bin_shape
+            else:
+                level_bin_shape = meta.chunk_shape  # unknown — skip bin checks
+        except Exception:
+            level_bin_shape = meta.chunk_shape
+
+        # Compute bins_per_chunk for this level
+        level_bins_per_chunk = tuple(
+            int(round(cs / bs))
+            for cs, bs in zip(meta.chunk_shape, level_bin_shape)
+        )
+        max_vgs = 1
+        for b in level_bins_per_chunk:
+            max_vgs *= b
+
+        # Per-bin VG layout only applies to undifferentiated point-cloud stores.
+        # Polylines / lines / graphs / meshes use VGs to represent segments,
+        # endpoints, or per-object partitions — not bins.
+        geom_types = meta.geometry_types or []
+        is_point_cloud_only = (
+            "point_cloud" in geom_types
+            and not any(gt in geom_types for gt in [
+                "polyline", "streamline", "line", "graph",
+                "skeleton", "mesh",
+            ])
+        )
+        # Also skip if the store has object_index (VGs are per-object, not per-bin)
+        try:
+            has_object_index = "object_index" in lg
+        except Exception:
+            has_object_index = False
+
+        check_bin_layout = is_point_cloud_only and not has_object_index
+        chunks_checked_for_bin_bounds = 0
+
         for ck in chunk_keys:
             try:
                 groups = read_chunk_vertices(lg, ck, dtype=np.float32, ndim=ndim)
@@ -53,14 +95,55 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
                 continue
 
             chunk_vg_counts[ck] = len(groups)
+
+            # Check VG count doesn't exceed bins_per_chunk
+            # (only for undifferentiated point clouds with explicit bins)
+            has_bins = any(b > 1 for b in level_bins_per_chunk)
+            if check_bin_layout and has_bins and len(groups) > max_vgs:
+                result.add_error(
+                    f"{prefix}: chunk {ck} has {len(groups)} VGs, "
+                    f"exceeds bins_per_chunk product {max_vgs}"
+                )
+
             for vi, vg in enumerate(groups):
                 if vg.ndim != 2 or vg.shape[1] != ndim:
                     result.add_error(f"{prefix}: chunk {ck} vg[{vi}] shape {vg.shape}")
-                if np.any(~np.isfinite(vg)):
+                if len(vg) > 0 and np.any(~np.isfinite(vg)):
                     result.add_warning(f"{prefix}: chunk {ck} vg[{vi}] NaN/Inf")
                 total_verts += len(vg)
 
-        result.add_pass(f"{prefix}: {len(chunk_keys)} chunks decoded, {total_verts} vertices")
+            # Spot-check bin bounds for point clouds only
+            if check_bin_layout and has_bins and chunks_checked_for_bin_bounds < 3:
+                from zarr_vectors.spatial.chunking import vg_index_to_bin
+                chunks_checked_for_bin_bounds += 1
+                for vi, vg in enumerate(groups):
+                    if len(vg) == 0:
+                        continue
+                    try:
+                        bin_coords = vg_index_to_bin(vi, ck, level_bins_per_chunk)
+                    except Exception:
+                        continue
+                    bin_lo = np.array(
+                        [bc * bs for bc, bs in zip(bin_coords, level_bin_shape)],
+                        dtype=np.float64,
+                    )
+                    bin_hi = bin_lo + np.array(level_bin_shape, dtype=np.float64)
+                    # Allow small tolerance for float rounding
+                    tol = 1e-4
+                    out_of_bin = np.any(
+                        (vg < bin_lo - tol) | (vg >= bin_hi + tol),
+                        axis=1,
+                    )
+                    n_out = int(np.sum(out_of_bin))
+                    if n_out > 0:
+                        result.add_warning(
+                            f"{prefix}: chunk {ck} vg[{vi}] has {n_out} points "
+                            f"outside bin {bin_coords} bounds"
+                        )
+
+        result.add_pass(
+            f"{prefix}: {len(chunk_keys)} chunks decoded, {total_verts} vertices"
+        )
 
         try:
             la = lg.attrs

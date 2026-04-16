@@ -434,11 +434,7 @@ def read_parametric_types(root: FsGroup) -> list[ParametricTypeDef]:
 
 
 def store_info(root: FsGroup) -> dict[str, Any]:
-    """Return summary information about a ZVF store.
-
-    Returns a dict with: format_version, geometry_types, spatial_index_dims,
-    chunk_shape, bounds, levels (list of level summaries), parametric_types.
-    """
+    """Return summary information about a ZVF store."""
     meta = read_root_metadata(root)
     levels = list_resolution_levels(root)
 
@@ -449,7 +445,9 @@ def store_info(root: FsGroup) -> dict[str, Any]:
             level_summaries.append({
                 "level": lm.level,
                 "vertex_count": lm.vertex_count,
-                "bin_size": list(lm.bin_size) if lm.bin_size else None,
+                "bin_shape": list(lm.bin_shape) if lm.bin_shape else None,
+                "bin_ratio": list(lm.bin_ratio) if lm.bin_ratio else None,
+                "object_sparsity": lm.object_sparsity,
                 "coarsening_method": lm.coarsening_method,
                 "arrays_present": lm.arrays_present,
             })
@@ -463,6 +461,8 @@ def store_info(root: FsGroup) -> dict[str, Any]:
         "geometry_types": meta.geometry_types,
         "spatial_index_dims": meta.spatial_index_dims,
         "chunk_shape": list(meta.chunk_shape),
+        "base_bin_shape": list(meta.base_bin_shape) if meta.base_bin_shape else None,
+        "bins_per_chunk": list(meta.bins_per_chunk),
         "bounds": [list(meta.bounds[0]), list(meta.bounds[1])],
         "links_convention": meta.links_convention,
         "object_index_convention": meta.object_index_convention,
@@ -471,3 +471,142 @@ def store_info(root: FsGroup) -> dict[str, Any]:
         "levels": level_summaries,
         "parametric_types": [t.to_dict() for t in ptypes],
     }
+
+
+# ===================================================================
+# Manual level management
+# ===================================================================
+
+def add_resolution_level(
+    root: FsGroup,
+    level_index: int,
+    bin_ratio: tuple[int, ...],
+    *,
+    object_sparsity: float = 1.0,
+    coarsening_method: str = "manual",
+    parent_level: int | None = None,
+) -> FsGroup:
+    """Create a new resolution level with a specified bin ratio.
+
+    Computes bin_shape from the store's base_bin_shape and the given
+    ratio, validates that chunk_shape is divisible, creates the level
+    directory with metadata, and returns a handle for writing data.
+
+    Args:
+        root: Root store group (must be opened read-write).
+        level_index: Level number to create (must not already exist).
+        bin_ratio: Integer fold-change per dimension relative to level 0.
+        object_sparsity: Fraction of objects to retain (0, 1].
+        coarsening_method: Description of how this level was generated.
+        parent_level: Source level index. Defaults to ``level_index - 1``.
+
+    Returns:
+        The new level :class:`FsGroup`, ready for array writes.
+
+    Raises:
+        StoreError: If the level already exists.
+        MetadataError: If bin_ratio produces a bin_shape that doesn't
+            divide chunk_shape, or other validation failures.
+    """
+    from zarr_vectors.core.metadata import (
+        compute_bin_shape,
+        validate_bin_shape_divides_chunk,
+    )
+
+    meta = read_root_metadata(root)
+    base_bin = meta.effective_bin_shape
+    chunk_shape = meta.chunk_shape
+
+    # Compute the new bin shape
+    bin_shape = compute_bin_shape(base_bin, bin_ratio)
+
+    # Validate divisibility
+    validate_bin_shape_divides_chunk(chunk_shape, bin_shape)
+
+    if parent_level is None:
+        parent_level = max(0, level_index - 1)
+
+    # Check level doesn't already exist
+    group_name = f"{RESOLUTION_PREFIX}{level_index}"
+    if group_name in root:
+        raise StoreError(f"Resolution level {level_index} already exists")
+
+    level_meta = LevelMetadata(
+        level=level_index,
+        vertex_count=0,  # will be updated after writing data
+        arrays_present=[],
+        bin_shape=bin_shape,
+        bin_ratio=bin_ratio,
+        object_sparsity=object_sparsity,
+        coarsening_method=coarsening_method,
+        parent_level=parent_level,
+    )
+    level_meta.validate()
+
+    level_group = root.require_group(group_name)
+    level_group.attrs.update(level_meta.to_dict())
+    return level_group
+
+
+def remove_resolution_level(root: FsGroup, level_index: int) -> None:
+    """Remove a resolution level from the store.
+
+    Deletes the level directory and all its contents. Level 0 cannot
+    be removed.
+
+    Args:
+        root: Root store group.
+        level_index: Level to remove.
+
+    Raises:
+        StoreError: If the level doesn't exist or is level 0.
+    """
+    if level_index == 0:
+        raise StoreError("Cannot remove level 0 (full resolution)")
+
+    group_name = f"{RESOLUTION_PREFIX}{level_index}"
+    if group_name not in root:
+        raise StoreError(f"Resolution level {level_index} not found")
+
+    import shutil
+    level_path = root.path / group_name
+    shutil.rmtree(level_path)
+
+
+def list_available_ratios(root: FsGroup) -> list[tuple[int, ...]]:
+    """Return the bin ratios for all existing resolution levels.
+
+    Level 0 always has ratio ``(1, 1, ..., 1)``. Levels without an
+    explicit bin_ratio in metadata are computed from bin_shape /
+    base_bin_shape.
+
+    Args:
+        root: Root store group.
+
+    Returns:
+        Sorted list of bin ratio tuples, one per level.
+    """
+    from zarr_vectors.core.metadata import compute_bin_ratio
+
+    meta = read_root_metadata(root)
+    base_bin = meta.effective_bin_shape
+    ndim = meta.sid_ndim
+    levels = list_resolution_levels(root)
+    ratios: list[tuple[int, ...]] = []
+
+    for lvl in levels:
+        if lvl == 0:
+            ratios.append(tuple(1 for _ in range(ndim)))
+            continue
+        try:
+            lm = read_level_metadata(root, lvl)
+            if lm.bin_ratio is not None:
+                ratios.append(lm.bin_ratio)
+            elif lm.bin_shape is not None:
+                ratios.append(compute_bin_ratio(base_bin, lm.bin_shape))
+            else:
+                ratios.append(tuple(1 for _ in range(ndim)))
+        except Exception:
+            ratios.append(tuple(1 for _ in range(ndim)))
+
+    return ratios

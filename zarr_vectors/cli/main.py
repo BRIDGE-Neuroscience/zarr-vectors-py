@@ -222,8 +222,8 @@ def _cmd_info(args: argparse.Namespace) -> None:
             lg = get_resolution_level(root, li)
             attrs = lg.attrs
             vc = attrs.get("vertex_count", "?")
-            bs = attrs.get("bin_size", None)
-            bs_str = f", bin_size={bs}" if bs else ""
+            bs = attrs.get("bin_shape", attrs.get("bin_size", None))
+            bs_str = f", bin_shape={bs}" if bs else ""
             print(f"    resolution_{li}: {vc} vertices{bs_str}")
         except Exception:
             print(f"    resolution_{li}: (unreadable)")

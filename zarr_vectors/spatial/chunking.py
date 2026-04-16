@@ -12,7 +12,7 @@ import numpy as np
 import numpy.typing as npt
 
 from zarr_vectors.exceptions import ChunkingError
-from zarr_vectors.typing import BoundingBox, ChunkCoords, ChunkShape
+from zarr_vectors.typing import BinCoords, BinShape, BoundingBox, ChunkCoords, ChunkShape
 
 
 def assign_chunks(
@@ -215,3 +215,173 @@ def positions_in_bbox(
         axis=1,
     )
     return np.flatnonzero(mask)
+
+
+# ===================================================================
+# Bin-level spatial assignment (supervoxel binning)
+# ===================================================================
+
+def assign_bins(
+    positions: npt.NDArray[np.floating],
+    bin_shape: BinShape,
+) -> dict[BinCoords, npt.NDArray[np.intp]]:
+    """Assign each vertex to a supervoxel bin.
+
+    Identical to :func:`assign_chunks` but uses bin_shape instead of
+    chunk_shape — produces a finer spatial grouping.
+
+    Args:
+        positions: ``(N, D)`` array of vertex positions.
+        bin_shape: Supervoxel edge lengths per dimension.
+
+    Returns:
+        Dict mapping ``bin_coords`` → ``(N_k,)`` array of vertex indices.
+    """
+    # Delegate to assign_chunks — same logic, different granularity
+    return assign_chunks(positions, bin_shape)
+
+
+def bin_to_chunk(
+    bin_coords: BinCoords,
+    bins_per_chunk: tuple[int, ...],
+) -> ChunkCoords:
+    """Map a bin coordinate to its parent chunk coordinate.
+
+    Args:
+        bin_coords: N-dimensional bin grid coordinate.
+        bins_per_chunk: Number of bins per chunk in each dimension.
+
+    Returns:
+        Chunk coordinate tuple.
+    """
+    return tuple(
+        b // bpc if b >= 0 else -(-b // bpc) - (1 if (-b) % bpc != 0 else 0)
+        for b, bpc in zip(bin_coords, bins_per_chunk)
+    )
+
+
+def chunk_to_bin_range(
+    chunk_coords: ChunkCoords,
+    bins_per_chunk: tuple[int, ...],
+) -> tuple[BinCoords, BinCoords]:
+    """Return the range of bin coordinates within a chunk (inclusive).
+
+    Args:
+        chunk_coords: Chunk grid coordinate.
+        bins_per_chunk: Number of bins per chunk in each dimension.
+
+    Returns:
+        ``(min_bin_coords, max_bin_coords)`` — both inclusive.
+    """
+    lo = tuple(c * bpc for c, bpc in zip(chunk_coords, bins_per_chunk))
+    hi = tuple(c * bpc + bpc - 1 for c, bpc in zip(chunk_coords, bins_per_chunk))
+    return lo, hi
+
+
+def bin_to_vg_index(
+    bin_coords: BinCoords,
+    chunk_coords: ChunkCoords,
+    bins_per_chunk: tuple[int, ...],
+) -> int:
+    """Linearise an intra-chunk bin coordinate to a vertex group index.
+
+    Uses row-major (C-order) linearisation within the chunk's bin grid.
+
+    Args:
+        bin_coords: Global bin coordinate.
+        chunk_coords: Parent chunk coordinate.
+        bins_per_chunk: Bins per chunk per dimension.
+
+    Returns:
+        Integer vertex group index within the chunk.
+    """
+    ndim = len(bins_per_chunk)
+    # Compute local bin offset within the chunk
+    local = tuple(
+        b - c * bpc for b, c, bpc in zip(bin_coords, chunk_coords, bins_per_chunk)
+    )
+    # Row-major linearisation
+    idx = 0
+    stride = 1
+    for d in range(ndim - 1, -1, -1):
+        idx += local[d] * stride
+        stride *= bins_per_chunk[d]
+    return idx
+
+
+def vg_index_to_bin(
+    vg_index: int,
+    chunk_coords: ChunkCoords,
+    bins_per_chunk: tuple[int, ...],
+) -> BinCoords:
+    """Convert a vertex group index back to a global bin coordinate.
+
+    Inverse of :func:`bin_to_vg_index`.
+
+    Args:
+        vg_index: Linearised vertex group index within the chunk.
+        chunk_coords: Parent chunk coordinate.
+        bins_per_chunk: Bins per chunk per dimension.
+
+    Returns:
+        Global bin coordinate tuple.
+    """
+    ndim = len(bins_per_chunk)
+    local: list[int] = [0] * ndim
+    remaining = vg_index
+    for d in range(ndim - 1, -1, -1):
+        local[d] = remaining % bins_per_chunk[d]
+        remaining //= bins_per_chunk[d]
+    return tuple(
+        l + c * bpc for l, c, bpc in zip(local, chunk_coords, bins_per_chunk)
+    )
+
+
+def bins_intersecting_bbox(
+    bbox_min: npt.NDArray[np.floating],
+    bbox_max: npt.NDArray[np.floating],
+    bin_shape: BinShape,
+) -> list[BinCoords]:
+    """Return all bin coordinates that intersect a bounding box.
+
+    Finer-grained version of :func:`chunks_intersecting_bbox`.
+
+    Args:
+        bbox_min: ``(D,)`` minimum corner.
+        bbox_max: ``(D,)`` maximum corner.
+        bin_shape: Supervoxel edge lengths.
+
+    Returns:
+        Sorted list of bin coordinate tuples.
+    """
+    return chunks_intersecting_bbox(bbox_min, bbox_max, bin_shape)
+
+
+def group_bins_by_chunk(
+    bin_assignments: dict[BinCoords, npt.NDArray[np.intp]],
+    bins_per_chunk: tuple[int, ...],
+) -> dict[ChunkCoords, dict[int, npt.NDArray[np.intp]]]:
+    """Group bin assignments into chunks with linearised vertex group indices.
+
+    Takes the output of :func:`assign_bins` and organises it by chunk.
+    Each entry maps a vertex group index (linearised bin position within
+    the chunk) to the array of global vertex indices in that bin.
+
+    Args:
+        bin_assignments: Output from ``assign_bins``.
+        bins_per_chunk: Bins per chunk per dimension.
+
+    Returns:
+        ``{chunk_coords: {vg_index: global_vertex_indices}}``.
+    """
+    result: dict[ChunkCoords, dict[int, npt.NDArray[np.intp]]] = {}
+
+    for bc, indices in bin_assignments.items():
+        cc = bin_to_chunk(bc, bins_per_chunk)
+        vg_idx = bin_to_vg_index(bc, cc, bins_per_chunk)
+
+        if cc not in result:
+            result[cc] = {}
+        result[cc][vg_idx] = indices
+
+    return result

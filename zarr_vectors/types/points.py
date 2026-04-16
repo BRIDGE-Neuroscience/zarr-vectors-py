@@ -43,6 +43,7 @@ from zarr_vectors.core.arrays import (
     read_groupings_attributes,
     read_object_attributes,
     read_object_vertices,
+    read_vertex_group,
     write_chunk_attributes,
     write_chunk_vertices,
     write_groupings,
@@ -61,11 +62,14 @@ from zarr_vectors.core.store import (
 )
 from zarr_vectors.exceptions import ArrayError
 from zarr_vectors.spatial.chunking import (
+    assign_bins,
     assign_chunks,
     chunks_intersecting_bbox,
     compute_bounds,
+    group_bins_by_chunk,
 )
 from zarr_vectors.typing import (
+    BinShape,
     BoundingBox,
     ChunkCoords,
     ChunkShape,
@@ -79,6 +83,7 @@ def write_points(
     positions: npt.NDArray[np.floating],
     *,
     chunk_shape: ChunkShape | None = None,
+    bin_shape: BinShape | None = None,
     attributes: dict[str, npt.NDArray] | None = None,
     object_ids: npt.NDArray[np.integer] | None = None,
     object_attributes: dict[str, npt.NDArray] | None = None,
@@ -93,182 +98,155 @@ def write_points(
         positions: ``(N, D)`` vertex positions.
         chunk_shape: Spatial chunk size per dimension.  If None, a
             single chunk containing all points is used.
-        attributes: Per-vertex attributes as ``{name: array}``.
-            Each array is ``(N,)`` or ``(N, C)``.
-        object_ids: ``(N,)`` integer array assigning each point to an
-            object.  If None, points are undifferentiated (variant 1)
-            or each point is its own object if *object_attributes* or
-            *groups* are provided.
-        object_attributes: Per-object attributes as ``{name: array}``.
-            Each array is ``(O,)`` or ``(O, C)`` where O = number of
-            unique objects.
-        groups: Group memberships as ``{group_id: [object_id, ...]}``.
-        group_attributes: Per-group attributes as ``{name: array}``.
-            Each array is ``(G,)`` or ``(G, C)``.
+        bin_shape: Supervoxel bin edge lengths.  If None, defaults to
+            ``chunk_shape`` (one bin per chunk — backward compatible).
+        attributes: Per-vertex attributes ``{name: array}``.
+        object_ids: ``(N,)`` integer per-point object assignment.
+        object_attributes: Per-object attributes ``{name: array}``.
+        groups: Group memberships ``{group_id: [object_id, ...]}``.
+        group_attributes: Per-group attributes ``{name: array}``.
         dtype: Numpy dtype string for vertex positions.
 
     Returns:
-        Summary dict with keys: ``vertex_count``, ``chunk_count``,
-        ``object_count``, ``group_count``.
+        Summary dict.
     """
     np_dtype = np.dtype(dtype)
     positions = np.asarray(positions, dtype=np_dtype)
     n_vertices, ndim = positions.shape
 
-    # Default chunk shape: single chunk encompassing all data
     if chunk_shape is None:
         bounds = compute_bounds(positions)
         extent = bounds[1] - bounds[0]
-        # Make chunk large enough to contain all data in one chunk.
-        # Use max(extent) * 2 + 1 per dimension to ensure floor(pos/cs)
-        # maps everything to chunk (0, ..., 0).
         max_extent = float(np.max(extent))
         side = max_extent + abs(float(np.max(bounds[1]))) + 1.0
         chunk_shape = tuple(side for _ in range(ndim))
 
-    # Determine if we need object identity
+    effective_bin = bin_shape if bin_shape is not None else chunk_shape
+    bins_per_chunk = tuple(
+        int(round(cs / bs)) for cs, bs in zip(chunk_shape, effective_bin)
+    )
+    total_bins_per_chunk = 1
+    for b in bins_per_chunk:
+        total_bins_per_chunk *= b
+
     needs_objects = (
         object_ids is not None
         or object_attributes is not None
         or groups is not None
     )
-
-    # If needs_objects but no object_ids: each point is its own object
     if needs_objects and object_ids is None:
         object_ids = np.arange(n_vertices, dtype=np.int64)
 
-    # Compute bounds and create store
     bounds = compute_bounds(positions)
     bounds_list = (bounds[0].tolist(), bounds[1].tolist())
+    axes = [{"name": f"dim{i}", "type": "space", "unit": "unit"} for i in range(ndim)]
 
-    axes = [
-        {"name": f"dim{i}", "type": "space", "unit": "unit"}
-        for i in range(ndim)
-    ]
-
-    obj_idx_convention = OBJIDX_STANDARD
     root_meta = RootMetadata(
-        spatial_index_dims=axes,
-        chunk_shape=chunk_shape,
-        bounds=bounds_list,
+        spatial_index_dims=axes, chunk_shape=chunk_shape, bounds=bounds_list,
         geometry_types=[GEOM_POINT_CLOUD],
         links_convention=LINKS_IMPLICIT_SEQUENTIAL,
-        object_index_convention=obj_idx_convention,
+        object_index_convention=OBJIDX_STANDARD,
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
+        base_bin_shape=bin_shape,
     )
-
     root = create_store(store_path, root_meta)
 
-    # Assign vertices to chunks
-    chunk_assignments = assign_chunks(positions, chunk_shape)
-    n_chunks = len(chunk_assignments)
+    bin_assignments = assign_bins(positions, effective_bin)
+    chunked_bins = group_bins_by_chunk(bin_assignments, bins_per_chunk)
+    n_chunks = len(chunked_bins)
 
-    # Create level 0
     arrays_present = [VERTICES]
     if attributes:
         arrays_present.append("attributes")
     if needs_objects:
         arrays_present.append("object_index")
 
-    level_meta = LevelMetadata(
-        level=0,
-        vertex_count=n_vertices,
-        arrays_present=arrays_present,
-    )
+    level_meta = LevelMetadata(level=0, vertex_count=n_vertices, arrays_present=arrays_present)
     level_group = create_resolution_level(root, 0, level_meta)
-
-    # Create arrays
     create_vertices_array(level_group, dtype=dtype)
+
     if attributes:
         for attr_name, attr_data in attributes.items():
             channel_names = None
             if attr_data.ndim == 2:
                 channel_names = [f"ch{i}" for i in range(attr_data.shape[1])]
-            create_attribute_array(
-                level_group, attr_name, dtype=str(attr_data.dtype),
-                channel_names=channel_names,
-            )
+            create_attribute_array(level_group, attr_name, dtype=str(attr_data.dtype),
+                                   channel_names=channel_names)
 
     if needs_objects:
         create_object_index_array(level_group)
 
-    # Track vertex group assignments for object index
-    # Key: (chunk_coords, vg_index_within_chunk) → list of global vertex indices
-    # For building object manifests
     object_manifests: dict[int, ObjectManifest] = {}
 
-    # Per-chunk: track how many vertex groups have been written
-    chunk_vg_counters: dict[ChunkCoords, int] = {}
-
-    # Write data per chunk
-    for chunk_coords, global_indices in sorted(chunk_assignments.items()):
-        chunk_positions = positions[global_indices]
-
-        if object_ids is not None:
+    if object_ids is not None:
+        # With objects: use per-object vertex groups per chunk (not per-bin)
+        # This preserves correct object_index semantics for read_object_vertices
+        chunk_assignments = assign_chunks(positions, chunk_shape)
+        for chunk_coords, global_indices in sorted(chunk_assignments.items()):
+            chunk_positions = positions[global_indices]
             chunk_obj_ids = object_ids[global_indices]
-            # Group points by object within this chunk
             unique_objs = np.unique(chunk_obj_ids)
             vert_groups: list[npt.NDArray] = []
             attr_groups_per_name: dict[str, list[npt.NDArray]] = {}
             if attributes:
-                for name in attributes:
-                    attr_groups_per_name[name] = []
+                for attr_name in attributes:
+                    attr_groups_per_name[attr_name] = []
 
             vg_idx = 0
             for obj_id in unique_objs:
                 mask = chunk_obj_ids == obj_id
-                obj_verts = chunk_positions[mask]
-                vert_groups.append(obj_verts)
-
-                # Track manifest
+                vert_groups.append(chunk_positions[mask])
                 oid = int(obj_id)
                 if oid not in object_manifests:
                     object_manifests[oid] = []
                 object_manifests[oid].append((chunk_coords, vg_idx))
-
-                # Attributes for this group
                 if attributes:
                     obj_global = global_indices[mask]
-                    for name, attr_data in attributes.items():
-                        attr_groups_per_name[name].append(
-                            np.asarray(attr_data[obj_global], dtype=attr_data.dtype)
-                        )
-
+                    for attr_name, attr_data in attributes.items():
+                        attr_groups_per_name[attr_name].append(attr_data[obj_global])
                 vg_idx += 1
 
             write_chunk_vertices(level_group, chunk_coords, vert_groups, dtype=np_dtype)
-
             if attributes:
-                for name, groups_list in attr_groups_per_name.items():
-                    write_chunk_attributes(
-                        level_group, name, chunk_coords, groups_list,
-                        dtype=attributes[name].dtype,
-                    )
-
-        else:
-            # Undifferentiated: single vertex group per chunk
-            write_chunk_vertices(level_group, chunk_coords, [chunk_positions], dtype=np_dtype)
-
+                for attr_name, groups_list in attr_groups_per_name.items():
+                    write_chunk_attributes(level_group, attr_name, chunk_coords, groups_list,
+                                           dtype=attributes[attr_name].dtype)
+    else:
+        # Undifferentiated: use per-bin vertex groups
+        for chunk_coords, vg_dict in sorted(chunked_bins.items()):
+            vert_groups_bin: list[npt.NDArray] = [
+                np.zeros((0, ndim), dtype=np_dtype) for _ in range(total_bins_per_chunk)
+            ]
+            attr_groups_per_name_bin: dict[str, list[npt.NDArray]] = {}
             if attributes:
-                for name, attr_data in attributes.items():
-                    chunk_attrs = attr_data[global_indices]
-                    write_chunk_attributes(
-                        level_group, name, chunk_coords, [chunk_attrs],
-                        dtype=attr_data.dtype,
-                    )
+                for attr_name, attr_data in attributes.items():
+                    shape_tail = attr_data.shape[1:] if attr_data.ndim > 1 else ()
+                    attr_groups_per_name_bin[attr_name] = [
+                        np.zeros((0,) + shape_tail, dtype=attr_data.dtype)
+                        for _ in range(total_bins_per_chunk)
+                    ]
 
-    # Write object index
+            for vg_idx, global_indices in vg_dict.items():
+                vert_groups_bin[vg_idx] = positions[global_indices]
+                if attributes:
+                    for attr_name, attr_data in attributes.items():
+                        attr_groups_per_name_bin[attr_name][vg_idx] = attr_data[global_indices]
+
+            write_chunk_vertices(level_group, chunk_coords, vert_groups_bin, dtype=np_dtype)
+            if attributes:
+                for attr_name, groups_list in attr_groups_per_name_bin.items():
+                    write_chunk_attributes(level_group, attr_name, chunk_coords, groups_list,
+                                           dtype=attributes[attr_name].dtype)
+
     if needs_objects and object_manifests:
         write_object_index(level_group, object_manifests, sid_ndim=ndim)
 
-    # Write object attributes
     n_objects = len(object_manifests) if object_manifests else 0
     if object_attributes:
         for name, data in object_attributes.items():
             create_object_attributes_array(level_group, name)
             write_object_attributes(level_group, name, data)
 
-    # Write groupings
     n_groups = 0
     if groups:
         create_groupings_array(level_group)
@@ -285,6 +263,7 @@ def write_points(
         "chunk_count": n_chunks,
         "object_count": n_objects,
         "group_count": n_groups,
+        "bins_per_chunk": bins_per_chunk,
     }
 
 
@@ -386,27 +365,79 @@ def read_points(
 
     # Path 2: read by bounding box or read all
     chunk_keys = list_chunk_keys(level_group)
+    effective_bin = root_meta.effective_bin_shape
+    bins_per_chunk = root_meta.bins_per_chunk
+    has_bins = any(b > 1 for b in bins_per_chunk)
 
-    if bbox is not None:
+    if bbox is not None and has_bins:
+        # Bin-level targeting: only decode matching vertex groups
+        from zarr_vectors.spatial.chunking import (
+            bins_intersecting_bbox,
+            bin_to_chunk,
+            bin_to_vg_index,
+        )
+        target_bins = bins_intersecting_bbox(
+            np.asarray(bbox[0]), np.asarray(bbox[1]),
+            effective_bin,
+        )
+        # Group target bins by chunk
+        chunk_vg_targets: dict[ChunkCoords, list[int]] = {}
+        for bc in target_bins:
+            cc = bin_to_chunk(bc, bins_per_chunk)
+            vgi = bin_to_vg_index(bc, cc, bins_per_chunk)
+            if cc not in chunk_vg_targets:
+                chunk_vg_targets[cc] = []
+            chunk_vg_targets[cc].append(vgi)
+
+        # Only read from chunks that have data
+        chunk_keys_set = set(chunk_keys)
+        all_positions = []
+        for cc, vg_indices in chunk_vg_targets.items():
+            if cc not in chunk_keys_set:
+                continue
+            for vgi in vg_indices:
+                try:
+                    vg = read_vertex_group(
+                        level_group, cc, vgi, dtype=dtype, ndim=ndim,
+                    )
+                    if len(vg) > 0:
+                        all_positions.append(vg)
+                except ArrayError:
+                    continue
+
+    elif bbox is not None:
+        # Chunk-level targeting (old stores without bins)
         target_chunks = set(chunks_intersecting_bbox(
             np.asarray(bbox[0]), np.asarray(bbox[1]),
             root_meta.chunk_shape,
         ))
         chunk_keys = [k for k in chunk_keys if k in target_chunks]
 
-    all_positions = []
-    all_attrs_by_name: dict[str, list[npt.NDArray]] = {}
+        all_positions = []
+        for chunk_coords in chunk_keys:
+            try:
+                groups = read_chunk_vertices(
+                    level_group, chunk_coords, dtype=dtype, ndim=ndim
+                )
+            except ArrayError:
+                continue
+            for vg in groups:
+                if len(vg) > 0:
+                    all_positions.append(vg)
 
-    for chunk_coords in chunk_keys:
-        try:
-            groups = read_chunk_vertices(
-                level_group, chunk_coords, dtype=dtype, ndim=ndim
-            )
-        except ArrayError:
-            continue
-
-        for vg in groups:
-            all_positions.append(vg)
+    else:
+        # Read all
+        all_positions = []
+        for chunk_coords in chunk_keys:
+            try:
+                groups = read_chunk_vertices(
+                    level_group, chunk_coords, dtype=dtype, ndim=ndim
+                )
+            except ArrayError:
+                continue
+            for vg in groups:
+                if len(vg) > 0:
+                    all_positions.append(vg)
 
     if not all_positions:
         return _empty_result(ndim)

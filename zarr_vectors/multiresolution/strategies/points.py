@@ -174,7 +174,7 @@ def coarsen_points_store(
         level=target_level,
         vertex_count=n_meta,
         arrays_present=[VERTICES],
-        bin_size=bin_tuple,
+        bin_shape=bin_tuple,
         coarsening_method="point_cloud_grid" + ("_medoid" if use_medoid else ""),
         parent_level=source_level,
     )

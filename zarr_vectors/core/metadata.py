@@ -447,7 +447,11 @@ class LevelMetadata:
                 f"object_sparsity must be in (0, 1], got {self.object_sparsity}"
             )
         if self.level == 0:
-            # Level 0: bin_shape/bin_ratio may be None (inherits from root)
+            # Level 0 inherits bin_shape from root — must not set its own
+            if self.bin_shape is not None:
+                raise MetadataError(
+                    "Level 0 should not have bin_shape set (inherits from root)"
+                )
             if self.parent_level is not None:
                 raise MetadataError("Level 0 should have parent_level=None")
         else:

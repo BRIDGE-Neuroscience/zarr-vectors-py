@@ -78,7 +78,7 @@ def _make_level_meta(level: int = 0, **overrides) -> LevelMetadata:
         arrays_present=["vertices"],
     )
     if level > 0:
-        defaults["bin_size"] = (200.0, 200.0, 200.0)
+        defaults["bin_shape"] = (200.0, 200.0, 200.0)
         defaults["coarsening_method"] = "grid_metanode"
         defaults["parent_level"] = level - 1
     defaults.update(overrides)
@@ -303,13 +303,13 @@ class TestLevelMetadata:
     def test_level0(self) -> None:
         m = _make_level_meta(0)
         m.validate()
-        assert m.bin_size is None
+        assert m.bin_shape is None
         assert m.parent_level is None
 
     def test_level1(self) -> None:
         m = _make_level_meta(1)
         m.validate()
-        assert m.bin_size == (200.0, 200.0, 200.0)
+        assert m.bin_shape == (200.0, 200.0, 200.0)
         assert m.parent_level == 0
 
     def test_round_trip(self) -> None:
@@ -317,12 +317,12 @@ class TestLevelMetadata:
         d = m.to_dict()
         m2 = LevelMetadata.from_dict(d)
         assert m2.level == 1
-        assert m2.bin_size == (200.0, 200.0, 200.0)
+        assert m2.bin_shape == (200.0, 200.0, 200.0)
         assert m2.vertex_count == 1000
         assert m2.parent_level == 0
 
     def test_level0_with_bin_size_invalid(self) -> None:
-        m = _make_level_meta(0, bin_size=(100.0, 100.0, 100.0))
+        m = _make_level_meta(0, bin_shape=(100.0, 100.0, 100.0))
         try:
             m.validate()
             assert False

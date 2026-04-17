@@ -334,8 +334,9 @@ def write_chunk_attributes(
     dtype = np.dtype(dtype)
     key = _chunk_key(chunk_coords)
     full_name = f"{ATTRIBUTES}/{attr_name}"
-    raw_bytes, _ = encode_vertex_groups(attr_groups, dtype)
+    raw_bytes, offsets = encode_vertex_groups(attr_groups, dtype)
     level_group.write_bytes(full_name, key, raw_bytes)
+    level_group.write_bytes(full_name, key + "_offsets", offsets.tobytes())
 
 
 def write_chunk_link_attributes(
@@ -675,42 +676,11 @@ def read_chunk_attributes(
             f"Cannot read attribute '{attr_name}' chunk {key}: {e}"
         ) from e
 
-    # Use vertex offsets for alignment (attributes are stored with same
-    # group structure as vertices)
-    offsets = _read_vertex_offsets(level_group, chunk_coords)
-
-    # Recompute offsets scaled to attribute dtype + ncols
-    itemsize = dtype.itemsize * ncols
-    vert_dtype = np.dtype(np.float32)  # default vertex dtype
-    vert_item = vert_dtype.itemsize
-    # Read vertex metadata for actual dtype if available
     try:
-        vmeta = level_group.read_array_meta(VERTICES)
-        vert_dtype = np.dtype(vmeta.get("dtype", "float32"))
-        vert_item = vert_dtype.itemsize
+        raw_offsets = level_group.read_bytes(full_name, key + "_offsets")
+        attr_offsets = np.frombuffer(raw_offsets, dtype=np.int64)
     except Exception:
-        pass
-
-    # Offsets into attribute buffer: vertex_offset / (vert_itemsize * vert_ndim)
-    # gives the vertex count, then * (attr_itemsize * ncols) gives attr offset.
-    # But since attributes are encoded independently with their own byte layout,
-    # we need to decode using the vertex group sizes.
-    # The simplest approach: attributes are encoded with the same encode_vertex_groups
-    # and stored with their own offsets embedded in the byte stream.
-    # For now, we compute attribute offsets from vertex offsets + known sizes.
-
-    # Actually, attributes are stored as their own contiguous byte streams
-    # using encode_vertex_groups. We need the attribute offsets.
-    # The number of vertex groups is known from vertex_group_offsets.
-    # We compute attribute offsets from vertex counts * attr_item.
-
-    # Get vertex counts per group from vertex offsets
-    groups = _vertex_group_counts(level_group, chunk_coords, vert_dtype)
-    attr_offsets = np.zeros(len(groups), dtype=np.int64)
-    cumulative = 0
-    for i, count in enumerate(groups):
-        attr_offsets[i] = cumulative
-        cumulative += count * itemsize
+        attr_offsets = np.array([0], dtype=np.int64)
 
     return decode_vertex_groups(raw, attr_offsets, dtype, ncols)
 

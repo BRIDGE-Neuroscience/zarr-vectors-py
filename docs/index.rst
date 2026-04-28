@@ -1,24 +1,55 @@
 .. zarr-vectors documentation master file
 
-.. image:: _static/zarr-vectors-logo.png
-   :width: 55%
-   :align: center
-   :alt: zarr-vectors
-
-|
-
 .. raw:: html
 
-   <p style="text-align:center;font-size:1.05rem;color:var(--color-foreground-secondary)">
-     A chunked, cloud-native format for multiscale spatial vector geometry —
-     built on Zarr v3.
-   </p>
+   <div class="zv-hero">
+     <span class="zv-hero-title">zarr-vectors</span>
+     <p class="zv-hero-tagline">
+       A chunked, cloud-native format for multiscale spatial vector geometry —
+       built on Zarr&nbsp;v3.
+     </p>
+   </div>
+
+----
+
+**zarr-vectors** stores three-dimensional spatial geometry — point clouds,
+streamlines, graphs, skeletons, and meshes — in spatially indexed Zarr v3
+stores. Spatial queries touch only the chunks they need, whether the store
+sits on a local filesystem or a cloud object store (S3, GCS). Resolution
+pyramids are encoded natively so viewers like Neuroglancer can stream data
+progressively at any scale.
+
+The library implements the `Zarr Vector Format
+<https://github.com/AllenInstitute/zarr_vectors>`_ originally specified by
+Forest Collman at the Allen Institute for Brain Sciences, extended with
+separated chunk/bin sizes, per-level sparsity, and OME-Zarr-compatible
+multiscale metadata.
+
+----
+
+| `GitHub <https://github.com/BRIDGE-Neuroscience/zarr-vectors-py>`__
+
+Where to start
+--------------
+
+.. list-table::
+   :widths: 35 65
+
+   * - :doc:`getting_started/quickstart`
+     - Write and query your first vector store in a few lines of Python.
+   * - :doc:`getting_started/concepts`
+     - The mental model: chunk shapes, bin shapes, and resolution pyramids.
+   * - :doc:`spec/index`
+     - Full technical specification for the Zarr Vector Format.
+   * - :doc:`api/index`
+     - Auto-generated reference for all public functions and classes.
 
 ----
 
 .. toctree::
    :maxdepth: 1
    :caption: Getting Started
+   :hidden:
 
    getting_started/installation
    getting_started/quickstart
@@ -28,12 +59,14 @@
 .. toctree::
    :maxdepth: 1
    :caption: Specification
+   :hidden:
 
    spec/index
 
 .. toctree::
    :maxdepth: 1
    :caption: Tutorials
+   :hidden:
 
    tutorials/data_types/point_clouds
    tutorials/data_types/polylines_streamlines
@@ -54,12 +87,14 @@
 .. toctree::
    :maxdepth: 1
    :caption: API Reference
+   :hidden:
 
    api/index
 
 .. toctree::
    :maxdepth: 1
    :caption: How-To Guides
+   :hidden:
 
    how_to/choose_chunk_and_bin
    how_to/memory_efficient_writes

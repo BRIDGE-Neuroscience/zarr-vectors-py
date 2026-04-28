@@ -1,5 +1,36 @@
 /* zarr-vectors documentation — custom CSS overrides for Furo theme */
 
+/* ── Home page hero ─────────────────────────────────────────────────────── */
+
+.zv-hero {
+    text-align: center;
+    padding: 3rem 1rem 2rem;
+}
+
+.zv-hero-title {
+    display: block;
+    font-size: 3.2rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--zv-magenta);
+    line-height: 1.1;
+    margin-bottom: 0.75rem;
+}
+
+@media (prefers-color-scheme: dark) {
+    .zv-hero-title { color: var(--zv-magenta-light); }
+}
+
+[data-theme="dark"] .zv-hero-title { color: var(--zv-magenta-light); }
+
+.zv-hero-tagline {
+    font-size: 1.1rem;
+    color: var(--color-foreground-secondary);
+    margin: 0 auto;
+    max-width: 42rem;
+    line-height: 1.6;
+}
+
 /* Brand accent — ZVF magenta */
 :root {
     --color-brand-primary:   #e0195c;

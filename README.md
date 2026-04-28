@@ -14,6 +14,10 @@ The package supports supervoxel-level spatial binning with separated chunk and b
 
 ---
 
+**Documentation:** https://zarr-vectors-py.readthedocs.io/en/latest
+
+---
+
 ## Install
 
 ```bash

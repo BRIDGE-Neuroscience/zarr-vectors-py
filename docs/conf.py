@@ -100,6 +100,7 @@ html_theme_options = {
     "source_directory": "docs/",
 }
 
+html_logo = "_static/zarr-vectors-logo.png"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
 

@@ -1,14 +1,9 @@
 .. zarr-vectors documentation master file
 
-.. raw:: html
-
-   <div class="zv-hero">
-     <span class="zv-hero-title">zarr-vectors</span>
-     <p class="zv-hero-tagline">
-       A chunked, cloud-native format for multiscale spatial vector geometry —
-       built on Zarr&nbsp;v3.
-     </p>
-   </div>
+.. image:: _static/zarr-vectors-logo.png
+   :width: 55%
+   :align: center
+   :alt: zarr-vectors
 
 ----
 

@@ -26,52 +26,13 @@
    getting_started/faq
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: Specification
 
    spec/index
-   spec/foundations/zarr_v3_primer
-   spec/foundations/store_types
-   spec/foundations/dimensionality
-   spec/foundations/codec_pipeline
-   spec/layout/directory_structure
-   spec/layout/root_metadata
-   spec/layout/level_groups
-   spec/layout/chunk_arrays
-   spec/layout/vg_index_arrays
-   spec/chunking/chunk_shape
-   spec/chunking/bin_shape
-   spec/chunking/chunk_vs_bin
-   spec/chunking/rechunking
-   spec/chunking/sharding
-   spec/multiscale/multiscale_metadata
-   spec/multiscale/pyramid_construction
-   spec/multiscale/sparsity
-   spec/geometry_types/index
-   spec/geometry_types/point_cloud
-   spec/geometry_types/line
-   spec/geometry_types/polyline
-   spec/geometry_types/streamline
-   spec/geometry_types/graph
-   spec/geometry_types/skeleton
-   spec/geometry_types/mesh
-   spec/object_model/vertex_groups
-   spec/object_model/object_manifest
-   spec/object_model/cross_chunk_links
-   spec/object_model/object_attributes
-   spec/validation/overview
-   spec/validation/l1_structural
-   spec/validation/l2_metadata
-   spec/validation/l3_consistency
-   spec/comparisons/neuroglancer_precomputed
-   spec/comparisons/trx_format
-   spec/comparisons/ome_zarr
-   spec/contributing/spec_change_process
-   spec/contributing/adding_geometry_types
-   spec/contributing/test_compliance
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: Tutorials
 
    tutorials/data_types/point_clouds
@@ -91,18 +52,10 @@
    tutorials/neuroglancer/precomputed_export
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: API Reference
 
    api/index
-   api/zarr_vectors
-   api/types
-   api/lazy
-   api/spatial
-   api/ingest
-   api/validate
-   api/constants
-   api/typing
 
 .. toctree::
    :maxdepth: 1

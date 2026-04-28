@@ -1,0 +1,195 @@
+# Sharding
+
+## Terms
+
+**Sharding codec** (`sharding_indexed`)
+: A Zarr v3 built-in codec that packs multiple logical *inner chunks* into a
+  single storage key called a *shard*. The shard stores an index at the end
+  of the file that maps each inner chunk's coordinate to its byte offset and
+  length within the shard.
+
+**Shard**
+: The storage unit when using the sharding codec. One shard corresponds to
+  one key in the underlying store (one file on disk, one object in S3).
+  A shard contains multiple inner chunks.
+
+**Inner chunk**
+: The logical unit of data within a shard, equivalent to a normal Zarr v3
+  chunk. In the ZVF context, the inner chunk corresponds to one ZVF spatial
+  chunk. The inner chunk shape must equal the ZVF `chunk_shape` expressed
+  in array coordinates.
+
+**Outer chunk** (shard shape)
+: The number of inner chunks grouped into one shard, expressed as a tuple.
+  An outer chunk of `(4, 4, 4)` means each shard contains `4 × 4 × 4 = 64`
+  inner chunks (ZVF spatial chunks).
+
+**Shard index**
+: A fixed-size lookup table appended to the end of each shard file that
+  maps each inner chunk coordinate to its byte range within the shard.
+  Enables retrieving a single inner chunk without reading the whole shard.
+
+---
+
+## Introduction
+
+The sharding codec addresses a common problem in cloud-native workflows:
+a fine `chunk_shape` chosen for query performance results in a very large
+number of small files (or S3 objects), which is expensive to manage and
+slow to list.
+
+With sharding, you keep the logical ZVF `chunk_shape` small (good for
+queries), but multiple ZVF chunks are packed into a single shard file. A
+reader fetching one ZVF chunk makes one HTTP request to the shard file (or
+uses HTTP range requests to fetch only the relevant byte range), exactly
+as if each chunk were a separate file — but the object count is reduced by
+the shard factor.
+
+Sharding is available natively in Zarr v3 and does not require changes to
+the ZVF data model. It is purely a storage-layer optimisation. The VG index,
+object model, and multiscale metadata are identical with or without sharding.
+
+---
+
+## Technical reference
+
+### When to use sharding
+
+| Scenario | Use sharding? |
+|----------|--------------|
+| Local file system, modest chunk count (<1M chunks) | No — unnecessary overhead |
+| Local file system, very many small chunks (>1M) | Consider — reduces inode pressure |
+| Cloud object store (S3/GCS), small chunk_shape | Yes — significantly reduces request cost |
+| Neuroglancer serving from S3 | Yes — reduces GET request cost |
+| Read-heavy workflows with many parallel readers | Yes — shard index enables range requests |
+| Write-heavy workflows with many parallel writers | No — shard contention hurts write throughput |
+
+### Configuration
+
+Sharding is configured via the `codec_config` argument to write functions,
+or by passing a pre-configured Zarr array spec. A minimal sharding
+configuration for a 3-D ZVF store:
+
+```python
+from zarr_vectors.types.points import write_points
+
+write_points(
+    "scan.zarrvectors",
+    positions,
+    chunk_shape=(100.0, 100.0, 100.0),   # ZVF logical chunk — the inner chunk
+    bin_shape=(25.0, 25.0, 25.0),
+    shard_shape=(4, 4, 4),               # 4×4×4 = 64 inner chunks per shard
+)
+```
+
+This produces one shard file per `(4, 4, 4)` block of the ZVF chunk grid.
+Each shard contains up to 64 ZVF chunks. The total number of shard files is
+`ceil(grid_shape[d] / 4) for d in [0,1,2]` — a factor of 64 fewer files
+than without sharding.
+
+### Codec pipeline with sharding
+
+When `shard_shape` is specified, the `zarr.json` for each array uses the
+`sharding_indexed` codec as the outermost byte-to-byte codec:
+
+```json
+{
+  "codecs": [
+    {
+      "name": "sharding_indexed",
+      "configuration": {
+        "chunk_shape": [1, 1, 1, 65536, 3],
+        "codecs": [
+          {"name": "bytes",  "configuration": {"endian": "little"}},
+          {"name": "blosc",  "configuration": {"cname": "zstd", "clevel": 5}}
+        ],
+        "index_codecs": [
+          {"name": "bytes",  "configuration": {"endian": "little"}},
+          {"name": "crc32c"}
+        ],
+        "index_location": "end"
+      }
+    }
+  ]
+}
+```
+
+The `chunk_shape` inside the sharding configuration is the *inner* chunk
+shape (one ZVF spatial chunk). The shard shape is inferred from the outer
+array chunk grid.
+
+### Relationship between shard shape and ZVF chunk shape
+
+The ZVF `chunk_shape` (physical units) maps to the *inner* chunk of the
+sharding codec. The shard shape (outer chunk) is expressed in inner-chunk
+units (integers), not in physical units:
+
+```
+ZVF chunk_shape = (100, 100, 100) µm
+shard_shape     = (4, 4, 4) inner chunks
+→ each shard covers (400, 400, 400) µm of physical space
+```
+
+Readers that understand the shard index can fetch a single ZVF chunk with
+one HTTP range request; readers that do not understand sharding must fetch
+the entire shard file. `zarr-vectors-py` always uses shard-indexed reads
+when the sharding codec is present.
+
+### Read behaviour with sharding
+
+When reading a single ZVF chunk from a sharded store:
+
+1. Identify the shard containing the requested inner chunk.
+2. Fetch only the shard index (last `n_inner_chunks × 16 bytes` of the
+   shard file, via an HTTP range request for the tail of the object).
+3. Look up the byte offset and length of the requested inner chunk.
+4. Fetch the inner chunk data (second HTTP range request).
+
+Total: **2 HTTP requests** for one ZVF chunk, regardless of shard size.
+Without sharding, it is **1 HTTP request** per chunk but many more objects.
+
+### Write behaviour with sharding
+
+Writing to a sharded store serialises writes at the shard level: multiple
+inner chunks that share a shard must be written atomically. `zarr-vectors-py`
+buffers all inner chunks for a shard before writing the shard file. This
+increases peak memory usage compared to non-sharded writes.
+
+For parallel writes (HPC, multi-process), assign non-overlapping shard
+ranges to different workers to avoid shard-level write contention.
+
+### Choosing shard shape
+
+A good shard shape balances:
+
+- **Shard file size:** target 10–100 MB per shard. Smaller shards offer
+  finer parallelism; larger shards reduce object count more aggressively.
+- **Read efficiency:** if most queries read entire shards, a large shard
+  shape saves requests. If most queries read only 1–2 inner chunks per
+  shard, a small shard shape minimises wasted range-request bytes.
+- **Write parallelism:** shards are the unit of write locking. A shard
+  shape of `(1, 1, 1)` disables sharding (each shard is one inner chunk);
+  this is useful if you need exactly one file per ZVF chunk.
+
+A practical default for Neuroglancer-style serving:
+
+```python
+shard_shape = (8, 8, 8)   # 512 inner chunks per shard, ~25–200 MB per shard
+```
+
+### Sharding and the VG index
+
+The `vertex_group_offsets/` array benefits especially from sharding.
+Unlike `vertices/`, which may have large chunks, `vertex_group_offsets/`
+chunks are small (one per ZVF spatial chunk, `B_per_chunk × 2 × 8` bytes).
+For `B_per_chunk = 64`, each index chunk is only 1 024 bytes. Without
+sharding, this creates millions of tiny files. With sharding, many index
+chunks are packed into a single shard, and a viewer can fetch the entire
+spatial index for a region in a handful of requests.
+
+### Compatibility
+
+Sharding requires Zarr v3 ≥ 2.18 (where `sharding_indexed` is built in).
+Readers that use an older Zarr version will fail to open sharded arrays.
+Document the use of sharding in the store's root `.zattrs` `"notes"` field
+to ensure consumers are aware of the requirement.

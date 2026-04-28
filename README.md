@@ -14,14 +14,6 @@ The package supports supervoxel-level spatial binning with separated chunk and b
 
 ---
 
-## Explainer
-
-<video src="assets/explainer.webm" controls width="100%"></video>
-
-**[▶ Launch full interactive version](https://bridge-neuroscience.github.io/zarr-vectors-py/docs/explainer.html)**
-
----
-
 ## Install
 
 ```bash

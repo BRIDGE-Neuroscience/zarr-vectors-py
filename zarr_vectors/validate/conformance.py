@@ -52,7 +52,24 @@ def validate_conformance(store_path: str | Path) -> ValidationResult:
             result.add_pass(f"'{gt}': no links convention required")
             continue
         if lc not in req:
-            result.add_error(f"'{gt}' requires links in {req}, got '{lc}'")
+            # Check if this is a composite store with a geometry index
+            # (each type has its own namespaced link arrays, so the root
+            # links_convention only applies to the primary geometry)
+            levels = list_resolution_levels(root)
+            is_composite = False
+            if 0 in levels:
+                try:
+                    lg_check = get_resolution_level(root, 0)
+                    if "geometry_index" in lg_check:
+                        is_composite = True
+                except Exception:
+                    pass
+            if is_composite:
+                result.add_pass(
+                    f"'{gt}': composite store — namespaced links (convention N/A)"
+                )
+            else:
+                result.add_error(f"'{gt}' requires links in {req}, got '{lc}'")
         else:
             result.add_pass(f"'{gt}': links_convention '{lc}' valid")
 
@@ -64,15 +81,32 @@ def validate_conformance(store_path: str | Path) -> ValidationResult:
     lg = get_resolution_level(root, 0)
 
     if GEOM_MESH in geom_types:
+        # Check mesh link_width — in composite stores, look at links_mesh/
+        found_mesh_links = False
         try:
             lmeta = lg.read_array_meta("links")
             lw = lmeta.get("link_width", 0)
-            if lw < 3:
-                result.add_error(f"Mesh link_width={lw}, must be >= 3")
-            else:
+            if lw >= 3:
                 result.add_pass(f"Mesh link_width={lw}")
+                found_mesh_links = True
+            elif lw > 0:
+                result.add_error(f"Mesh link_width={lw}, must be >= 3")
+                found_mesh_links = True
         except Exception:
-            result.add_warning("Mesh geometry but no links metadata")
+            pass
+        if not found_mesh_links:
+            # Try namespaced links_mesh/ (composite store)
+            try:
+                mesh_links_group = lg["links_mesh"]
+                lw = mesh_links_group.attrs.to_dict().get("link_width", 0)
+                if lw >= 3:
+                    result.add_pass(f"Mesh link_width={lw} (namespaced)")
+                elif lw > 0:
+                    result.add_error(f"Mesh link_width={lw}, must be >= 3")
+                else:
+                    result.add_pass("Mesh links_mesh exists (composite)")
+            except Exception:
+                result.add_warning("Mesh geometry but no links metadata")
 
     if GEOM_POINT_CLOUD in geom_types and not any(
         gt in geom_types for gt in [GEOM_GRAPH, GEOM_SKELETON, GEOM_MESH]

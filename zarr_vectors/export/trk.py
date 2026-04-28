@@ -50,15 +50,12 @@ def export_trk(
             "Install with: pip install nibabel"
         ) from e
 
-    try:
-        result = read_polylines(
-            str(store_path),
-            level=level,
-            object_ids=object_ids,
-            group_ids=group_ids,
-        )
-    except Exception as e:
-        raise ExportError(f"Failed to read store: {e}") from e
+    result = read_polylines(
+        str(store_path),
+        level=level,
+        object_ids=object_ids,
+        group_ids=group_ids,
+    )
 
     poly_list = result["polylines"]
     n_streamlines = len(poly_list)

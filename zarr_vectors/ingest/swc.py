@@ -21,6 +21,7 @@ def ingest_swc(
     chunk_shape: ChunkShape,
     *,
     dtype: str = "float32",
+    preserve_header: bool = True,
 ) -> dict[str, Any]:
     """Ingest an SWC file into a zarr vectors skeleton store.
 
@@ -29,6 +30,8 @@ def ingest_swc(
         output_path: Path for the output zarr vectors store.
         chunk_shape: Spatial chunk size per dimension (3D).
         dtype: Dtype for position data.
+        preserve_header: If True, store SWC comment lines in
+            ``/headers/swc/`` for round-trip export.
 
     Returns:
         Summary dict from :func:`write_graph`.
@@ -38,12 +41,15 @@ def ingest_swc(
         raise IngestError(f"Input file not found: {input_path}")
 
     try:
-        # Parse SWC: skip comment lines starting with #
         rows: list[list[float]] = []
+        comment_lines: list[str] = []
         with open(input_path) as f:
             for line in f:
                 line = line.strip()
-                if not line or line.startswith("#"):
+                if not line:
+                    continue
+                if line.startswith("#"):
+                    comment_lines.append(line)
                     continue
                 parts = line.split()
                 if len(parts) < 7:
@@ -88,7 +94,7 @@ def ingest_swc(
         "compartment": compartment,
     }
 
-    return write_graph(
+    result = write_graph(
         str(output_path),
         positions,
         edges_arr,
@@ -97,3 +103,18 @@ def ingest_swc(
         node_attributes=node_attributes,
         dtype=dtype,
     )
+
+    if preserve_header:
+        try:
+            from zarr_vectors.headers.registry import HeaderRegistry
+            from zarr_vectors.headers.formats import SWCHeader
+
+            swc_header = SWCHeader(
+                comment_lines=comment_lines,
+            )
+            reg = HeaderRegistry(str(output_path))
+            reg.add("swc", swc_header)
+        except Exception:
+            pass
+
+    return result

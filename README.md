@@ -12,6 +12,16 @@ The package supports supervoxel-level spatial binning with separated chunk and b
 *Aligned to the Zarr Vectors specification by Forest Collman, Allen Institute for Brain Sciences*
 [Link to specification GitHub](https://github.com/AllenInstitute/zarr_vectors)
 
+---
+
+## Explainer
+
+<video src="assets/explainer.webm" controls width="100%"></video>
+
+**[▶ Launch full interactive version](https://bridge-neuroscience.github.io/zarr-vectors-py/docs/explainer.html)**
+
+---
+
 ## Install
 
 ```bash
@@ -145,7 +155,7 @@ build_pyramid(
     "tracts.zarrvectors",
     level_configs=[
         {"bin_ratio": (2, 2, 2), "object_sparsity": 1.0},   # 8× from binning
-        {"bin_ratio": (4, 4, 4), "object_sparsity": 0.5},   # 64× binning × 2× sparsity = 128×
+        {"bin_ratio": (4, 4, 4), "object_sparsity": 0.5},   # 64× binning × 2× object = 128×
     ],
 )
 

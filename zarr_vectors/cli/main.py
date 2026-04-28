@@ -209,11 +209,11 @@ def _cmd_info(args: argparse.Namespace) -> None:
     print(f"Store: {args.store}")
     print(f"  SID dimensions: {meta.sid_ndim}D")
     print(f"  Chunk shape: {meta.chunk_shape}")
+    if meta.base_bin_shape:
+        print(f"  Bin shape: {meta.base_bin_shape}")
+        print(f"  Bins/chunk: {meta.bins_per_chunk}")
     print(f"  Bounds: {meta.bounds}")
     print(f"  Geometry types: {meta.geometry_types}")
-    print(f"  Links convention: {meta.links_convention}")
-    print(f"  Object index: {meta.object_index_convention}")
-    print(f"  Cross-chunk: {meta.cross_chunk_strategy}")
 
     levels = list_resolution_levels(root)
     print(f"  Resolution levels: {len(levels)}")
@@ -223,18 +223,101 @@ def _cmd_info(args: argparse.Namespace) -> None:
             attrs = lg.attrs
             vc = attrs.get("vertex_count", "?")
             bs = attrs.get("bin_shape", attrs.get("bin_size", None))
-            bs_str = f", bin_shape={bs}" if bs else ""
-            print(f"    resolution_{li}: {vc} vertices{bs_str}")
+            br = attrs.get("bin_ratio", None)
+            sp = attrs.get("object_sparsity", None)
+            parts = [f"{vc} vertices"]
+            if bs:
+                parts.append(f"bin_shape={bs}")
+            if br:
+                parts.append(f"ratio={br}")
+            if sp is not None and sp < 1.0:
+                parts.append(f"sparsity={sp}")
+            print(f"    resolution_{li}: {', '.join(parts)}")
         except Exception:
             print(f"    resolution_{li}: (unreadable)")
 
+    # Sharding
     try:
-        info = store_info(root)
-        if "total_bytes" in info:
-            mb = info["total_bytes"] / (1024 * 1024)
-            print(f"  Total size: {mb:.2f} MB")
+        from zarr_vectors.sharding.io import get_shard_info
+        si = get_shard_info(str(args.store))
+        if si.get("sharded"):
+            print(f"  Shard layout: {si['layout']} (size={si.get('shard_size')})")
     except Exception:
         pass
+
+    # Rechunk dims
+    root_attrs = root.attrs.to_dict()
+    rd = root_attrs.get("rechunk_dims")
+    if rd:
+        print(f"  Rechunk dims: {rd}")
+
+    # Headers
+    try:
+        from zarr_vectors.headers.registry import HeaderRegistry
+        reg = HeaderRegistry(root)
+        fmts = reg.available_formats
+        if fmts:
+            print(f"  Stored headers: {fmts}")
+    except Exception:
+        pass
+
+    # Composite
+    try:
+        lg0 = get_resolution_level(root, 0)
+        if "geometry_index" in lg0:
+            from zarr_vectors.composite import _read_geometry_index
+            gi = _read_geometry_index(lg0)
+            print(f"  Composite geometries: {list(gi.keys())}")
+    except Exception:
+        pass
+
+
+# ===================================================================
+# Rechunk
+# ===================================================================
+
+def _cmd_rechunk(args: argparse.Namespace) -> None:
+    from zarr_vectors.rechunk import rechunk, RechunkSpec
+
+    bins = None
+    if args.bins:
+        bins = [float(x) for x in args.bins.split(",")]
+
+    spec = RechunkSpec(
+        by=args.by,
+        bins=bins,
+    )
+
+    output = args.output if args.output else None
+    if args.inplace:
+        output = None
+
+    result = rechunk(args.store, spec, output=output)
+    print(f"Rechunked: {result['objects_rechunked']} objects into "
+          f"{result['bins_created']} bins")
+    print(f"  Dimensions: {result['rechunk_dims']}")
+    print(f"  Output: {result['output_path']}")
+
+
+# ===================================================================
+# Reshard
+# ===================================================================
+
+def _cmd_reshard(args: argparse.Namespace) -> None:
+    from zarr_vectors.sharding.io import reshard
+    from zarr_vectors.sharding.layout import ShardLayout
+
+    layout = ShardLayout(args.layout)
+    result = reshard(args.store, layout, shard_size=args.shard_size)
+    action = result.get("action", "unknown")
+    if action == "noop":
+        print(result.get("message", "no change"))
+    elif action == "unshard":
+        print(f"Unsharded: extracted {result.get('chunks_extracted', 0)} chunks")
+    else:
+        print(f"Resharded to {result.get('target_layout', layout.value)}: "
+              f"{result.get('shards_created', 0)} shards, "
+              f"{result.get('chunks_packed', 0)} chunks")
 
 
 # ===================================================================
@@ -292,6 +375,29 @@ def build_parser() -> argparse.ArgumentParser:
     info_parser = sub.add_parser("info", help="Show store information")
     info_parser.add_argument("store", help="Zarr vectors store path")
     info_parser.set_defaults(func=_cmd_info)
+
+    # --- rechunk ---
+    rechunk_parser = sub.add_parser("rechunk", help="Rechunk by group, attribute, or object ID")
+    rechunk_parser.add_argument("store", help="Zarr vectors store path")
+    rechunk_parser.add_argument("--by", required=True,
+                                 help="Dimension to rechunk by: group, object_id, attribute:<name>")
+    rechunk_parser.add_argument("--bins", default=None,
+                                 help="Comma-separated bin edges (e.g. 0,10,50,100)")
+    rechunk_parser.add_argument("--output", default=None,
+                                 help="Output store path (default: in-place)")
+    rechunk_parser.add_argument("--inplace", action="store_true",
+                                 help="Rechunk in-place (overwrite source)")
+    rechunk_parser.set_defaults(func=_cmd_rechunk)
+
+    # --- reshard ---
+    reshard_parser = sub.add_parser("reshard", help="Convert between shard layouts")
+    reshard_parser.add_argument("store", help="Zarr vectors store path")
+    reshard_parser.add_argument("--layout", required=True,
+                                 choices=["flat", "octree", "snake", "index_table"],
+                                 help="Target shard layout")
+    reshard_parser.add_argument("--shard-size", type=int, default=64,
+                                 help="Chunks per shard (default: 64)")
+    reshard_parser.set_defaults(func=_cmd_reshard)
 
     return parser
 

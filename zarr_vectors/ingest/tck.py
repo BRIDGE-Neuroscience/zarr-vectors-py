@@ -49,7 +49,7 @@ def ingest_tck(
 
     input_path = Path(input_path)
     if not input_path.exists():
-        raise IngestError(f"Input file not found: {input_path}")
+        raise FileNotFoundError(f"Input file not found: {input_path}")
 
     try:
         tck = nib.streamlines.load(str(input_path))

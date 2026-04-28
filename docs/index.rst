@@ -1,6 +1,6 @@
 .. zarr-vectors documentation master file
 
-.. image:: _static/zarr-vectors-logo.png
+.. image:: zarr-vectors.png
    :width: 55%
    :align: center
    :alt: zarr-vectors

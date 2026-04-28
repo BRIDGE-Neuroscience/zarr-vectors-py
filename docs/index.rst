@@ -20,9 +20,16 @@ Forest Collman at the Allen Institute for Brain Sciences, extended with
 separated chunk/bin sizes, per-level sparsity, and OME-Zarr-compatible
 multiscale metadata.
 
+.. raw:: html
+
+   <div class="zv-explainer-wrap">
+     <iframe src="explainer.html" class="zv-explainer-frame"
+             frameborder="0" allowfullscreen></iframe>
+   </div>
+
 ----
 
-| `GitHub <https://github.com/BRIDGE-Neuroscience/zarr-vectors-py>`__
+| `Link to the GitHub repository <https://github.com/BRIDGE-Neuroscience/zarr-vectors-py>`__
 
 Where to start
 --------------
@@ -39,7 +46,6 @@ Where to start
    * - :doc:`api/index`
      - Auto-generated reference for all public functions and classes.
 
-----
 
 .. toctree::
    :maxdepth: 1

@@ -13,8 +13,9 @@ The package supports supervoxel-level spatial binning with separated chunk and b
 [Link to specification GitHub](https://github.com/AllenInstitute/zarr_vectors)
 
 ---
+## Documentation
 
-**Documentation:** https://zarr-vectors-py.readthedocs.io/en/latest
+**link to readthedocs:** https://zarr-vectors-py.readthedocs.io/en/latest
 
 ---
 

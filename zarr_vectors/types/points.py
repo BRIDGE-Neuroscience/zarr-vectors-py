@@ -369,6 +369,9 @@ def read_points(
     bins_per_chunk = root_meta.bins_per_chunk
     has_bins = any(b > 1 for b in bins_per_chunk)
 
+    chunk_vg_targets: dict[ChunkCoords, list[int]] | None = None
+    chunk_keys_set: set[ChunkCoords] = set()
+
     if bbox is not None and has_bins:
         # Bin-level targeting: only decode matching vertex groups
         from zarr_vectors.spatial.chunking import (
@@ -381,7 +384,7 @@ def read_points(
             effective_bin,
         )
         # Group target bins by chunk
-        chunk_vg_targets: dict[ChunkCoords, list[int]] = {}
+        chunk_vg_targets = {}
         for bc in target_bins:
             cc = bin_to_chunk(bc, bins_per_chunk)
             vgi = bin_to_vg_index(bc, cc, bins_per_chunk)
@@ -457,16 +460,32 @@ def read_points(
     if attribute_names:
         for attr_name in attribute_names:
             attr_parts: list[npt.NDArray] = []
-            for chunk_coords in chunk_keys:
-                try:
-                    attr_groups = read_chunk_attributes(
-                        level_group, attr_name, chunk_coords,
-                        dtype=np.float32, ncols=1,
-                    )
-                    for ag in attr_groups:
-                        attr_parts.append(ag)
-                except ArrayError:
-                    continue
+            if chunk_vg_targets is not None:
+                # Bin-level bbox: read the same vertex groups as positions
+                for cc, vg_indices in chunk_vg_targets.items():
+                    if cc not in chunk_keys_set:
+                        continue
+                    try:
+                        attr_groups = read_chunk_attributes(
+                            level_group, attr_name, cc,
+                            dtype=np.float32, ncols=1,
+                        )
+                        for vgi in vg_indices:
+                            if vgi < len(attr_groups) and len(attr_groups[vgi]) > 0:
+                                attr_parts.append(attr_groups[vgi])
+                    except ArrayError:
+                        continue
+            else:
+                for chunk_coords in chunk_keys:
+                    try:
+                        attr_groups = read_chunk_attributes(
+                            level_group, attr_name, chunk_coords,
+                            dtype=np.float32, ncols=1,
+                        )
+                        for ag in attr_groups:
+                            attr_parts.append(ag)
+                    except ArrayError:
+                        continue
             if attr_parts:
                 attr_all = np.concatenate(attr_parts, axis=0)
                 if bbox is not None:

@@ -10,9 +10,9 @@ reductions, per-vertex attributes (normals, UV coordinates, scalars), and
 multi-mesh stores that pack thousands of mesh objects into a single
 spatially indexed store.
 
-All examples require `zarr-vectors` base install. OBJ/STL/PLY ingest and
-Draco compression require `zarr-vectors[ingest]` and `zarr-vectors[draco]`
-respectively.
+All examples on this page use only the core `zarr-vectors` API.
+OBJ/STL/PLY converters live in **`zarr-vectors-tools`**; Draco
+compression requires `zarr-vectors[draco]`.
 
 ---
 
@@ -75,60 +75,8 @@ write_mesh(
 
 ## Ingesting from external formats
 
-All ingest functions require `zarr-vectors[ingest]`.
-
-### OBJ
-
-```python
-from zarr_vectors.ingest.obj import ingest_obj
-
-ingest_obj(
-    "brain.obj",
-    "brain.zarrvectors",
-    chunk_shape=(10.0, 10.0, 10.0),
-    bin_shape=(2.5, 2.5, 2.5),
-)
-```
-
-Multi-object OBJ files (multiple `o` groups) produce a multi-mesh store
-with one ZVF object per OBJ group.
-
-### STL
-
-```python
-from zarr_vectors.ingest.stl import ingest_stl
-
-ingest_stl(
-    "organ.stl",
-    "organ.zarrvectors",
-    chunk_shape=(50.0, 50.0, 50.0),
-)
-```
-
-STL files store per-face normals. These are converted to per-vertex normals
-(averaged over adjacent faces) and stored in `attributes/normal/`.
-
-### PLY
-
-```python
-from zarr_vectors.ingest.ply import ingest_ply
-
-ingest_ply(
-    "scan.ply",
-    "scan.zarrvectors",
-    chunk_shape=(25.0, 25.0, 25.0),
-    # Vertex properties (x, y, z, nx, ny, nz, red, green, blue, …)
-    # are auto-detected from the PLY header
-)
-```
-
-### CLI ingest
-
-```bash
-zarr-vectors ingest mesh brain.obj brain.zarrvectors --chunk-shape 10,10,10
-zarr-vectors ingest mesh organ.stl organ.zarrvectors --chunk-shape 50,50,50
-zarr-vectors ingest mesh scan.ply  scan.zarrvectors  --chunk-shape 25,25,25
-```
+Format converters for OBJ, STL, and PLY (and the `zarr-vectors` CLI)
+live in the companion package **`zarr-vectors-tools`**.
 
 ---
 
@@ -138,17 +86,10 @@ Draco is a geometry compression library that exploits vertex-face
 correlations for significantly better compression than general-purpose
 codecs on mesh data. Requires `zarr-vectors[draco]`.
 
-```python
-from zarr_vectors.ingest.obj import ingest_obj
-
-ingest_obj(
-    "brain.obj",
-    "brain_draco.zarrvectors",
-    chunk_shape=(10.0, 10.0, 10.0),
-    use_draco=True,
-    draco_quantization=11,    # 11-bit quantisation: 1/2048 of bbox precision
-)
-```
+Draco compression is enabled when writing a mesh by passing
+`use_draco=True` to `write_mesh()`, or by configuring the mesh codec
+pipeline directly. Format converters in `zarr-vectors-tools` accept the
+same `use_draco`/`draco_quantization` keyword arguments.
 
 ### Compression ratio guidance
 
@@ -278,22 +219,8 @@ print(result["face_count"])
 
 ## Exporting
 
-```python
-from zarr_vectors.export.obj import export_obj
-from zarr_vectors.export.ply import export_ply
-
-# Export all mesh data to OBJ
-export_obj("brain.zarrvectors", "brain_out.obj")
-
-# Export with PLY (preserves per-vertex attributes)
-export_ply("brain.zarrvectors", "brain_out.ply")
-```
-
-For multi-mesh stores, pass `object_ids` to export a subset:
-
-```python
-export_obj("cells.zarrvectors", "cell_42.obj", object_ids=[42])
-```
+OBJ and PLY exporters live in the companion package
+**`zarr-vectors-tools`**.
 
 ---
 
@@ -317,7 +244,7 @@ from zarr_vectors.core.store import open_store
 
 root = open_store("cell.zarrvectors", mode="r+")
 root.attrs["closed_surface"] = True
-# Now zarr-vectors validate cell.zarrvectors --level 4 checks watertightness
+# Now validate(cell.zarrvectors, level=4) checks watertightness
 ```
 
 ---

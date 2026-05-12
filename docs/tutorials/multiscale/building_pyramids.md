@@ -63,14 +63,13 @@ build_pyramid(
 )
 ```
 
-Verify the result:
+After building, the resolution summary is:
 
-```bash
-zarr-vectors info synchrotron.zarrvectors
-# resolution_0:  500000 vertices  (bin_ratio [1,1,1])
-# resolution_1:  63241 vertices   (bin_ratio [2,2,2])
-# resolution_2:  8022 vertices    (bin_ratio [4,4,4])
-# resolution_3:  1018 vertices    (bin_ratio [8,8,8])
+```
+resolution_0:  500000 vertices  (bin_ratio [1,1,1])
+resolution_1:  63241 vertices   (bin_ratio [2,2,2])
+resolution_2:  8022 vertices    (bin_ratio [4,4,4])
+resolution_3:  1018 vertices    (bin_ratio [8,8,8])
 ```
 
 The actual vertex count at each level is less than the theoretical maximum

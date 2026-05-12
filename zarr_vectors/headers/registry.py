@@ -1,8 +1,11 @@
 """HeaderRegistry — manages format-specific headers within a store.
 
-Headers are stored under ``/headers/<format>/.zattrs``.  The registry
-provides ``add``, ``get``, ``remove``, and ``available_formats`` for
-managing them.
+Headers are stored under ``/headers/<format>/.zattrs`` as raw
+JSON-compatible dicts.  The registry provides ``add``, ``get``,
+``remove``, and ``available_formats`` for managing them.
+
+Typed (de)serialisation of header dicts is the responsibility of the
+format package; core only round-trips opaque dicts.
 """
 
 from __future__ import annotations
@@ -11,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from zarr_vectors.core.store import FsGroup, open_store
-from zarr_vectors.headers.formats import Header, header_from_dict, HEADER_CLASSES
 
 
 class HeaderRegistry:
@@ -52,14 +54,14 @@ class HeaderRegistry:
         """Check if a header exists for the given format."""
         return format_name in self.available_formats
 
-    def get(self, format_name: str) -> Header:
-        """Read and deserialise a format header.
+    def get(self, format_name: str) -> dict[str, Any]:
+        """Read a format header as a raw dict.
 
         Args:
             format_name: Format identifier (e.g. ``"trk"``, ``"swc"``).
 
         Returns:
-            The deserialised :class:`Header` subclass.
+            The JSON-compatible attributes dict for this format.
 
         Raises:
             KeyError: If no header exists for this format.
@@ -73,21 +75,20 @@ class HeaderRegistry:
             raise KeyError(f"No header stored for format '{format_name}'")
 
         fmt_group = hg[format_name]
-        attrs = fmt_group.attrs.to_dict()
-        return header_from_dict(attrs)
+        return fmt_group.attrs.to_dict()
 
-    def add(self, format_name: str, header: Header) -> None:
-        """Store a format header.
+    def add(self, format_name: str, header: dict[str, Any]) -> None:
+        """Store a format header as a dict.
 
         If a header for this format already exists, it is overwritten.
 
         Args:
             format_name: Format identifier.
-            header: Header dataclass to store.
+            header: JSON-compatible dict of header fields.
         """
         hg = self._headers_group(create=True)
         fmt_group = hg.require_group(format_name)
-        fmt_group.attrs.update(header.to_dict())
+        fmt_group.attrs.update(header)
 
     def remove(self, format_name: str) -> None:
         """Remove a stored header.

@@ -85,43 +85,6 @@ class TestLazyDaskParallel:
         assert all(r.shape == (3,) for r in results)
 
 
-class TestHeaderRoundTrip:
-    """Ingest SWC → header preserved → export → header used."""
-
-    def test_swc_header_roundtrip(self, tmp_path: Path) -> None:
-        from zarr_vectors.ingest.swc import ingest_swc
-        from zarr_vectors.export.swc import export_swc
-        from zarr_vectors.headers.registry import HeaderRegistry
-        from zarr_vectors.lazy import open_zvr
-
-        # Create synthetic SWC
-        swc_in = tmp_path / "neuron.swc"
-        lines = ["# ORIGINAL_SOURCE: test", "# CREATURE: mouse"]
-        for i in range(1, 30):
-            p = max(1, i - 1)
-            lines.append(f"{i} 3 {i*5:.1f} {i*3:.1f} {i*2:.1f} 2.0 "
-                         f"{p if i > 1 else -1}")
-        swc_in.write_text("\n".join(lines))
-
-        store = str(tmp_path / "neuron.zv")
-        ingest_swc(swc_in, store, (200., 200., 200.))
-
-        # Header preserved
-        reg = HeaderRegistry(store)
-        assert reg.has("swc")
-        hdr = reg.get("swc")
-        assert "# ORIGINAL_SOURCE: test" in hdr.comment_lines
-
-        # Export and verify
-        swc_out = tmp_path / "neuron_out.swc"
-        export_swc(store, swc_out)
-        assert swc_out.exists()
-
-        # Lazy access to headers
-        zvr = open_zvr(store)
-        assert "swc" in zvr.headers
-
-
 class TestShardReshardChain:
     """Shard → reshard → unshard round-trip with data integrity."""
 
@@ -340,50 +303,6 @@ class TestCompositeStore:
         zvr = open_zvr(store)
         assert len(zvr.geometry_types) == 3
         assert zvr[0].vertices.compute().shape[0] == 1000
-
-
-class TestCLIRechunkReshard:
-    """CLI: rechunk and reshard commands."""
-
-    def test_cli_rechunk(self, tmp_path: Path) -> None:
-        from zarr_vectors.types.polylines import write_polylines
-        from zarr_vectors.cli.main import main
-        from zarr_vectors.core.store import open_store
-        from zarr_vectors.core.arrays import list_chunk_keys
-
-        rng = np.random.default_rng(42)
-        polys = _make_streamlines(rng, 30)
-        store = str(tmp_path / "tracts.zv")
-        write_polylines(
-            store, polys, chunk_shape=(200., 200., 200.),
-            groups={0: list(range(15)), 1: list(range(15, 30))},
-        )
-
-        out = str(tmp_path / "cli_grouped.zv")
-        main(["rechunk", store, "--by", "group", "--output", out])
-
-        keys = list_chunk_keys(open_store(out)["resolution_0"])
-        assert all(len(k) == 4 for k in keys)
-
-    def test_cli_reshard(self, tmp_path: Path) -> None:
-        from zarr_vectors.types.points import write_points, read_points
-        from zarr_vectors.cli.main import main
-        from zarr_vectors.sharding.io import is_sharded
-
-        rng = np.random.default_rng(42)
-        store = str(tmp_path / "pts.zv")
-        write_points(
-            store,
-            rng.uniform(0, 200, size=(500, 3)).astype(np.float32),
-            chunk_shape=(100., 100., 100.),
-        )
-
-        main(["reshard", store, "--layout", "octree", "--shard-size", "8"])
-        assert is_sharded(store)
-
-        main(["reshard", store, "--layout", "flat"])
-        assert not is_sharded(store)
-        assert read_points(store)["vertex_count"] == 500
 
 
 class TestBackwardCompat:

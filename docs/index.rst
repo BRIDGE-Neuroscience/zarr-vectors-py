@@ -75,7 +75,6 @@ Where to start
    tutorials/data_types/meshes
    tutorials/multiscale/building_pyramids
    tutorials/multiscale/lazy_loading
-   tutorials/io/ingest_formats
    tutorials/io/cloud_stores
    tutorials/io/validation_and_repair
    tutorials/neuroglancer/overview
@@ -83,7 +82,6 @@ Where to start
    tutorials/neuroglancer/local_viewer
    tutorials/neuroglancer/shell_console
    tutorials/neuroglancer/layer_api
-   tutorials/neuroglancer/precomputed_export
 
 .. toctree::
    :maxdepth: 1

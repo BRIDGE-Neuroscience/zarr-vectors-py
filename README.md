@@ -28,11 +28,14 @@ pip install zarr-vectors
 With optional dependencies:
 
 ```bash
-pip install zarr-vectors[ingest]     # LAS, PLY, TRK, TCK, TRX, SWC, GraphML, OBJ, STL
 pip install zarr-vectors[draco]      # Draco mesh compression
 pip install zarr-vectors[cloud]      # S3/GCS remote stores
 pip install zarr-vectors[all]        # everything
 ```
+
+Format converters (LAS, PLY, CSV, TRK, TCK, TRX, SWC, GraphML, OBJ, STL,
+Neuroglancer precomputed) and the `zarr-vectors` CLI ship in the
+companion package [`zarr-vectors-tools`](https://github.com/BRIDGE-Neuroscience/zarr-vectors-tools).
 
 ## Quick Start
 
@@ -89,48 +92,6 @@ print(result["polyline_count"])  # 250
 
 result = read_polylines("tracts.zarrvectors", object_ids=[42])
 print(result["polyline_count"])  # 1
-```
-
-### Skeletons (SWC)
-
-```python
-from zarr_vectors.ingest.swc import ingest_swc
-from zarr_vectors.types.graphs import read_graph
-from zarr_vectors.export.swc import export_swc
-
-ingest_swc("neuron.swc", "neuron.zarrvectors", chunk_shape=(200.0, 200.0, 200.0))
-result = read_graph("neuron.zarrvectors")
-print(result["node_count"], "nodes,", result["edge_count"], "edges")
-
-export_swc("neuron.zarrvectors", "neuron_out.swc")
-```
-
-### Meshes (OBJ)
-
-```python
-from zarr_vectors.ingest.obj import ingest_obj
-from zarr_vectors.types.meshes import read_mesh
-
-ingest_obj("brain.obj", "brain.zarrvectors", chunk_shape=(100.0, 100.0, 100.0))
-result = read_mesh("brain.zarrvectors")
-print(result["vertex_count"], "vertices,", result["face_count"], "faces")
-```
-
-### CSV point clouds
-
-```python
-from zarr_vectors.ingest.csv_points import ingest_csv
-from zarr_vectors.export.csv_points import export_csv
-
-ingest_csv(
-    "measurements.csv",
-    "measurements.zarrvectors",
-    chunk_shape=(50.0, 50.0, 50.0),
-    position_columns=["x", "y", "z"],
-    attribute_columns=["temperature", "pressure"],
-)
-
-export_csv("measurements.zarrvectors", "output.csv")
 ```
 
 ## Multi-Resolution Pyramids
@@ -249,31 +210,6 @@ print(result.summary())
 
 Levels: L1 structure, L2 metadata (bin/chunk divisibility, sparsity range), L3 consistency (vertex counts, bin bounds), L4 geometry conformance, L5 multi-resolution pyramid (ratio monotonicity, vertex non-increase).
 
-## CLI
-
-```bash
-# Ingest
-zarr-vectors ingest points  scan.las     scan.zarrvectors   --chunk-shape 100,100,50
-zarr-vectors ingest streams tracts.trk   tracts.zarrvectors --chunk-shape 50,50,50
-zarr-vectors ingest skeleton neuron.swc  neuron.zarrvectors --chunk-shape 200,200,200
-zarr-vectors ingest mesh    brain.obj    brain.zarrvectors  --chunk-shape 100,100,100
-
-# Export
-zarr-vectors export csv  scan.zarrvectors   output.csv
-zarr-vectors export obj  brain.zarrvectors  brain_out.obj
-zarr-vectors export swc  neuron.zarrvectors neuron_out.swc
-zarr-vectors export trk  tracts.zarrvectors tracts_out.trk
-
-# Multi-resolution
-zarr-vectors build-pyramid scan.zarrvectors --reduction-factor 8
-
-# Validate
-zarr-vectors validate scan.zarrvectors --level 5
-
-# Info
-zarr-vectors info scan.zarrvectors
-```
-
 ## Key Concepts
 
 ### Chunks vs Bins
@@ -299,12 +235,13 @@ For geometry types with discrete objects (streamlines, skeletons, meshes), multi
 
 Total volume reduction = vertex_reduction × object_reduction. For example, `bin_ratio=(2,2,2)` gives 8× vertex reduction and `object_sparsity=0.5` gives 2× object reduction, for 16× total.
 
-## Supported Formats
+## Format converters
 
-| Direction | Points | Streamlines | Skeletons | Meshes |
-|-----------|--------|-------------|-----------|--------|
-| **Ingest** | LAS, PLY, CSV, XYZ | TRK, TCK, TRX | SWC, GraphML | OBJ, STL |
-| **Export** | CSV, PLY | TRK, TRX | SWC | OBJ |
+Format converters and the `zarr-vectors` CLI ship in the companion
+package [`zarr-vectors-tools`](https://github.com/BRIDGE-Neuroscience/zarr-vectors-tools).
+Supported third-party formats: LAS/PLY/CSV/XYZ point clouds, TRK/TCK/TRX
+streamlines, SWC/GraphML skeletons and graphs, OBJ/STL/PLY meshes, and
+Neuroglancer precomputed export.
 
 ## Store Layout
 

@@ -153,20 +153,8 @@ rechunk_store(
 
 ### CLI usage
 
-```bash
-zarr-vectors rechunk \
-    scan.zarrvectors \
-    scan_rechunked.zarrvectors \
-    --chunk-shape 500,500,500 \
-    --bin-shape 100,100,100
-```
-
-Add `--in-place` to replace the source (writes to a temp directory first,
-then replaces):
-
-```bash
-zarr-vectors rechunk scan.zarrvectors --chunk-shape 500,500,500 --in-place
-```
+The `zarr-vectors rechunk` CLI subcommand lives in the companion package
+**`zarr-vectors-tools`**.
 
 ### What is preserved vs recomputed
 
@@ -207,8 +195,9 @@ and re-sorts vertices within each chunk). It does not change
 Run the full L5 validator after rechunking to confirm the new store is
 consistent:
 
-```bash
-zarr-vectors validate scan_rechunked.zarrvectors --level 5
+```python
+from zarr_vectors.validate import validate
+result = validate("scan_rechunked.zarrvectors", level=5)
 ```
 
 Pay particular attention to L3 checks (VG offset consistency) and L4 checks

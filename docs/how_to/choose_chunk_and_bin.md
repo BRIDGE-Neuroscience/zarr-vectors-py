@@ -198,12 +198,13 @@ write_graph(
 
 ## After writing: profile and tune
 
-Run the info command and check the distribution of vertices per chunk:
+Open the store and inspect the distribution of vertices per chunk
+(the `zarr-vectors info` CLI in `zarr-vectors-tools` prints this
+summary directly):
 
-```bash
-zarr-vectors info scan.zarrvectors --verbose
-# resolution_0:  100000 vertices, 125 chunks
-#   vertices/chunk:  min=124  median=812  max=1843  p95=1602
+```
+resolution_0:  100000 vertices, 125 chunks
+  vertices/chunk:  min=124  median=812  max=1843  p95=1602
 ```
 
 If `median << 10000`, your `chunk_shape` is too small relative to the

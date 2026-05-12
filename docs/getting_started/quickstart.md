@@ -119,39 +119,11 @@ print(result["polylines"][0].shape)  # (40, 3) — the 40 vertices of streamline
 
 ---
 
-## Skeletons (SWC)
+## Format converters
 
-```python
-from zarr_vectors.ingest.swc import ingest_swc
-from zarr_vectors.types.graphs import read_graph
-from zarr_vectors.export.swc import export_swc
-
-# Requires zarr-vectors[ingest]
-ingest_swc("neuron.swc", "neuron.zarrvectors",
-           chunk_shape=(200.0, 200.0, 200.0))
-
-result = read_graph("neuron.zarrvectors")
-print(result["node_count"], "nodes,", result["edge_count"], "edges")
-
-# Round-trip back to SWC
-export_swc("neuron.zarrvectors", "neuron_out.swc")
-```
-
----
-
-## Meshes (OBJ)
-
-```python
-from zarr_vectors.ingest.obj import ingest_obj
-from zarr_vectors.types.meshes import read_mesh
-
-# Requires zarr-vectors[ingest]
-ingest_obj("brain.obj", "brain.zarrvectors",
-           chunk_shape=(100.0, 100.0, 100.0))
-
-result = read_mesh("brain.zarrvectors")
-print(result["vertex_count"], "vertices,", result["face_count"], "faces")
-```
+Ingesting from third-party formats (LAS, PLY, CSV, TRK, TCK, TRX, SWC,
+GraphML, OBJ, STL) and exporting back to them lives in the companion
+package **`zarr-vectors-tools`**, alongside the `zarr-vectors` CLI.
 
 ---
 
@@ -168,25 +140,6 @@ print(result.summary())
 
 Validation levels 1–5 check progressively deeper properties of the store.
 See [Validation](../tutorials/io/validation_and_repair.md) for details.
-
----
-
-## CLI
-
-All of the above operations are also available from the command line:
-
-```bash
-# Ingest a LAS point cloud
-zarr-vectors ingest points scan.las scan.zarrvectors --chunk-shape 200,200,200
-
-# Validate
-zarr-vectors validate scan.zarrvectors --level 5
-
-# Print store summary
-zarr-vectors info scan.zarrvectors
-```
-
-Run `zarr-vectors --help` for the full command reference.
 
 ---
 

@@ -115,33 +115,8 @@ detects the convention from the input file header.
 
 ### Ingest and export
 
-```python
-from zarr_vectors.ingest.swc import ingest_swc
-from zarr_vectors.export.swc import export_swc
-
-# Ingest
-ingest_swc(
-    "neuron.swc",
-    "neuron.zarrvectors",
-    chunk_shape=(200.0, 200.0, 200.0),
-    bin_shape=(50.0, 50.0, 50.0),
-)
-
-# Export — lossless if swc_compatible = true
-export_swc("neuron.zarrvectors", "neuron_out.swc")
-```
-
-For multi-skeleton stores (many neurons in one ZVF store):
-
-```python
-from zarr_vectors.ingest.swc import ingest_swc_directory
-
-ingest_swc_directory(
-    "morphologies/",          # directory of .swc files
-    "neurons.zarrvectors",
-    chunk_shape=(500., 500., 500.),
-)
-```
+SWC converters (single-file and directory ingest, SWC export) live in
+the companion package **`zarr-vectors-tools`**.
 
 ### Write API
 

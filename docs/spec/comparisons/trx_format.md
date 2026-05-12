@@ -125,19 +125,9 @@ affine to vertex positions before writing to ZVF. The affine can be stored
 in root `.zattrs` under `custom_metadata.affine` for provenance, but it
 will not be automatically applied by `zarr-vectors-py`.
 
-```python
-from zarr_vectors.ingest.trx import ingest_trx
-
-# apply_affine=True (default) applies the TRX affine during ingest
-ingest_trx("tracts.trx", "tracts.zarrvectors",
-           chunk_shape=(50., 50., 50.),
-           apply_affine=True)
-
-# apply_affine=False keeps voxel-space coordinates
-ingest_trx("tracts.trx", "tracts.zarrvectors",
-           chunk_shape=(50., 50., 50.),
-           apply_affine=False)
-```
+TRX ingest (via the companion package **`zarr-vectors-tools`**) exposes
+an `apply_affine` keyword that controls whether the TRX header affine
+is applied to vertex positions before they are written to ZVF.
 
 ### Performance comparison
 
@@ -156,18 +146,8 @@ pattern has comparable or better throughput than ZVF's chunked reads.
 
 ### Ingest and export
 
-```python
-from zarr_vectors.ingest.trx import ingest_trx
-from zarr_vectors.export.trx import export_trx
-
-# TRX → ZVF (preserves all dps and dpp attributes)
-ingest_trx("tracts.trx", "tracts.zarrvectors",
-           chunk_shape=(50., 50., 50.))
-
-# ZVF → TRX (round-trip)
-export_trx("tracts.zarrvectors", "tracts_out.trx")
-```
-
-The export is lossless for the base level (level 0). Coarser resolution
-levels are not exported to TRX (TRX has no multi-resolution concept). The
-exported TRX does not include the ZVF chunk layout metadata.
+TRX converters live in the companion package **`zarr-vectors-tools`**.
+TRX ingest preserves all dps and dpp attributes; TRX export is lossless
+for the base level (level 0). Coarser resolution levels are not exported
+to TRX (TRX has no multi-resolution concept), and the exported TRX does
+not include the ZVF chunk layout metadata.

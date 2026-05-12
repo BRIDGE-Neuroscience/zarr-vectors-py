@@ -116,19 +116,9 @@ Different arrays in a ZVF store may use different codec pipelines. The
 ### Draco codec (mesh geometry)
 
 When `zarr-vectors[draco]` is installed, the `links/faces` and `vertices/`
-arrays of mesh-type stores can use Draco compression:
-
-```python
-from zarr_vectors.ingest.obj import ingest_obj
-
-ingest_obj(
-    "brain.obj",
-    "brain.zarrvectors",
-    chunk_shape=(100., 100., 100.),
-    use_draco=True,         # requires zarr-vectors[draco]
-    draco_quantization=11,  # quantisation bits for vertex positions
-)
-```
+arrays of mesh-type stores can use Draco compression. Enable it by
+passing `use_draco=True` and `draco_quantization=<bits>` to `write_mesh()`
+(or to the OBJ/STL/PLY converters in `zarr-vectors-tools`).
 
 The custom codec is registered with Zarr as:
 

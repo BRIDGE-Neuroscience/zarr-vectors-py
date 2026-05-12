@@ -121,21 +121,11 @@ regardless of dataset size.
 
 ## Strategy 3: Generator-based ingest
 
-For formats read by external libraries (LAS, TRX, etc.), use the
-generator-based ingest functions that yield vertex batches without
-loading the full file:
-
-```python
-from zarr_vectors.ingest.las import ingest_las_streaming
-
-# Reads the LAS file in 1M-point blocks; never holds more than one block
-ingest_las_streaming(
-    "huge_survey.laz",
-    "survey.zarrvectors",
-    chunk_shape=(200., 200., 100.),
-    block_size=1_000_000,   # read 1M points at a time
-)
-```
+For formats read by external libraries (LAS, TRX, etc.), the companion
+package **`zarr-vectors-tools`** provides streaming converters (e.g.
+`ingest_las_streaming`) that yield vertex batches without loading the
+full file. The streaming converters call the same chunked-writer
+primitives shown in Strategy 1 above.
 
 ---
 

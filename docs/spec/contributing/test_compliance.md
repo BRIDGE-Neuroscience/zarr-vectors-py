@@ -232,8 +232,8 @@ Both jobs run on Python 3.10, 3.11, and 3.12.
 
 1. Add a generator function to `tests/generate_fixtures.py`.
 2. Run `python tests/generate_fixtures.py --type <new_type>`.
-3. Inspect the generated store with `zarr-vectors info` and validate
-   manually at L5.
+3. Inspect the generated store and validate manually at L5 with
+   `zarr_vectors.validate.validate(store, level=5)`.
 4. Commit both the store and the `expected.npz`.
 5. Add compliance tests in `tests/test_<new_type>.py`.
 6. Ensure the nightly CI job runs the new tests.

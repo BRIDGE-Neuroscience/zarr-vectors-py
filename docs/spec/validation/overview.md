@@ -118,19 +118,8 @@ check.path       # str: store path relevant to this check (e.g. "resolution_0/.z
 
 ### CLI usage
 
-```bash
-# Default: level 5
-zarr-vectors validate scan.zarrvectors
-
-# Specific level
-zarr-vectors validate scan.zarrvectors --level 2
-
-# JSON output for CI
-zarr-vectors validate scan.zarrvectors --format json | jq '.is_valid'
-
-# Validate multiple stores
-zarr-vectors validate scan.zarrvectors tracts.zarrvectors --level 3
-```
+The `zarr-vectors validate` CLI lives in the companion package
+**`zarr-vectors-tools`**.
 
 ### Validation and writers
 

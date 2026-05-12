@@ -127,35 +127,10 @@ write_polylines(
 )
 ```
 
-### Ingest from TRK / TCK / TRX
+### Ingest and export
 
-```python
-from zarr_vectors.ingest.trk import ingest_trk
-from zarr_vectors.ingest.tck import ingest_tck
-from zarr_vectors.ingest.trx import ingest_trx
-
-# TRK (TrackVis format)
-ingest_trk("tracts.trk", "tracts.zarrvectors",
-           chunk_shape=(50., 50., 50.))
-
-# TCK (MRtrix format)
-ingest_tck("tracts.tck", "tracts.zarrvectors",
-           chunk_shape=(50., 50., 50.))
-
-# TRX (Tractography Exchange format) — preserves dps/dpp attributes
-ingest_trx("tracts.trx", "tracts.zarrvectors",
-           chunk_shape=(50., 50., 50.))
-```
-
-### Export to TRK / TRX
-
-```python
-from zarr_vectors.export.trk import export_trk
-from zarr_vectors.export.trx import export_trx
-
-export_trk("tracts.zarrvectors", "tracts_out.trk")
-export_trx("tracts.zarrvectors", "tracts_out.trx")
-```
+TRK, TCK, and TRX converters live in the companion package
+**`zarr-vectors-tools`**. TRX ingest preserves dps/dpp attributes.
 
 ### Variable step size
 

@@ -114,15 +114,10 @@ whose `bin_shape` is commensurate with the on-screen pixel size. This is
 transparent to the user: zooming in reveals finer detail without any manual
 level switching.
 
-### New `precomputed-export` CLI command
+### Precomputed export
 
-```bash
-zarr-vectors export precomputed-skeletons \
-    neurons.zarrvectors \
-    gs://my-bucket/neurons_precomputed/
-```
-
-This command is not present in upstream `ngtools`.
+Precomputed export (and the `zarr-vectors` CLI subcommand for it) lives
+in the companion package **`zarr-vectors-tools`**.
 
 ---
 

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"description: \\\\`\" schema/zarr_vectors.linkml.yaml)",
+      "Bash(python -c ' *)",
+      "Bash(python schema/regen.py)",
+      "Bash(python schema/regen.py --check)",
+      "Bash(python -c 'import json; s = json.load\\(open\\('\\\\''schema/zarr_vectors.schema.json'\\\\''\\)\\); print\\('\\\\''schema title:'\\\\'', s.get\\('\\\\''title'\\\\''\\)\\); print\\('\\\\''top $defs:'\\\\'', sorted\\(s.get\\('\\\\''$defs'\\\\'', {}\\).keys\\(\\)\\)[:8]\\)')",
+      "Bash(python -c 'import json; s = json.load\\(open\\('\\\\''schema/zarr_vectors.schema.json'\\\\''\\)\\); print\\('\\\\''title:'\\\\'', s.get\\('\\\\''title'\\\\''\\)\\); print\\('\\\\''$defs:'\\\\'', sorted\\(s.get\\('\\\\''$defs'\\\\'', {}\\).keys\\(\\)\\)[:6]\\)')",
+      "Bash(python -m pytest tests/test_linkml_schema.py --tb=short -q)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git rm *)"
+    ]
+  }
+}

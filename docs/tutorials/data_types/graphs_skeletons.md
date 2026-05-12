@@ -10,57 +10,13 @@ Both types use the same on-disk array schema; the distinction is the
 `is_tree` flag and the additional SWC-compatible attributes that `skeleton`
 stores.
 
-All examples require only `zarr-vectors` base install except the SWC and
-GraphML ingest sections, which require `zarr-vectors[ingest]`.
+All examples on this page use only the core `zarr-vectors` API.
+SWC/GraphML converters live in the companion package
+**`zarr-vectors-tools`**.
 
 ---
 
 ## Skeletons (SWC-aligned)
-
-### Ingest from SWC
-
-The most common way to create a ZVF skeleton store is by ingesting an
-existing SWC file:
-
-```python
-from zarr_vectors.ingest.swc import ingest_swc
-from zarr_vectors.types.graphs import read_graph
-
-ingest_swc(
-    "neuron.swc",
-    "neuron.zarrvectors",
-    chunk_shape=(200.0, 200.0, 200.0),
-    bin_shape=(50.0, 50.0, 50.0),
-)
-
-result = read_graph("neuron.zarrvectors")
-print(result["node_count"])          # number of SWC rows
-print(result["edge_count"])          # number of parent-child edges
-print(result["attributes"]["radius"].shape)    # (n_nodes,)
-print(result["attributes"]["swc_type"].shape)  # (n_nodes,)
-```
-
-After ingest, every SWC column is preserved:
-
-| SWC column | ZVF storage |
-|-----------|-------------|
-| `x, y, z` | `vertices/` positions |
-| `radius` | `attributes/radius/` (float32) |
-| `type` | `attributes/swc_type/` (int32, SWC compartment taxonomy) |
-| `id` | `attributes/swc_id/` (int64, original row ID) |
-| `parent_id` | Encoded in `links/edges/` as `[child, parent]` |
-
-### Export to SWC
-
-Round-trip back to SWC is lossless when `swc_compatible = true` (the
-default after `ingest_swc`):
-
-```python
-from zarr_vectors.export.swc import export_swc
-
-export_swc("neuron.zarrvectors", "neuron_out.swc")
-# Produces an SWC identical to the input (possibly with re-ordered rows)
-```
 
 ### Write a skeleton programmatically
 
@@ -130,30 +86,8 @@ result = read_graph(
 ## Multi-skeleton stores
 
 For connectome-scale datasets with thousands of neurons, a single ZVF
-store is far more efficient than per-neuron files:
-
-### Ingest a directory of SWC files
-
-```python
-from zarr_vectors.ingest.swc import ingest_swc_directory
-
-ingest_swc_directory(
-    "morphologies/",              # directory of .swc files
-    "connectome.zarrvectors",
-    chunk_shape=(500.0, 500.0, 500.0),
-    bin_shape=(100.0, 100.0, 100.0),
-)
-```
-
-Each SWC file becomes one object (skeleton) in the store. The object ID
-is the index of the SWC file in sorted filename order. To get the mapping:
-
-```python
-from zarr_vectors.ingest.swc import get_swc_object_id_map
-
-id_map = get_swc_object_id_map("connectome.zarrvectors")
-# {"neuron_001.swc": 0, "neuron_002.swc": 1, …}
-```
+store is far more efficient than per-neuron files. SWC-directory ingest
+and SWC ID-mapping helpers live in **`zarr-vectors-tools`**.
 
 ### Read a specific neuron
 
@@ -250,32 +184,8 @@ print(result["attributes"]["diameter"].shape)   # (2000,)
 
 ## GraphML ingest
 
-GraphML files that include node coordinate attributes can be ingested
-directly (requires `zarr-vectors[ingest]`):
-
-```python
-from zarr_vectors.ingest.graphml import ingest_graphml
-
-ingest_graphml(
-    "network.graphml",
-    "network.zarrvectors",
-    chunk_shape=(100.0, 100.0, 100.0),
-    coordinate_attributes=("x", "y", "z"),  # GraphML attribute names for coordinates
-    edge_attribute_columns=["weight"],
-)
-```
-
-For GraphML files without explicit spatial coordinates, pass a coordinate
-array from a separate source:
-
-```python
-ingest_graphml(
-    "network.graphml",
-    "network.zarrvectors",
-    chunk_shape=(100., 100., 100.),
-    external_positions=positions_array,   # (n_nodes, 3) float32
-)
-```
+GraphML conversion lives in the companion package
+**`zarr-vectors-tools`**.
 
 ---
 

@@ -14,24 +14,9 @@ For the complete check catalogue by level, see
 
 ## Running validation
 
-### CLI
-
-```bash
-# Full validation (level 5) — recommended after writing any store
-zarr-vectors validate scan.zarrvectors
-
-# Specific level — use level 2 for fast CI checks
-zarr-vectors validate scan.zarrvectors --level 2
-
-# JSON output — pipe to jq for scripting
-zarr-vectors validate scan.zarrvectors --format json | jq '.is_valid'
-
-# Multiple stores
-zarr-vectors validate scan.zarrvectors tracts.zarrvectors neurons.zarrvectors
-
-# Validate a remote store
-zarr-vectors validate s3://my-bucket/scan.zarrvectors --level 2
-```
+The `zarr-vectors` CLI (with `validate` and `info` subcommands) lives in
+the companion package **`zarr-vectors-tools`**. The Python API shown
+below is part of this core package.
 
 ### Python API
 
@@ -315,15 +300,11 @@ publishing a dataset. Use it for fast incremental checks during development.
 
 ## Automated validation in CI
 
-```yaml
-# .github/workflows/validate.yml
-- name: Validate reference fixtures
-  run: |
-    zarr-vectors validate tests/fixtures/point_cloud_3d/store.zarrvectors --level 5
-    zarr-vectors validate tests/fixtures/streamline_3d_multiscale/store.zarrvectors --level 5
-```
+Use the Python API in a small driver script if you want a CI step, or
+invoke `zarr-vectors validate` from **`zarr-vectors-tools`** if it is
+already installed in the CI environment.
 
-Or in a pytest fixture:
+In a pytest fixture:
 
 ```python
 import pytest

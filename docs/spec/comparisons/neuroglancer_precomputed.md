@@ -134,17 +134,11 @@ Attribute support: precomputed skeletons support per-vertex `vertex_attributes`
 
 #### Export to precomputed skeletons
 
-```bash
-zarr-vectors export precomputed-skeletons \
-    neurons.zarrvectors \
-    gs://my-bucket/neurons_precomputed/ \
-    --sharded
-```
-
-This translates the ZVF skeleton store to the Neuroglancer sharded skeleton
-format, writing one shard file per chunk. The output can be served directly
-by any HTTP server; add the layer URL to Neuroglancer as a `skeletons` data
-source.
+The precomputed-skeletons exporter (and its CLI subcommand) lives in the
+companion package **`zarr-vectors-tools`**. It translates a ZVF skeleton
+store to the Neuroglancer sharded skeleton format, writing one shard
+file per chunk. The output can be served directly by any HTTP server;
+add the layer URL to Neuroglancer as a `skeletons` data source.
 
 ### Mesh data
 
@@ -181,14 +175,8 @@ transformation.
 
 #### Export to precomputed meshes
 
-```bash
-zarr-vectors export precomputed-meshes \
-    brain.zarrvectors \
-    gs://my-bucket/brain_precomputed/ \
-    --format sharded \
-    --draco \
-    --quantization 11
-```
+The precomputed-meshes exporter (and its CLI subcommand) lives in the
+companion package **`zarr-vectors-tools`**.
 
 ### Summary: choosing between ZVF and precomputed
 

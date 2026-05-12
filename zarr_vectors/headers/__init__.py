@@ -1,12 +1,9 @@
 """Format-specific header preservation for zarr vectors stores.
 
-When data is ingested from a format (TRK, SWC, LAS, OBJ, ...),
-the original header metadata is stored in ``/headers/<format>/``
-within the zarr vectors store.  On export, headers are read back
-to reconstruct format-specific fields for perfect round-tripping.
-
-Headers accumulate — if a TRK is ingested and later exported to
-TRX, both ``/headers/trk`` and ``/headers/trx`` will exist.
+Headers are stored under ``/headers/<format>/.zattrs`` as raw
+JSON-compatible dicts.  The registry provides opaque round-trip
+storage; typed (de)serialisation of header dicts lives in the
+format package.
 """
 
 from zarr_vectors.headers.registry import HeaderRegistry

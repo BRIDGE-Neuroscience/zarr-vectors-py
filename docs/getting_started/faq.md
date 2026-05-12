@@ -118,15 +118,8 @@ are not modified.
 
 ### Can I convert a ZVF store back to TRK / SWC / OBJ?
 
-Yes, using the export functions or the CLI:
-
-```bash
-zarr-vectors export trk  tracts.zarrvectors  tracts_out.trk
-zarr-vectors export swc  neuron.zarrvectors  neuron_out.swc
-zarr-vectors export obj  brain.zarrvectors   brain_out.obj
-```
-
-Export requires `zarr-vectors[ingest]`.
+Yes, using the converters and CLI in the companion package
+**`zarr-vectors-tools`**.
 
 ### How do I visualise a ZVF store in Neuroglancer?
 
@@ -173,8 +166,8 @@ is the most thorough but also the slowest.
 
 Open an issue on the
 [GitHub repository](https://github.com/BRIDGE-Neuroscience/zarr-vectors-py/issues).
-Include the output of `zarr-vectors info <store>` and `zarr-vectors validate
-<store> --level 3` if the issue is store-related.
+Include the output of `zarr_vectors.validate.validate(store, level=3)` if
+the issue is store-related.
 
 ### How do I propose a change to the specification?
 

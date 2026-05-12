@@ -1,4 +1,4 @@
-"""Step 09 tests: graph/skeleton write, read, SWC ingest/export."""
+"""Step 09 tests: graph/skeleton write/read core API."""
 
 from __future__ import annotations
 
@@ -7,9 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from zarr_vectors.types.graphs import write_graph, read_graph
-from zarr_vectors.ingest.swc import ingest_swc
-from zarr_vectors.export.swc import export_swc
-from zarr_vectors.exceptions import ArrayError, IngestError
+from zarr_vectors.exceptions import ArrayError
 
 
 class TestGeneralGraph:
@@ -76,24 +74,6 @@ class TestSkeleton:
         s = write_graph(str(tmp_path / "g.zv"), pos, edges, chunk_shape=(100.,100.,100.),
                         is_tree=True, object_ids=oids)
         assert s["object_count"] == 2
-
-
-class TestSWC:
-
-    def test_ingest(self, tmp_path: Path) -> None:
-        swc = tmp_path / "n.swc"
-        swc.write_text("# test\n1 1 0 0 0 5 -1\n2 3 10 0 0 3 1\n3 3 20 0 0 2 2\n4 3 15 10 0 2 2\n5 2 -10 0 0 2.5 1\n")
-        s = ingest_swc(swc, tmp_path / "n.zv", (100.,100.,100.))
-        assert s["node_count"] == 5 and s["is_tree"]
-
-    def test_export(self, tmp_path: Path) -> None:
-        swc = tmp_path / "n.swc"
-        swc.write_text("# test\n1 1 0 0 0 5 -1\n2 3 10 0 0 3 1\n3 3 20 0 0 2 2\n")
-        ingest_swc(swc, tmp_path / "n.zv", (100.,100.,100.))
-        out = tmp_path / "out.swc"
-        export_swc(tmp_path / "n.zv", out)
-        lines = [l for l in out.read_text().strip().split("\n") if not l.startswith("#")]
-        assert len(lines) == 3
 
 
 class TestBboxFilter:

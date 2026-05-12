@@ -8,8 +8,9 @@ localisation microscopy (STORM, PALM, MINFLUX), spatial transcriptomics
 
 This tutorial covers writing, reading, spatial querying, attribute handling,
 ingesting from external formats, and building multi-resolution pyramids.
-All examples use synthetic data and require only `zarr-vectors` (base
-install) except the ingest examples, which require `zarr-vectors[ingest]`.
+All examples on this page use only the core `zarr-vectors` API. Format
+converters for LAS/PLY/CSV/XYZ live in the companion package
+**`zarr-vectors-tools`**.
 
 ---
 
@@ -34,15 +35,14 @@ write_points(
 )
 ```
 
-After writing, inspect the store with the CLI:
+After writing, the store summary is:
 
-```bash
-zarr-vectors info scan.zarrvectors
-# geometry_type:  point_cloud
-# spatial_dims:   3
-# chunk_shape:    [200.0, 200.0, 200.0]
-# bin_shape:      [50.0, 50.0, 50.0]
-# resolution_0:   100000 vertices, 125 chunks
+```
+geometry_type:  point_cloud
+spatial_dims:   3
+chunk_shape:    [200.0, 200.0, 200.0]
+bin_shape:      [50.0, 50.0, 50.0]
+resolution_0:   100000 vertices, 125 chunks
 ```
 
 ### Write with per-vertex attributes
@@ -205,13 +205,12 @@ build_pyramid(
 )
 ```
 
-After building, verify:
+After building, the resolution summary is:
 
-```bash
-zarr-vectors info scan.zarrvectors
-# resolution_0:  100000 vertices  (bin_ratio 1×1×1)
-# resolution_1:  12890 vertices   (bin_ratio 2×2×2)
-# resolution_2:  1613 vertices    (bin_ratio 4×4×4)
+```
+resolution_0:  100000 vertices  (bin_ratio 1×1×1)
+resolution_1:  12890 vertices   (bin_ratio 2×2×2)
+resolution_2:  1613 vertices    (bin_ratio 4×4×4)
 ```
 
 ### Anisotropic pyramids
@@ -232,95 +231,10 @@ build_pyramid(
 
 ---
 
-## Ingesting from external formats
+## Ingesting and exporting external formats
 
-### LAS / LAZ point clouds
-
-```python
-from zarr_vectors.ingest.las import ingest_las   # requires zarr-vectors[ingest]
-
-ingest_las(
-    "survey.las",
-    "survey.zarrvectors",
-    chunk_shape=(100.0, 100.0, 50.0),
-    bin_shape=(25.0, 25.0, 12.5),
-    # LAS attributes auto-detected: intensity, return_number, classification, …
-)
-```
-
-To select specific LAS attributes:
-
-```python
-ingest_las(
-    "survey.las",
-    "survey.zarrvectors",
-    chunk_shape=(100.0, 100.0, 50.0),
-    attributes=["intensity", "return_number"],   # subset of LAS dimensions
-)
-```
-
-### CSV / XYZ files
-
-```python
-from zarr_vectors.ingest.csv_points import ingest_csv
-
-ingest_csv(
-    "measurements.csv",
-    "measurements.zarrvectors",
-    chunk_shape=(50.0, 50.0, 50.0),
-    position_columns=["x", "y", "z"],
-    attribute_columns=["temperature", "pressure", "gene_count"],
-)
-```
-
-For XYZ files (space-separated, no header):
-
-```python
-ingest_csv(
-    "cloud.xyz",
-    "cloud.zarrvectors",
-    chunk_shape=(200., 200., 200.),
-    position_columns=[0, 1, 2],     # column indices for headerless files
-    attribute_columns=[3, 4],
-    sep=" ",
-    header=None,
-)
-```
-
-### PLY files
-
-```python
-from zarr_vectors.ingest.ply import ingest_ply
-
-ingest_ply(
-    "scan.ply",
-    "scan.zarrvectors",
-    chunk_shape=(200., 200., 200.),
-    # Vertex properties auto-detected from PLY header
-)
-```
-
-### CLI ingest
-
-```bash
-zarr-vectors ingest points scan.las scan.zarrvectors --chunk-shape 100,100,50
-zarr-vectors ingest points measurements.csv measurements.zarrvectors \
-    --chunk-shape 50,50,50 \
-    --position-columns x,y,z \
-    --attribute-columns temperature,pressure
-```
-
----
-
-## Exporting
-
-```python
-from zarr_vectors.export.csv_points import export_csv
-from zarr_vectors.export.ply import export_ply
-
-export_csv("scan.zarrvectors", "scan_export.csv")
-export_ply("scan.zarrvectors", "scan_export.ply")
-```
+Format converters for LAS, PLY, CSV, and XYZ (and the `zarr-vectors`
+CLI) live in the companion package **`zarr-vectors-tools`**.
 
 ---
 

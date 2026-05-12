@@ -12,7 +12,6 @@ documented here.
    types
    lazy
    spatial
-   ingest
    validate
    constants
    typing

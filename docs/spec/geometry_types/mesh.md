@@ -122,20 +122,12 @@ the face's chunk neighbourhood).
 
 ### Draco compression
 
-```python
-from zarr_vectors.ingest.obj import ingest_obj
+Pass `use_draco=True` and a `draco_quantization` value when writing a
+mesh (via `write_mesh()` or the format converters in
+`zarr-vectors-tools`). The `vertices/` and `links/faces/` arrays then
+use the `draco` codec.
 
-ingest_obj(
-    "brain.obj",
-    "brain.zarrvectors",
-    chunk_shape=(100., 100., 100.),
-    use_draco=True,
-    draco_quantization=11,
-)
-```
-
-When Draco is enabled, the `vertices/` and `links/faces/` arrays use the
-`draco` codec. Reading requires `zarr-vectors[draco]`. See
+Reading requires `zarr-vectors[draco]`. See
 [Codec pipeline](../foundations/codec_pipeline.md) for quantisation
 precision details.
 
@@ -162,20 +154,8 @@ write_mesh(
 
 ### Ingest and export
 
-```python
-from zarr_vectors.ingest.obj import ingest_obj
-from zarr_vectors.ingest.stl import ingest_stl   # zarr-vectors[ingest]
-from zarr_vectors.ingest.ply import ingest_ply
-from zarr_vectors.export.obj import export_obj
-from zarr_vectors.export.ply import export_ply
-
-ingest_obj("surface.obj", "surface.zarrvectors", chunk_shape=(100., 100., 100.))
-ingest_stl("surface.stl", "surface.zarrvectors", chunk_shape=(100., 100., 100.))
-ingest_ply("surface.ply", "surface.zarrvectors", chunk_shape=(100., 100., 100.))
-
-export_obj("surface.zarrvectors", "surface_out.obj")
-export_ply("surface.zarrvectors", "surface_out.ply")
-```
+OBJ, STL, and PLY converters live in the companion package
+**`zarr-vectors-tools`**.
 
 ### Read API
 

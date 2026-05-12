@@ -11,8 +11,9 @@ distinction is in the `geometry_type` constant and the optional
 tractography-specific metadata keys. All write/read functions in this
 tutorial apply equally to both.
 
-All examples use `zarr-vectors` base install except the TRK/TCK/TRX ingest
-sections, which require `zarr-vectors[ingest]`.
+All examples on this page use only the core `zarr-vectors` API.
+TRK/TCK/TRX converters live in the companion package
+**`zarr-vectors-tools`**.
 
 ---
 
@@ -218,106 +219,20 @@ build_pyramid(
 )
 ```
 
-After building:
+After building, the resolution summary looks like:
 
-```bash
-zarr-vectors info tracts.zarrvectors
-# resolution_0:  1000 streamlines, ~40 000 vertices
-# resolution_1:  1000 streamlines, ~5 800 vertices (8× reduction)
-# resolution_2:  250 streamlines,  ~365 vertices   (64× × 4× = 256× total)
+```
+resolution_0:  1000 streamlines, ~40 000 vertices
+resolution_1:  1000 streamlines, ~5 800 vertices (8× reduction)
+resolution_2:  250 streamlines,  ~365 vertices   (64× × 4× = 256× total)
 ```
 
 ---
 
-## Ingesting from tractography formats
+## Ingesting and exporting tractography formats
 
-All ingest functions require `zarr-vectors[ingest]`.
-
-### TRK (TrackVis)
-
-```python
-from zarr_vectors.ingest.trk import ingest_trk
-
-ingest_trk(
-    "tracts.trk",
-    "tracts.zarrvectors",
-    chunk_shape=(50.0, 50.0, 50.0),
-    bin_shape=(10.0, 10.0, 10.0),
-    apply_affine=True,   # transform voxel → RAS mm using TRK header affine
-)
-```
-
-TRK stores coordinates in voxel space with an affine in the header.
-`apply_affine=True` (default) applies the affine before writing. Pass
-`apply_affine=False` to keep voxel coordinates.
-
-### TCK (MRtrix)
-
-```python
-from zarr_vectors.ingest.tck import ingest_tck
-
-ingest_tck(
-    "tracts.tck",
-    "tracts.zarrvectors",
-    chunk_shape=(50.0, 50.0, 50.0),
-)
-```
-
-TCK coordinates are in scanner mm (no affine transform needed).
-
-### TRX (Tractography Exchange format)
-
-TRX is the richest ingest format — it preserves `dps` (per-streamline)
-and `dpp` (per-vertex) attribute arrays, and group assignments:
-
-```python
-from zarr_vectors.ingest.trx import ingest_trx
-
-ingest_trx(
-    "tracts.trx",
-    "tracts.zarrvectors",
-    chunk_shape=(50.0, 50.0, 50.0),
-    # dps attributes → object_attributes/
-    # dpp attributes → attributes/
-    # groups → groupings/
-)
-```
-
-After ingest, inspect preserved attributes:
-
-```python
-result = read_polylines("tracts.zarrvectors", include_object_attributes=True)
-print(list(result["object_attributes"].keys()))  # ["mean_fa", "cluster_id", …]
-print(list(result["attributes"].keys()))          # ["fa", "md", …]
-```
-
-### CLI ingest
-
-```bash
-zarr-vectors ingest streams tracts.trk tracts.zarrvectors \
-    --chunk-shape 50,50,50 --apply-affine
-
-zarr-vectors ingest streams tracts.tck tracts.zarrvectors \
-    --chunk-shape 50,50,50
-
-zarr-vectors ingest streams tracts.trx tracts.zarrvectors \
-    --chunk-shape 50,50,50
-```
-
----
-
-## Exporting
-
-```python
-from zarr_vectors.export.trk import export_trk
-from zarr_vectors.export.trx import export_trx
-
-# Export level 0 to TRK
-export_trk("tracts.zarrvectors", "tracts_out.trk")
-
-# Export to TRX — preserves all attributes and groups
-export_trx("tracts.zarrvectors", "tracts_out.trx")
-```
+Format converters for TRK, TCK, and TRX (and the `zarr-vectors` CLI)
+live in the companion package **`zarr-vectors-tools`**.
 
 ---
 

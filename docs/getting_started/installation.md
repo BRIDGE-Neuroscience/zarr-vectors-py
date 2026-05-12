@@ -18,24 +18,10 @@ compression — those are available as optional extras described below.
 
 ### Ingest and export formats
 
-```bash
-pip install "zarr-vectors[ingest]"
-```
-
-Enables reading and writing the following external formats:
-
-| Format | Direction | Geometry type | Notes |
-|--------|-----------|---------------|-------|
-| LAS / LAZ | ingest | point cloud | requires `laspy` |
-| PLY | ingest + export | point cloud, mesh | requires `plyfile` |
-| CSV / XYZ | ingest + export | point cloud | built-in |
-| TRK | ingest + export | streamline | requires `nibabel` |
-| TCK | ingest | streamline | requires `nibabel` |
-| TRX | ingest + export | streamline | requires `trx-python` |
-| SWC | ingest + export | skeleton / graph | built-in |
-| GraphML | ingest | graph | requires `networkx` |
-| OBJ | ingest + export | mesh | built-in |
-| STL | ingest | mesh | requires `numpy-stl` |
+Format converters and the `zarr-vectors` CLI live in the companion
+package **`zarr-vectors-tools`** — install that separately if you need
+to read/write LAS, PLY, CSV/XYZ, TRK, TCK, TRX, SWC, GraphML, OBJ, or
+STL files.
 
 ### Draco mesh compression
 

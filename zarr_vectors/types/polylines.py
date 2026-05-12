@@ -42,6 +42,7 @@ from zarr_vectors.core.arrays import (
     read_group_object_ids,
     read_object_attributes,
     read_object_vertices,
+    read_vertex_group,
     write_chunk_attributes,
     write_chunk_vertices,
     write_cross_chunk_links,
@@ -50,6 +51,10 @@ from zarr_vectors.core.arrays import (
     write_object_attributes,
     write_object_index,
 )
+from zarr_vectors.core.attr_chunking import (
+    assign_attribute_bins,
+    compute_chunk_dim_names,
+)
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
     FsGroup,
@@ -57,6 +62,7 @@ from zarr_vectors.core.store import (
     create_store,
     get_resolution_level,
     open_store,
+    read_level_metadata,
     read_root_metadata,
 )
 from zarr_vectors.exceptions import ArrayError
@@ -92,6 +98,8 @@ def write_polylines(
     group_attributes: dict[str, npt.NDArray] | None = None,
     dtype: str = "float32",
     geometry_type: str = GEOM_STREAMLINE,
+    backend: str | None = None,
+    chunk_by_attribute: str | None = None,
 ) -> dict[str, Any]:
     """Write polylines/streamlines to a new zarr vectors store.
 
@@ -147,13 +155,54 @@ def write_polylines(
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
         base_bin_shape=bin_shape,
     )
-    root = create_store(store_path, root_meta)
+    root = create_store(store_path, root_meta, backend=backend)
+
+    # Attribute-chunking setup.  The chunk-by attribute must be a
+    # per-vertex array; vertex_attributes[<name>] is the same list-of-
+    # arrays shape (one per polyline).  Bin assignment is computed
+    # globally across all polylines so bin indices are consistent.
+    per_poly_attr_bins: list[npt.NDArray[np.int64]] | None = None
+    attr_bin_values: list[Any] | None = None
+    if chunk_by_attribute is not None:
+        if not vertex_attributes or chunk_by_attribute not in vertex_attributes:
+            raise ArrayError(
+                f"chunk_by_attribute={chunk_by_attribute!r} must name a "
+                f"key in `vertex_attributes` (got: "
+                f"{sorted(vertex_attributes) if vertex_attributes else []})"
+            )
+        attr_lists = vertex_attributes[chunk_by_attribute]
+        if len(attr_lists) != n_polylines:
+            raise ArrayError(
+                f"chunk_by_attribute list length {len(attr_lists)} != "
+                f"n_polylines {n_polylines}"
+            )
+        concat = np.concatenate(attr_lists)
+        bins_concat, attr_bin_values = assign_attribute_bins(concat)
+        per_poly_attr_bins = []
+        offset = 0
+        for arr in attr_lists:
+            n = len(arr)
+            per_poly_attr_bins.append(bins_concat[offset:offset + n])
+            offset += n
+        # The chunk-by attribute is implicit in the leading chunk axis.
+        vertex_attributes = {
+            k: v for k, v in vertex_attributes.items() if k != chunk_by_attribute
+        }
 
     arrays_present = [VERTICES, "object_index"]
+    level_chunk_dims: list[str] | None = None
+    if chunk_by_attribute is not None:
+        level_chunk_dims = compute_chunk_dim_names(
+            chunk_by_attribute, ndim,
+            spatial_dim_names=[a["name"] for a in axes],
+        )
     level_meta = LevelMetadata(
         level=0,
         vertex_count=total_vertices,
         arrays_present=arrays_present,
+        chunk_dims=level_chunk_dims,
+        chunk_attribute_name=chunk_by_attribute,
+        chunk_attribute_values=attr_bin_values,
     )
     level_group = create_resolution_level(root, 0, level_meta)
     create_vertices_array(level_group, dtype=dtype)
@@ -175,6 +224,14 @@ def write_polylines(
     object_manifests: dict[int, ObjectManifest] = {}
     all_cross_links: list[CrossChunkLink] = []
 
+    def _slice_attrs(poly_id: int, start: int, end: int) -> dict[str, npt.NDArray]:
+        out: dict[str, npt.NDArray] = {}
+        if not vertex_attributes:
+            return out
+        for attr_name, attr_list in vertex_attributes.items():
+            out[attr_name] = attr_list[poly_id][start:end]
+        return out
+
     for poly_id, poly_verts in enumerate(polylines):
         poly_verts = np.asarray(poly_verts, dtype=np_dtype)
 
@@ -185,41 +242,57 @@ def write_polylines(
             object_manifests[poly_id] = []
             continue
 
-        # Split vertex attributes to match segments
-        seg_attrs_list: list[dict[str, npt.NDArray]] = []
-        if vertex_attributes:
-            # Compute cumulative vertex counts to split attributes
-            seg_lengths = [len(s[1]) for s in segments]
-            for seg_idx in range(len(segments)):
-                seg_a: dict[str, npt.NDArray] = {}
-                offset = sum(seg_lengths[:seg_idx])
-                length = seg_lengths[seg_idx]
-                for attr_name, attr_list in vertex_attributes.items():
-                    attr_data = attr_list[poly_id]
-                    seg_a[attr_name] = attr_data[offset:offset + length]
-                seg_attrs_list.append(seg_a)
-        else:
-            seg_attrs_list = [{} for _ in segments]
+        poly_attr_bins = (
+            per_poly_attr_bins[poly_id]
+            if per_poly_attr_bins is not None
+            else None
+        )
 
-        # Assign segments to chunks (bin_coords from splitter → chunk_coords)
-        manifest: ObjectManifest = []
+        # Build a flat list of sub-segments: each is one contiguous run
+        # of polyline vertices that share (a) a spatial chunk and
+        # (b) — when attribute chunking is active — an attribute bin.
+        seg_lengths = [len(s[1]) for s in segments]
+        seg_offsets = np.cumsum([0, *seg_lengths[:-1]]).astype(np.int64)
+
+        sub_entries: list[tuple[ChunkCoords, npt.NDArray, dict[str, npt.NDArray]]] = []
         for seg_idx, (bin_coords, seg_verts) in enumerate(segments):
-            chunk_coords = bin_to_chunk(bin_coords, bins_per_chunk)
+            spatial_cc = bin_to_chunk(bin_coords, bins_per_chunk)
+            seg_off = int(seg_offsets[seg_idx])
+            seg_len = seg_lengths[seg_idx]
+
+            if poly_attr_bins is None:
+                sa = _slice_attrs(poly_id, seg_off, seg_off + seg_len)
+                sub_entries.append((spatial_cc, seg_verts, sa))
+                continue
+
+            seg_attr_bins = poly_attr_bins[seg_off:seg_off + seg_len]
+            transitions = np.where(np.diff(seg_attr_bins) != 0)[0] + 1
+            starts = np.concatenate([[0], transitions])
+            ends = np.concatenate([transitions, [seg_len]])
+            for s, e in zip(starts, ends):
+                ab = int(seg_attr_bins[int(s)])
+                prefixed = (ab,) + tuple(spatial_cc)
+                sa = _slice_attrs(
+                    poly_id, seg_off + int(s), seg_off + int(e),
+                )
+                sub_entries.append((prefixed, seg_verts[int(s):int(e)], sa))
+
+        manifest: ObjectManifest = []
+        for chunk_coords, sub_verts, sa in sub_entries:
             if chunk_coords not in chunk_data:
                 chunk_data[chunk_coords] = []
             vg_idx = len(chunk_data[chunk_coords])
-            chunk_data[chunk_coords].append(
-                (poly_id, seg_verts, seg_attrs_list[seg_idx])
-            )
+            chunk_data[chunk_coords].append((poly_id, sub_verts, sa))
             manifest.append((chunk_coords, vg_idx))
 
         object_manifests[poly_id] = manifest
 
-        # Cross-chunk links: only between consecutive segments in DIFFERENT chunks
+        # Cross-chunk links: between consecutive sub-segments that
+        # ended up in different chunk keys.
         if len(manifest) > 1:
             for i in range(len(manifest) - 1):
-                cc_a, vg_a = manifest[i]
-                cc_b, vg_b = manifest[i + 1]
+                cc_a, _ = manifest[i]
+                cc_b, _ = manifest[i + 1]
                 if cc_a != cc_b:
                     all_cross_links.append(((cc_a, 0), (cc_b, 0)))
 
@@ -241,12 +314,14 @@ def write_polylines(
                         dtype=attr_groups[0].dtype,
                     )
 
-    # Write object index
-    write_object_index(level_group, object_manifests, sid_ndim=ndim)
+    # Write object index — chunk coords gain a leading dim when
+    # attribute-chunked, so widen sid_ndim accordingly.
+    idx_ndim = ndim + 1 if per_poly_attr_bins is not None else ndim
+    write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
 
     # Write cross-chunk links
     if all_cross_links:
-        write_cross_chunk_links(level_group, all_cross_links, sid_ndim=ndim)
+        write_cross_chunk_links(level_group, all_cross_links, sid_ndim=idx_ndim)
 
     # Write object attributes
     if object_attributes:
@@ -282,6 +357,8 @@ def read_polylines(
     object_ids: list[int] | None = None,
     group_ids: list[int] | None = None,
     bbox: BoundingBox | None = None,
+    attribute_filter: dict[str, Any] | None = None,
+    backend: str | None = None,
 ) -> dict[str, Any]:
     """Read polylines/streamlines from a zarr vectors store.
 
@@ -300,7 +377,7 @@ def read_polylines(
         - ``polyline_count``: number of polylines returned.
         - ``vertex_count``: total vertices across all returned polylines.
     """
-    root = open_store(store_path)
+    root = open_store(store_path, backend=backend)
     root_meta = read_root_metadata(root)
     level_group = get_resolution_level(root, level)
     ndim = root_meta.sid_ndim
@@ -311,6 +388,40 @@ def read_polylines(
         dtype = np.dtype(vmeta.get("dtype", "float32"))
     except Exception:
         pass
+
+    # attribute_filter pre-resolution: convert (name, value) into the
+    # leading chunk bin index.  Only sub-segments whose chunk key starts
+    # with this bin will be returned.
+    filter_bin: int | None = None
+    if attribute_filter:
+        try:
+            lm = read_level_metadata(root, level)
+        except Exception:
+            lm = None
+        if (
+            lm is None
+            or lm.chunk_attribute_name is None
+            or lm.chunk_attribute_values is None
+        ):
+            raise ArrayError(
+                "attribute_filter requires a store written with "
+                "chunk_by_attribute"
+            )
+        if len(attribute_filter) != 1:
+            raise ArrayError(
+                "attribute_filter must specify exactly one attribute"
+            )
+        fname, fvalue = next(iter(attribute_filter.items()))
+        if fname != lm.chunk_attribute_name:
+            raise ArrayError(
+                f"attribute_filter key {fname!r} does not match the "
+                f"store's chunk_attribute_name "
+                f"{lm.chunk_attribute_name!r}"
+            )
+        try:
+            filter_bin = lm.chunk_attribute_values.index(fvalue)
+        except ValueError:
+            return _empty_polyline_result()
 
     # Resolve group_ids → object_ids
     if group_ids is not None:
@@ -341,13 +452,41 @@ def read_polylines(
     result_polylines: list[list[npt.NDArray]] = []
     total_verts = 0
 
-    for oid in object_ids:
+    # When attribute_filter is active, read manifests so we can pick
+    # only the sub-segments whose chunk key has the matching leading bin.
+    manifests = None
+    if filter_bin is not None:
         try:
-            vg_list = read_object_vertices(
-                level_group, oid, dtype=dtype, ndim=ndim
-            )
-        except ArrayError:
-            continue
+            manifests = read_all_object_manifests(level_group)
+        except Exception:
+            manifests = None
+
+    for oid in object_ids:
+        if filter_bin is not None:
+            if manifests is None or oid >= len(manifests):
+                continue
+            obj_manifest = manifests[oid]
+            matching = [
+                (cc, vg) for (cc, vg) in obj_manifest
+                if cc and cc[0] == filter_bin
+            ]
+            if not matching:
+                continue
+            vg_list = []
+            for cc, vg_idx in matching:
+                try:
+                    vg_list.append(read_vertex_group(
+                        level_group, cc, vg_idx, dtype=dtype, ndim=ndim,
+                    ))
+                except ArrayError:
+                    continue
+        else:
+            try:
+                vg_list = read_object_vertices(
+                    level_group, oid, dtype=dtype, ndim=ndim
+                )
+            except ArrayError:
+                continue
 
         if not vg_list:
             continue

@@ -1,8 +1,8 @@
-"""Compression codec configuration for ZVF arrays.
+"""Compression codec configuration for ZV arrays.
 
 Provides sensible default codec pipelines for each array type in the
-Zarr Vector Format.  All returned configurations are dicts compatible
-with Zarr v3's codec pipeline specification.
+Zarr Vectors (ZV) format.  All returned configurations are dicts
+compatible with Zarr v3's codec pipeline specification.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""ZVF metadata: dataclasses, serialisation, and validation.
+"""ZV metadata: dataclasses, serialisation, and validation.
 
 This module is pure Python — it does not import zarr.  Metadata objects
 are serialised to/from plain dicts (JSON-compatible) and written to
@@ -178,10 +178,10 @@ def requires_object_index(convention: str, num_chunks: int) -> bool:
 
 @dataclass
 class RootMetadata:
-    """Root-level metadata for a ZVF store.
+    """Root-level metadata for a ZV store.
 
     Attributes:
-        format_version: ZVF specification version.
+        format_version: ZV specification version.
         spatial_index_dims: Axes definitions (OME-Zarr style).
         chunk_shape: Spatial chunk size per dimension.
         bounds: Global bounding box as ``(min_corner, max_corner)``.
@@ -206,6 +206,12 @@ class RootMetadata:
     base_bin_shape: tuple[float, ...] | None = None
     """Supervoxel bin edge lengths at level 0. When None, defaults to
     chunk_shape (one bin per chunk — backward compatible)."""
+    format_capabilities: list[str] = field(default_factory=list)
+    """Optional 0.3+ capability tokens this store uses (e.g.
+    ``"cross_chunk_faces"``, ``"vertex_count_cache"``).  Old 0.2 stores
+    deserialise to an empty list and the standard read paths continue
+    to work.  See :mod:`zarr_vectors.constants` for the canonical token
+    names (``CAP_*``)."""
 
     def validate(self) -> None:
         """Validate this metadata object.
@@ -305,6 +311,8 @@ class RootMetadata:
         }
         if self.base_bin_shape is not None:
             d["zarr_vectors"]["base_bin_shape"] = list(self.base_bin_shape)
+        if self.format_capabilities:
+            d["zarr_vectors"]["format_capabilities"] = list(self.format_capabilities)
         return d
 
     @classmethod
@@ -330,6 +338,7 @@ class RootMetadata:
                 raise MetadataError(f"Missing required root metadata key: '{key}'")
 
         bbs = zv.get("base_bin_shape")
+        caps = zv.get("format_capabilities") or []
         return cls(
             format_version=zv["format_version"],
             spatial_index_dims=zv["spatial_index_dims"],
@@ -342,6 +351,7 @@ class RootMetadata:
             cross_chunk_strategy=zv.get("cross_chunk_strategy", CROSS_CHUNK_EXPLICIT),
             reduction_factor=zv.get("reduction_factor", DEFAULT_REDUCTION_FACTOR),
             base_bin_shape=tuple(bbs) if bbs else None,
+            format_capabilities=list(caps),
         )
 
     @property
@@ -369,6 +379,18 @@ class LevelMetadata:
         object_sparsity: Fraction of objects retained at this level (0,1].
         coarsening_method: How this level was generated.
         parent_level: Index of the source level (None for level 0).
+        chunk_dims: Names of chunk-key axes, leading axis first.  When
+            ``None`` (the default), chunk keys are spatial-only and have
+            ``sid_ndim`` axes (e.g. ``["dim0", "dim1", "dim2"]``).  When
+            set, the first entries name non-spatial leading axes (e.g.
+            ``["gene", "dim0", "dim1", "dim2"]``).
+        chunk_attribute_name: Name of the per-vertex attribute that is
+            used as the leading chunk axis (single-axis attribute
+            chunking; v1 supports only one).  ``None`` for spatial-only.
+        chunk_attribute_values: Ordered list mapping attribute-bin index
+            to the original attribute value.  ``chunk_attribute_values[i]``
+            is the value of the attribute for any vertex in chunks with
+            leading coord ``i``.  ``None`` for spatial-only.
     """
 
     level: int
@@ -379,21 +401,32 @@ class LevelMetadata:
     object_sparsity: float = 1.0
     coarsening_method: str = "none"
     parent_level: int | None = None
+    chunk_dims: list[str] | None = None
+    chunk_attribute_name: str | None = None
+    chunk_attribute_values: list[Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-compatible dict."""
-        return {
-            "zarr_vectors_level": {
-                "level": self.level,
-                "bin_shape": list(self.bin_shape) if self.bin_shape else None,
-                "bin_ratio": list(self.bin_ratio) if self.bin_ratio else None,
-                "object_sparsity": self.object_sparsity,
-                "vertex_count": self.vertex_count,
-                "coarsening_method": self.coarsening_method,
-                "parent_level": self.parent_level,
-                "arrays_present": self.arrays_present,
-            }
+        d: dict[str, Any] = {
+            "level": self.level,
+            "bin_shape": list(self.bin_shape) if self.bin_shape else None,
+            "bin_ratio": list(self.bin_ratio) if self.bin_ratio else None,
+            "object_sparsity": self.object_sparsity,
+            "vertex_count": self.vertex_count,
+            "coarsening_method": self.coarsening_method,
+            "parent_level": self.parent_level,
+            "arrays_present": self.arrays_present,
         }
+        if self.chunk_dims is not None:
+            d["chunk_dims"] = list(self.chunk_dims)
+        if self.chunk_attribute_name is not None:
+            d["chunk_attribute_name"] = self.chunk_attribute_name
+        if self.chunk_attribute_values is not None:
+            # Cast numpy scalars to native Python so JSON is happy.
+            d["chunk_attribute_values"] = [
+                _to_python_scalar(v) for v in self.chunk_attribute_values
+            ]
+        return {"zarr_vectors_level": d}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> LevelMetadata:
@@ -419,6 +452,8 @@ class LevelMetadata:
         # Read bin_shape — fall back to legacy bin_size
         bs = lv.get("bin_shape") or lv.get("bin_size")
         br = lv.get("bin_ratio")
+        cd = lv.get("chunk_dims")
+        cav = lv.get("chunk_attribute_values")
         return cls(
             level=lv["level"],
             vertex_count=lv["vertex_count"],
@@ -428,6 +463,9 @@ class LevelMetadata:
             object_sparsity=lv.get("object_sparsity", 1.0),
             coarsening_method=lv.get("coarsening_method", "none"),
             parent_level=lv.get("parent_level"),
+            chunk_dims=list(cd) if cd else None,
+            chunk_attribute_name=lv.get("chunk_attribute_name"),
+            chunk_attribute_values=list(cav) if cav is not None else None,
         )
 
     def validate(self) -> None:
@@ -468,6 +506,31 @@ class LevelMetadata:
                     raise MetadataError(
                         f"bin_ratio values must be ≥1, got {self.bin_ratio}"
                     )
+
+        # Attribute-chunking fields must be coherent.
+        attr_fields = (
+            self.chunk_attribute_name,
+            self.chunk_attribute_values,
+        )
+        if any(f is not None for f in attr_fields) and not all(
+            f is not None for f in attr_fields
+        ):
+            raise MetadataError(
+                "chunk_attribute_name and chunk_attribute_values must be "
+                "either both set or both None"
+            )
+        if (
+            self.chunk_attribute_values is not None
+            and len(self.chunk_attribute_values) == 0
+        ):
+            raise MetadataError("chunk_attribute_values must not be empty")
+
+
+def _to_python_scalar(v: Any) -> Any:
+    """Convert numpy scalar / array-of-one to a JSON-friendly Python type."""
+    if isinstance(v, np.generic):
+        return v.item()
+    return v
 
 
 # ===================================================================

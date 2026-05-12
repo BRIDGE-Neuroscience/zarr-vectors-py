@@ -35,6 +35,7 @@ from zarr_vectors.core.arrays import (
     create_cross_chunk_links_array,
     create_link_attributes_array,
     create_links_array,
+    create_object_attributes_array,
     create_object_index_array,
     create_vertices_array,
     list_chunk_keys,
@@ -48,7 +49,12 @@ from zarr_vectors.core.arrays import (
     write_chunk_links,
     write_chunk_vertices,
     write_cross_chunk_links,
+    write_object_attributes,
     write_object_index,
+)
+from zarr_vectors.core.attr_chunking import (
+    assign_attribute_bins,
+    compute_chunk_dim_names,
 )
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
@@ -56,6 +62,7 @@ from zarr_vectors.core.store import (
     create_store,
     get_resolution_level,
     open_store,
+    read_level_metadata,
     read_root_metadata,
 )
 from zarr_vectors.exceptions import ArrayError
@@ -94,8 +101,11 @@ def write_graph(
     is_tree: bool = False,
     node_attributes: dict[str, npt.NDArray] | None = None,
     edge_attributes: dict[str, npt.NDArray] | None = None,
+    object_attributes: dict[str, npt.NDArray] | None = None,
     object_ids: npt.NDArray[np.integer] | None = None,
     dtype: str = "float32",
+    backend: str | None = None,
+    chunk_by_attribute: str | None = None,
 ) -> dict[str, Any]:
     """Write a graph or skeleton to a new zarr vectors store.
 
@@ -124,9 +134,14 @@ def write_graph(
     if edges.ndim != 2 or edges.shape[1] != 2:
         raise ArrayError(f"edges must be (M, 2), got shape {edges.shape}")
 
-    # Default: all nodes in one object
+    # When attribute-chunking, each node defaults to its own object so
+    # the per-object uniformity check below is trivially satisfied and
+    # the prefixed layout still groups multiple nodes per (bin, chunk).
     if object_ids is None:
-        object_ids = np.zeros(n_nodes, dtype=np.int64)
+        if chunk_by_attribute is not None:
+            object_ids = np.arange(n_nodes, dtype=np.int64)
+        else:
+            object_ids = np.zeros(n_nodes, dtype=np.int64)
 
     # For skeletons: reorder depth-first
     reorder_map: npt.NDArray | None = None
@@ -162,12 +177,50 @@ def write_graph(
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
         base_bin_shape=bin_shape,
     )
-    root = create_store(store_path, root_meta)
+    root = create_store(store_path, root_meta, backend=backend)
+
+    # Attribute chunking: per-object uniformity required.  Compute the
+    # per-node bin from node_attributes[chunk_by_attribute], then check
+    # that all nodes of every object share a single value.
+    node_attr_bins: npt.NDArray[np.int64] | None = None
+    attr_bin_values: list[Any] | None = None
+    if chunk_by_attribute is not None:
+        if not node_attributes or chunk_by_attribute not in node_attributes:
+            raise ArrayError(
+                f"chunk_by_attribute={chunk_by_attribute!r} must name a "
+                f"key in `node_attributes`"
+            )
+        src_values = np.asarray(node_attributes[chunk_by_attribute])
+        if src_values.ndim != 1 or src_values.shape[0] != n_nodes:
+            raise ArrayError(
+                f"node_attributes[{chunk_by_attribute!r}] must be 1D of "
+                f"length n_nodes={n_nodes}, got shape {src_values.shape}"
+            )
+        node_attr_bins, attr_bin_values = assign_attribute_bins(src_values)
+        for oid in np.unique(object_ids):
+            mask = object_ids == oid
+            unique_bins = np.unique(node_attr_bins[mask])
+            if len(unique_bins) > 1:
+                raise ArrayError(
+                    f"chunk_by_attribute={chunk_by_attribute!r} requires "
+                    f"per-object uniformity for graphs; object {int(oid)} "
+                    f"has {len(unique_bins)} distinct attribute values"
+                )
+
+    level_chunk_dims: list[str] | None = None
+    if chunk_by_attribute is not None:
+        level_chunk_dims = compute_chunk_dim_names(
+            chunk_by_attribute, ndim,
+            spatial_dim_names=[a["name"] for a in axes],
+        )
 
     level_meta = LevelMetadata(
         level=0,
         vertex_count=n_nodes,
         arrays_present=[VERTICES, "links", "object_index"],
+        chunk_dims=level_chunk_dims,
+        chunk_attribute_name=chunk_by_attribute,
+        chunk_attribute_values=attr_bin_values,
     )
     level_group = create_resolution_level(root, 0, level_meta)
 
@@ -185,8 +238,19 @@ def write_graph(
         for name, data in edge_attributes.items():
             create_link_attributes_array(level_group, name, dtype=str(data.dtype))
 
-    # Assign nodes to chunks
+    # Assign nodes to chunks.  When attribute-chunked, prefix each
+    # spatial chunk key with the per-node bin so a single spatial cell
+    # holding nodes from multiple bins splits into multiple entries.
     chunk_assignments = assign_chunks(positions, chunk_shape)
+    if node_attr_bins is not None:
+        prefixed_assignments: dict[ChunkCoords, npt.NDArray[np.int64]] = {}
+        for spatial_cc, gi in chunk_assignments.items():
+            gi = np.asarray(gi, dtype=np.int64)
+            chunk_bins = node_attr_bins[gi]
+            for ab in np.unique(chunk_bins):
+                mask = chunk_bins == ab
+                prefixed_assignments[(int(ab),) + spatial_cc] = gi[mask]
+        chunk_assignments = prefixed_assignments
     chunk_list = sorted(chunk_assignments.keys())
 
     vertex_chunks, vertex_local, chunk_list = build_vertex_chunk_mapping(
@@ -266,12 +330,19 @@ def write_graph(
                 # For simplicity, edge attributes for intra-chunk stored per chunk
                 pass  # Edge attribute tracking is complex; store for all edges
 
-    # Write cross-chunk links
+    # Write cross-chunk links — widen sid_ndim when prefixed.
+    idx_ndim = ndim + 1 if node_attr_bins is not None else ndim
     if all_cross_links:
-        write_cross_chunk_links(level_group, all_cross_links, sid_ndim=ndim)
+        write_cross_chunk_links(level_group, all_cross_links, sid_ndim=idx_ndim)
 
     # Write object index
-    write_object_index(level_group, object_manifests, sid_ndim=ndim)
+    write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
+
+    # Per-object attributes (Tier B): {name: (O,) or (O, C)}.
+    if object_attributes:
+        for _name, _data in object_attributes.items():
+            create_object_attributes_array(level_group, _name)
+            write_object_attributes(level_group, _name, np.asarray(_data))
 
     return {
         "node_count": n_nodes,
@@ -294,6 +365,8 @@ def read_graph(
     level: int = 0,
     object_ids: list[int] | None = None,
     bbox: BoundingBox | None = None,
+    attribute_filter: dict[str, Any] | None = None,
+    backend: str | None = None,
 ) -> dict[str, Any]:
     """Read a graph or skeleton from a zarr vectors store.
 
@@ -309,7 +382,7 @@ def read_graph(
         - ``edges``: ``(M, 2)`` edge list (remapped to output indices)
         - ``node_count``, ``edge_count``
     """
-    root = open_store(store_path)
+    root = open_store(store_path, backend=backend)
     root_meta = read_root_metadata(root)
     level_group = get_resolution_level(root, level)
     ndim = root_meta.sid_ndim
@@ -338,6 +411,36 @@ def read_graph(
             root_meta.chunk_shape,
         ))
         chunk_keys = [k for k in chunk_keys if k in target]
+
+    # attribute_filter: drop chunks whose leading coord doesn't match.
+    if attribute_filter:
+        try:
+            lm = read_level_metadata(root, level)
+        except Exception:
+            lm = None
+        if (
+            lm is None
+            or lm.chunk_attribute_name is None
+            or lm.chunk_attribute_values is None
+        ):
+            raise ArrayError(
+                "attribute_filter requires a store written with chunk_by_attribute"
+            )
+        if len(attribute_filter) != 1:
+            raise ArrayError(
+                "attribute_filter must specify exactly one attribute"
+            )
+        fname, fvalue = next(iter(attribute_filter.items()))
+        if fname != lm.chunk_attribute_name:
+            raise ArrayError(
+                f"attribute_filter key {fname!r} does not match the "
+                f"store's chunk_attribute_name {lm.chunk_attribute_name!r}"
+            )
+        try:
+            filter_bin = lm.chunk_attribute_values.index(fvalue)
+        except ValueError:
+            return _empty_graph_result(ndim)
+        chunk_keys = [k for k in chunk_keys if k and k[0] == filter_bin]
 
     # Read all vertices and build global index mapping
     all_positions: list[npt.NDArray] = []

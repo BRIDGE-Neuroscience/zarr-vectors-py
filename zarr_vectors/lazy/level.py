@@ -92,6 +92,79 @@ class ZVRLevel:
         return len(self.chunk_keys)
 
     # ---------------------------------------------------------------
+    # Attribute-chunking accessors
+    # ---------------------------------------------------------------
+
+    @property
+    def chunk_dims(self) -> list[str] | None:
+        """Names of chunk-key axes, leading axis first.
+
+        ``None`` for legacy spatial-only stores (chunk keys are
+        ``[dim0, dim1, ...]``).  Non-None when the store was written
+        with ``chunk_by_attribute`` or rechunked along a non-spatial
+        dimension.
+        """
+        if self._level_meta is not None:
+            return self._level_meta.chunk_dims
+        return None
+
+    @property
+    def chunk_attribute_name(self) -> str | None:
+        """Name of the per-vertex attribute used as the leading chunk axis."""
+        if self._level_meta is not None:
+            return self._level_meta.chunk_attribute_name
+        return None
+
+    @property
+    def attribute_values(self) -> list[Any] | None:
+        """Ordered list mapping leading-axis bin index to attribute value.
+
+        ``attribute_values[i]`` is the original attribute value for any
+        chunk whose key starts with ``i``.  ``None`` for non-attribute
+        stores.
+        """
+        if self._level_meta is not None:
+            return self._level_meta.chunk_attribute_values
+        return None
+
+    def read_attribute_chunk(self, value: Any) -> list[npt.NDArray]:
+        """Read all vertex groups for chunks whose attribute equals ``value``.
+
+        Only valid on stores written with ``chunk_by_attribute`` (or
+        rechunked by attribute).  Returns the concatenated vertex
+        groups for every chunk whose leading coord maps to ``value``.
+
+        Args:
+            value: One of the entries from :attr:`attribute_values`.
+
+        Returns:
+            List of vertex-group arrays.
+        """
+        from zarr_vectors.core.arrays import read_chunk_vertices
+
+        vals = self.attribute_values
+        if vals is None:
+            raise ValueError(
+                "read_attribute_chunk: this level is not attribute-chunked"
+            )
+        try:
+            bin_idx = vals.index(value)
+        except ValueError:
+            return []
+        groups: list[npt.NDArray] = []
+        ndim = self._root_meta.sid_ndim
+        for cc in self.chunk_keys:
+            if not cc or cc[0] != bin_idx:
+                continue
+            try:
+                groups.extend(
+                    read_chunk_vertices(self._group, cc, dtype=np.float32, ndim=ndim)
+                )
+            except Exception:
+                continue
+        return groups
+
+    # ---------------------------------------------------------------
     # Lazy collections
     # ---------------------------------------------------------------
 
@@ -167,6 +240,24 @@ class ZVRLevel:
         )
 
     # ---------------------------------------------------------------
+    # Mutation (write-back) handle
+    # ---------------------------------------------------------------
+
+    def writer(self) -> "ZVRWriter":
+        """Return a :class:`ZVRWriter` for mutating this level.
+
+        Use as an async or sync context manager::
+
+            async with zvr[0].writer() as w:
+                await w.add_attribute("normal", normals)
+
+        Single-writer-only — concurrent writers on the same level can
+        race on object_index sidecar batch numbering.
+        """
+        from zarr_vectors.lazy.writer import ZVRWriter
+        return ZVRWriter(self)
+
+    # ---------------------------------------------------------------
     # Geometry-specific collections
     # ---------------------------------------------------------------
 
@@ -187,6 +278,7 @@ class ZVRLevel:
         *,
         bins: list[float] | None = None,
         output: str | None = None,
+        categorical: bool = False,
     ) -> dict:
         """Rechunk this level's store along a non-spatial dimension.
 
@@ -197,13 +289,17 @@ class ZVRLevel:
                 ``"attribute:<name>"``).
             bins: Bin edges for continuous values.
             output: Output path. If None, rechunks in-place.
+            categorical: If True, treat the binning dimension as
+                categorical (one bin per unique value, no quartile
+                fallback).  Required for high-cardinality attributes
+                like gene labels.
 
         Returns:
             Summary dict from the rechunk engine.
         """
         from zarr_vectors.rechunk import rechunk as _rechunk, RechunkSpec
         store_path = str(self._group.path.parent)
-        spec = RechunkSpec(by=by, bins=bins)
+        spec = RechunkSpec(by=by, bins=bins, categorical=categorical)
         return _rechunk(store_path, spec, output=output)
 
     # ---------------------------------------------------------------

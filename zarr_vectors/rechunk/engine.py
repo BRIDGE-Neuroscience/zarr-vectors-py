@@ -139,9 +139,11 @@ def rechunk(
         unique_bins = [0]
 
     # Create output store
-    rechunk_dims = [spec.dimension_name] + [
-        f"dim{i}" for i in range(ndim)
+    spatial_dim_names = [
+        a.get("name", f"dim{i}")
+        for i, a in enumerate(src_meta.spatial_index_dims)
     ]
+    rechunk_dims = [spec.dimension_name, *spatial_dim_names]
 
     out_meta = RootMetadata(
         spatial_index_dims=src_meta.spatial_index_dims,
@@ -157,16 +159,39 @@ def rechunk(
 
     out_root = create_store(str(output_path), out_meta)
 
-    # Write rechunk_dims to root attrs
-    attrs = out_root.attrs.to_dict()
-    attrs["rechunk_dims"] = rechunk_dims
-    out_root.attrs.update(attrs)
+    # Compute the bin → original-value list for attribute-based rechunking.
+    # Only meaningful when ``by="attribute:..."`` and we have the source
+    # values; non-attribute rechunks leave chunk_attribute_* unset.
+    chunk_attribute_name: str | None = None
+    chunk_attribute_values: list[Any] | None = None
+    if spec.by.startswith("attribute:") and object_attributes is not None:
+        attr_name = spec.by.split(":", 1)[1]
+        src_vals = object_attributes.get(attr_name)
+        if src_vals is not None and obj_to_bin:
+            # Build {bin_idx: value} from (object_id → bin_idx) and the
+            # source value array; an object's value picks the bin.
+            bin_to_value: dict[int, Any] = {}
+            for oid, b in obj_to_bin.items():
+                if b not in bin_to_value:
+                    v = src_vals[oid]
+                    if hasattr(v, "item"):
+                        v = v.item()
+                    if isinstance(v, bytes):
+                        v = v.decode("utf-8")
+                    bin_to_value[b] = v
+            chunk_attribute_name = attr_name
+            chunk_attribute_values = [
+                bin_to_value[b] for b in sorted(bin_to_value)
+            ]
 
     # Create level 0
     level_meta = LevelMetadata(
         level=0,
         vertex_count=0,  # updated below
         arrays_present=[VERTICES, "object_index"],
+        chunk_dims=rechunk_dims,
+        chunk_attribute_name=chunk_attribute_name,
+        chunk_attribute_values=chunk_attribute_values,
     )
     out_level = create_resolution_level(out_root, 0, level_meta)
     create_vertices_array(out_level, dtype="float32")

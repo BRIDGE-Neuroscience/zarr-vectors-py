@@ -1,31 +1,35 @@
 """Custom exceptions for the zarr-vectors package.
 
-All exceptions inherit from ZVFError so callers can catch broadly
+All exceptions inherit from :class:`ZVError` so callers can catch broadly
 or narrowly as needed.
+
+``ZVFError`` is kept as a deprecated alias for one release for code that
+imported the old name.  Subclasses still inherit from :class:`ZVError`
+directly.
 """
 
 
-class ZVFError(Exception):
+class ZVError(Exception):
     """Base exception for all zarr-vectors errors."""
 
 
-class StoreError(ZVFError):
-    """Raised when a ZVF store cannot be created, opened, or is structurally invalid."""
+class StoreError(ZVError):
+    """Raised when a ZV store cannot be created, opened, or is structurally invalid."""
 
 
-class MetadataError(ZVFError):
+class MetadataError(ZVError):
     """Raised when metadata is missing, malformed, or fails schema validation."""
 
 
-class ArrayError(ZVFError):
+class ArrayError(ZVError):
     """Raised when an array has wrong shape, dtype, or cannot be read/written."""
 
 
-class ChunkingError(ZVFError):
+class ChunkingError(ZVError):
     """Raised when spatial chunk assignment fails or produces invalid results."""
 
 
-class ConventionError(ZVFError):
+class ConventionError(ZVError):
     """Raised when convention flags are inconsistent with the store contents.
 
     For example, using object_index_convention='identity' with multiple
@@ -33,21 +37,27 @@ class ConventionError(ZVFError):
     """
 
 
-class ValidationError(ZVFError):
+class ValidationError(ZVError):
     """Raised when a store fails conformance or consistency validation."""
 
 
-class IngestError(ZVFError):
+class IngestError(ZVError):
     """Raised when reading from an external format fails during ingest."""
 
 
-class ExportError(ZVFError):
+class ExportError(ZVError):
     """Raised when writing to an external format fails during export."""
 
 
-class CoarseningError(ZVFError):
+class CoarseningError(ZVError):
     """Raised when multi-resolution pyramid construction fails."""
 
 
-class DracoError(ZVFError):
+class DracoError(ZVError):
     """Raised when Draco encoding or decoding fails."""
+
+
+# Deprecated alias.  Kept for one release for code that imported the old
+# name; remove in 0.4.  Aliasing the class object means ``isinstance``
+# checks against either name keep working.
+ZVFError = ZVError

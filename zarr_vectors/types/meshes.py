@@ -30,18 +30,26 @@ from zarr_vectors.core.arrays import (
     create_attribute_array,
     create_cross_chunk_links_array,
     create_links_array,
+    create_object_attributes_array,
     create_object_index_array,
     create_vertices_array,
     list_chunk_keys,
     read_chunk_links,
     read_chunk_vertices,
+    read_cross_chunk_faces,
     read_cross_chunk_links,
     read_object_vertices,
     write_chunk_attributes,
     write_chunk_links,
     write_chunk_vertices,
+    write_cross_chunk_faces,
     write_cross_chunk_links,
+    write_object_attributes,
     write_object_index,
+)
+from zarr_vectors.core.attr_chunking import (
+    assign_attribute_bins,
+    compute_chunk_dim_names,
 )
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
@@ -49,6 +57,7 @@ from zarr_vectors.core.store import (
     create_store,
     get_resolution_level,
     open_store,
+    read_level_metadata,
     read_root_metadata,
 )
 from zarr_vectors.exceptions import ArrayError
@@ -72,6 +81,17 @@ from zarr_vectors.typing import (
 )
 
 
+def _stamp_root_capability(root_group, cap: str) -> None:
+    """Add ``cap`` to root metadata's ``format_capabilities`` (idempotent)."""
+    attrs = root_group.attrs.to_dict()
+    zv = attrs.get("zarr_vectors", {})
+    caps = list(zv.get("format_capabilities", []))
+    if cap not in caps:
+        caps.append(cap)
+        zv["format_capabilities"] = caps
+        root_group.attrs.update({"zarr_vectors": zv})
+
+
 def write_mesh(
     store_path: str,
     vertices: npt.NDArray[np.floating],
@@ -81,9 +101,12 @@ def write_mesh(
     bin_shape: BinShape | None = None,
     encoding: str = ENCODING_RAW,
     vertex_attributes: dict[str, npt.NDArray] | None = None,
+    object_attributes: dict[str, npt.NDArray] | None = None,
     object_ids: npt.NDArray[np.integer] | None = None,
     dtype: str = "float32",
     draco_quantization_bits: int = 11,
+    backend: str | None = None,
+    chunk_by_attribute: str | None = None,
 ) -> dict[str, Any]:
     """Write a mesh to a new zarr vectors store.
 
@@ -112,7 +135,12 @@ def write_mesh(
         raise ArrayError(f"faces must be (F, L) with L≥3, got shape {faces.shape}")
 
     if object_ids is None:
-        object_ids = np.zeros(n_verts, dtype=np.int64)
+        # When attribute-chunking, each vertex becomes its own object so
+        # the per-object uniformity check is trivially satisfied.
+        if chunk_by_attribute is not None:
+            object_ids = np.arange(n_verts, dtype=np.int64)
+        else:
+            object_ids = np.zeros(n_verts, dtype=np.int64)
 
     bounds = compute_bounds(vertices)
     bounds_list = (bounds[0].tolist(), bounds[1].tolist())
@@ -128,12 +156,51 @@ def write_mesh(
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
         base_bin_shape=bin_shape,
     )
-    root = create_store(store_path, root_meta)
+    root = create_store(store_path, root_meta, backend=backend)
+
+    # Attribute chunking: per-object uniformity required.
+    vertex_attr_bins: npt.NDArray[np.int64] | None = None
+    attr_bin_values: list[Any] | None = None
+    if chunk_by_attribute is not None:
+        if (
+            not vertex_attributes
+            or chunk_by_attribute not in vertex_attributes
+        ):
+            raise ArrayError(
+                f"chunk_by_attribute={chunk_by_attribute!r} must name a "
+                f"key in `vertex_attributes`"
+            )
+        src_values = np.asarray(vertex_attributes[chunk_by_attribute])
+        if src_values.ndim != 1 or src_values.shape[0] != n_verts:
+            raise ArrayError(
+                f"vertex_attributes[{chunk_by_attribute!r}] must be 1D "
+                f"of length n_verts={n_verts}, got shape {src_values.shape}"
+            )
+        vertex_attr_bins, attr_bin_values = assign_attribute_bins(src_values)
+        for oid in np.unique(object_ids):
+            mask = object_ids == oid
+            unique_bins = np.unique(vertex_attr_bins[mask])
+            if len(unique_bins) > 1:
+                raise ArrayError(
+                    f"chunk_by_attribute={chunk_by_attribute!r} requires "
+                    f"per-object uniformity for meshes; object {int(oid)} "
+                    f"has {len(unique_bins)} distinct attribute values"
+                )
+
+    level_chunk_dims: list[str] | None = None
+    if chunk_by_attribute is not None:
+        level_chunk_dims = compute_chunk_dim_names(
+            chunk_by_attribute, ndim,
+            spatial_dim_names=[a["name"] for a in axes],
+        )
 
     level_meta = LevelMetadata(
         level=0,
         vertex_count=n_verts,
         arrays_present=[VERTICES, "links", "object_index"],
+        chunk_dims=level_chunk_dims,
+        chunk_attribute_name=chunk_by_attribute,
+        chunk_attribute_values=attr_bin_values,
     )
     level_group = create_resolution_level(root, 0, level_meta)
     create_vertices_array(level_group, dtype=dtype, encoding=encoding)
@@ -145,8 +212,18 @@ def write_mesh(
         for name, data in vertex_attributes.items():
             create_attribute_array(level_group, name, dtype=str(data.dtype))
 
-    # Assign vertices to chunks
+    # Assign vertices to chunks.  When attribute-chunked, prefix each
+    # spatial chunk key with the per-vertex bin.
     chunk_assignments = assign_chunks(vertices, chunk_shape)
+    if vertex_attr_bins is not None:
+        prefixed: dict[ChunkCoords, npt.NDArray[np.int64]] = {}
+        for spatial_cc, gi in chunk_assignments.items():
+            gi = np.asarray(gi, dtype=np.int64)
+            chunk_bins = vertex_attr_bins[gi]
+            for ab in np.unique(chunk_bins):
+                mask = chunk_bins == ab
+                prefixed[(int(ab),) + spatial_cc] = gi[mask]
+        chunk_assignments = prefixed
     chunk_list = sorted(chunk_assignments.keys())
 
     vertex_chunks, vertex_local, chunk_list = build_vertex_chunk_mapping(
@@ -209,11 +286,26 @@ def write_mesh(
         if len(face_ref) >= 3:
             cross_links.append((face_ref[-1], face_ref[0]))
 
+    idx_ndim = ndim + 1 if vertex_attr_bins is not None else ndim
     if cross_links:
-        write_cross_chunk_links(level_group, cross_links, sid_ndim=ndim)
+        write_cross_chunk_links(level_group, cross_links, sid_ndim=idx_ndim)
+
+    # Tier C: persist cross-chunk face identity alongside the edge-pair
+    # fallback.  Old readers that ignore the new array still see
+    # connectivity via the existing cross_chunk_links; new readers can
+    # reconstruct boundary faces exactly.
+    if cross_faces:
+        write_cross_chunk_faces(level_group, cross_faces, sid_ndim=idx_ndim)
+        _stamp_root_capability(root, "cross_chunk_faces")
 
     # Write object index
-    write_object_index(level_group, object_manifests, sid_ndim=ndim)
+    write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
+
+    # Per-object attributes (Tier B): {name: (O,) or (O, C)}.
+    if object_attributes:
+        for _name, _data in object_attributes.items():
+            create_object_attributes_array(level_group, _name)
+            write_object_attributes(level_group, _name, np.asarray(_data))
 
     return {
         "vertex_count": n_verts,
@@ -231,6 +323,8 @@ def read_mesh(
     level: int = 0,
     bbox: BoundingBox | None = None,
     object_ids: list[int] | None = None,
+    attribute_filter: dict[str, Any] | None = None,
+    backend: str | None = None,
 ) -> dict[str, Any]:
     """Read a mesh from a zarr vectors store.
 
@@ -246,7 +340,7 @@ def read_mesh(
         - ``faces``: ``(F, L)`` face indices (remapped to output vertex order)
         - ``vertex_count``, ``face_count``
     """
-    root = open_store(store_path)
+    root = open_store(store_path, backend=backend)
     root_meta = read_root_metadata(root)
     level_group = get_resolution_level(root, level)
     ndim = root_meta.sid_ndim
@@ -273,6 +367,35 @@ def read_mesh(
             root_meta.chunk_shape,
         ))
         chunk_keys = [k for k in chunk_keys if k in target]
+
+    if attribute_filter:
+        try:
+            lm = read_level_metadata(root, level)
+        except Exception:
+            lm = None
+        if (
+            lm is None
+            or lm.chunk_attribute_name is None
+            or lm.chunk_attribute_values is None
+        ):
+            raise ArrayError(
+                "attribute_filter requires a store written with chunk_by_attribute"
+            )
+        if len(attribute_filter) != 1:
+            raise ArrayError(
+                "attribute_filter must specify exactly one attribute"
+            )
+        fname, fvalue = next(iter(attribute_filter.items()))
+        if fname != lm.chunk_attribute_name:
+            raise ArrayError(
+                f"attribute_filter key {fname!r} does not match the "
+                f"store's chunk_attribute_name {lm.chunk_attribute_name!r}"
+            )
+        try:
+            filter_bin = lm.chunk_attribute_values.index(fvalue)
+        except ValueError:
+            return _empty_mesh_result(ndim, link_width)
+        chunk_keys = [k for k in chunk_keys if k and k[0] == filter_bin]
 
     # Read vertices and build offset map
     all_positions: list[npt.NDArray] = []
@@ -310,6 +433,22 @@ def read_mesh(
                     all_faces.append(remapped)
         except ArrayError:
             pass
+
+    # Tier C: emit cross-chunk faces using preserved identity records.
+    # Map each (chunk, local_idx) record into the global vertex index
+    # via ``chunk_offsets`` (built from the chunks we just read).  When
+    # the array is absent (0.2 stores or no boundary faces), reads are
+    # untouched.
+    cross_face_records = read_cross_chunk_faces(level_group)
+    for face in cross_face_records:
+        vertex_ids: list[int] = []
+        for cc, local_idx in face:
+            if cc not in chunk_offsets:
+                vertex_ids = []
+                break
+            vertex_ids.append(int(chunk_offsets[cc]) + int(local_idx))
+        if len(vertex_ids) == link_width:
+            all_faces.append(np.asarray(vertex_ids, dtype=np.int64)[None, :])
 
     if all_faces:
         faces_out = np.concatenate(all_faces, axis=0)

@@ -1,0 +1,693 @@
+{
+  "$defs": {
+    "AttributeMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for each ``attributes/<name>/`` array.",
+      "properties": {
+        "channel_names": {
+          "description": "For multi-channel per-vertex attributes, the channel labels.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "dtype": {
+          "description": "Numpy dtype string of the array's value type (e.g. \"float32\").",
+          "type": "string"
+        },
+        "name": {
+          "description": "NGFF axis or attribute name (e.g. \"x\", \"intensity\").",
+          "type": "string"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "attribute",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "name",
+        "dtype"
+      ],
+      "title": "AttributeMeta",
+      "type": "object"
+    },
+    "Axis": {
+      "additionalProperties": false,
+      "description": "One axis of the spatial index.  Mirrors the OME-Zarr NGFF axis object (RFC 4/5).",
+      "properties": {
+        "name": {
+          "description": "NGFF axis or attribute name (e.g. \"x\", \"intensity\").",
+          "type": "string"
+        },
+        "type": {
+          "description": "NGFF axis type \u2014 \"space\", \"time\", or \"channel\".",
+          "type": "string"
+        },
+        "unit": {
+          "description": "NGFF unit string (e.g. \"um\", \"nanometer\", \"second\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "Axis",
+      "type": "object"
+    },
+    "BoundingBox": {
+      "additionalProperties": false,
+      "description": "Two parallel ``ndim``-length arrays representing the global ``(min_corner, max_corner)`` of the store's vertices.  Stored on disk as ``[[min...], [max...]]``; modelled here as a class so cross-field rules can require matching dimensionality.",
+      "properties": {
+        "max_corner": {
+          "description": "Per-axis maxima.  Length must equal ``len(spatial_index_dims)``.",
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "min_corner": {
+          "description": "Per-axis minima.  Length must equal ``len(spatial_index_dims)``.",
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "min_corner",
+        "max_corner"
+      ],
+      "title": "BoundingBox",
+      "type": "object"
+    },
+    "CrossChunkFacesMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for ``cross_chunk_faces/`` (0.3 capability ``cross_chunk_faces``).",
+      "properties": {
+        "num_faces": {
+          "description": "Total cross-chunk face count.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "record_size": {
+          "description": "Per-face record width in ``cross_chunk_faces/data`` (sid_ndim + 2 int64s).\n",
+          "minimum": 2,
+          "type": "integer"
+        },
+        "sid_ndim": {
+          "description": "Number of spatial-index dimensions encoded in chunk keys.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "cross_chunk_faces",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "num_faces",
+        "sid_ndim",
+        "record_size"
+      ],
+      "title": "CrossChunkFacesMeta",
+      "type": "object"
+    },
+    "CrossChunkLinksMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for ``cross_chunk_links/``.",
+      "properties": {
+        "num_links": {
+          "description": "Total cross-chunk link count.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sid_ndim": {
+          "description": "Number of spatial-index dimensions encoded in chunk keys.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "cross_chunk_links",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "num_links",
+        "sid_ndim"
+      ],
+      "title": "CrossChunkLinksMeta",
+      "type": "object"
+    },
+    "CrossChunkStrategy": {
+      "description": "How connectivity that crosses chunk boundaries is represented.",
+      "enum": [
+        "boundary_deduplication",
+        "explicit_links",
+        "both"
+      ],
+      "title": "CrossChunkStrategy",
+      "type": "string"
+    },
+    "Encoding": {
+      "description": "Per-array encoding of vertex data.",
+      "enum": [
+        "raw",
+        "draco"
+      ],
+      "title": "Encoding",
+      "type": "string"
+    },
+    "FormatCapability": {
+      "description": "Optional 0.3+ feature tokens a store advertises in :attr:`RootMetadata.format_capabilities`.  Open-set: new tokens will be added in future spec revisions; readers must tolerate unknown values.",
+      "enum": [
+        "cross_chunk_faces",
+        "vertex_count_cache",
+        "object_index_pending"
+      ],
+      "title": "FormatCapability",
+      "type": "string"
+    },
+    "GeometryType": {
+      "description": "The kind of geometry a store (or one of its sub-types) holds.",
+      "enum": [
+        "point_cloud",
+        "line",
+        "polyline",
+        "streamline",
+        "skeleton",
+        "graph",
+        "mesh"
+      ],
+      "title": "GeometryType",
+      "type": "string"
+    },
+    "GroupingsAttributeMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for each ``groupings_attributes/<name>/`` array.",
+      "properties": {
+        "dtype": {
+          "description": "Numpy dtype string of the array's value type (e.g. \"float32\").",
+          "type": "string"
+        },
+        "name": {
+          "description": "NGFF axis or attribute name (e.g. \"x\", \"intensity\").",
+          "type": "string"
+        },
+        "shape": {
+          "description": "Shape of a dense per-object/per-group array.",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "groupings_attribute",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "name",
+        "dtype",
+        "shape"
+      ],
+      "title": "GroupingsAttributeMeta",
+      "type": "object"
+    },
+    "GroupingsMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for ``groupings/``.",
+      "properties": {
+        "num_groups": {
+          "description": "Total grouping count.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "groupings",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "num_groups"
+      ],
+      "title": "GroupingsMeta",
+      "type": "object"
+    },
+    "LevelMetadata": {
+      "additionalProperties": false,
+      "description": "Per-resolution-level ``.zattrs`` payload, persisted under the key ``zarr_vectors_level``.  Validates the runtime :class:`zarr_vectors.core.metadata.LevelMetadata` dataclass.",
+      "properties": {
+        "arrays_present": {
+          "description": "Names of arrays present in the level group.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "bin_ratio": {
+          "description": "Integer fold-change per axis relative to level 0.",
+          "items": {
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "bin_shape": {
+          "description": "Per-axis supervoxel edge lengths at this level.  Must be ``None`` for level 0 (inherits ``base_bin_shape``); must be set for level > 0.\n",
+          "items": {
+            "type": "number"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "chunk_attribute_name": {
+          "description": "Name of the per-vertex attribute used as the leading chunk axis.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "chunk_attribute_values": {
+          "description": "Ordered list mapping attribute-bin index to original attribute value.  Must be non-empty when set, and coherent with ``chunk_attribute_name`` (both set or both absent).\n",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "chunk_dims": {
+          "description": "Chunk-key axis names; the leading axis names appear first.  Set when the level uses attribute chunking (e.g. ``[\"gene\", \"z\", \"y\", \"x\"]``).\n",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "coarsening_method": {
+          "description": "How this level was generated (e.g. \"grid_metanode\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "level": {
+          "description": "Resolution level index (0 = full resolution).",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "object_sparsity": {
+          "description": "Fraction of objects retained at this level.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "parent_level": {
+          "description": "Source level index (None for level 0).",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "vertex_count": {
+          "description": "Total number of vertices at this level.",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "level",
+        "vertex_count",
+        "arrays_present"
+      ],
+      "title": "LevelMetadata",
+      "type": "object"
+    },
+    "LinkAttributeMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for each ``link_attributes/<name>/`` array.",
+      "properties": {
+        "dtype": {
+          "description": "Numpy dtype string of the array's value type (e.g. \"float32\").",
+          "type": "string"
+        },
+        "name": {
+          "description": "NGFF axis or attribute name (e.g. \"x\", \"intensity\").",
+          "type": "string"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "link_attribute",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "name",
+        "dtype"
+      ],
+      "title": "LinkAttributeMeta",
+      "type": "object"
+    },
+    "LinksConvention": {
+      "description": "How intra-chunk links are represented for a polyline/graph/mesh.",
+      "enum": [
+        "explicit",
+        "implicit_sequential",
+        "implicit_sequential_with_branches"
+      ],
+      "title": "LinksConvention",
+      "type": "string"
+    },
+    "LinksMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for the ``links/`` array.",
+      "properties": {
+        "dtype": {
+          "description": "Numpy dtype string of the array's value type (e.g. \"float32\").",
+          "type": "string"
+        },
+        "link_width": {
+          "description": "Width of a links row (2 for edges, 3 or 4 for face rows).",
+          "minimum": 2,
+          "type": "integer"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "links",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "dtype",
+        "link_width"
+      ],
+      "title": "LinksMeta",
+      "type": "object"
+    },
+    "MetanodeChildrenMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for the ``metanode_children/`` coarsening sidecar.",
+      "properties": {
+        "num_metanodes": {
+          "description": "Total metanode count in a coarsening sidecar.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sid_ndim": {
+          "description": "Number of spatial-index dimensions encoded in chunk keys.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "metanode_children",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "num_metanodes",
+        "sid_ndim"
+      ],
+      "title": "MetanodeChildrenMeta",
+      "type": "object"
+    },
+    "ObjectAttributeMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for each ``object_attributes/<name>/`` array.",
+      "properties": {
+        "dtype": {
+          "description": "Numpy dtype string of the array's value type (e.g. \"float32\").",
+          "type": "string"
+        },
+        "name": {
+          "description": "NGFF axis or attribute name (e.g. \"x\", \"intensity\").",
+          "type": "string"
+        },
+        "shape": {
+          "description": "Shape of a dense per-object/per-group array.",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "object_attribute",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "name",
+        "dtype",
+        "shape"
+      ],
+      "title": "ObjectAttributeMeta",
+      "type": "object"
+    },
+    "ObjectIndexConvention": {
+      "description": "How the object_id \u2192 vertex-group mapping is encoded.",
+      "enum": [
+        "standard",
+        "identity"
+      ],
+      "title": "ObjectIndexConvention",
+      "type": "string"
+    },
+    "ObjectIndexMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for ``object_index/``.",
+      "properties": {
+        "num_objects": {
+          "description": "Total object count this array carries.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sid_ndim": {
+          "description": "Number of spatial-index dimensions encoded in chunk keys.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "object_index",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "num_objects",
+        "sid_ndim"
+      ],
+      "title": "ObjectIndexMeta",
+      "type": "object"
+    },
+    "ObjectIndexPendingMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for ``object_index/pending/<batch_id>/``.",
+      "properties": {
+        "batch_id": {
+          "description": "Monotonic batch id for an ``object_index/pending/<batch>`` sidecar.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "num_objects": {
+          "description": "Total object count this array carries.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sid_ndim": {
+          "description": "Number of spatial-index dimensions encoded in chunk keys.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "object_index_pending",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "batch_id",
+        "num_objects",
+        "sid_ndim"
+      ],
+      "title": "ObjectIndexPendingMeta",
+      "type": "object"
+    },
+    "RootMetadata": {
+      "additionalProperties": false,
+      "description": "Root-level ``.zattrs`` payload, persisted under the key ``zarr_vectors``.  Validates the runtime :class:`zarr_vectors.core.metadata.RootMetadata` dataclass.",
+      "properties": {
+        "base_bin_shape": {
+          "description": "Supervoxel bin edge lengths at level 0.  When set, every value must be > 0 and ``chunk_shape`` must be an integer multiple along every axis (enforced runtime-side in ``RootMetadata.validate``).\n",
+          "items": {
+            "type": "number"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "bounds": {
+          "$ref": "#/$defs/BoundingBox",
+          "description": "Global vertex bounding box."
+        },
+        "chunk_shape": {
+          "description": "Physical spatial chunk size per axis (all values > 0).",
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "cross_chunk_strategy": {
+          "$ref": "#/$defs/CrossChunkStrategy"
+        },
+        "crs": {
+          "description": "Optional coordinate reference system metadata (free-form dict matching whatever CRS vocabulary the store uses).\n",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format_capabilities": {
+          "description": "Optional 0.3+ feature tokens advertised by this store.",
+          "items": {
+            "$ref": "#/$defs/FormatCapability"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "format_version": {
+          "description": "Spec version this store was written against (e.g. \"0.3\").",
+          "pattern": "^\\d+\\.\\d+(\\.\\d+)?$",
+          "type": "string"
+        },
+        "geometry_types": {
+          "description": "One or more geometry kinds present in the store.",
+          "items": {
+            "$ref": "#/$defs/GeometryType"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "links_convention": {
+          "$ref": "#/$defs/LinksConvention"
+        },
+        "object_index_convention": {
+          "$ref": "#/$defs/ObjectIndexConvention"
+        },
+        "reduction_factor": {
+          "description": "Multi-resolution coarsening factor (\u2265 2).",
+          "minimum": 2,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "spatial_index_dims": {
+          "description": "NGFF-style axis list \u2014 at least 2, with \u22652 of type \"space\".",
+          "items": {
+            "$ref": "#/$defs/Axis"
+          },
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "format_version",
+        "spatial_index_dims",
+        "chunk_shape",
+        "bounds",
+        "geometry_types"
+      ],
+      "title": "RootMetadata",
+      "type": "object"
+    },
+    "VerticesMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for the ``vertices/`` array.",
+      "properties": {
+        "dtype": {
+          "description": "Numpy dtype string of the array's value type (e.g. \"float32\").",
+          "type": "string"
+        },
+        "encoding": {
+          "$ref": "#/$defs/Encoding",
+          "description": "How the chunk bytes are encoded."
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "vertices",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "dtype"
+      ],
+      "title": "VerticesMeta",
+      "type": "object"
+    },
+    "ZvArrayTag": {
+      "description": "Discriminator value for per-array ``.zattrs`` blocks (slot ``zv_array``).  Each writer in ``zarr_vectors/core/arrays.py`` stamps the corresponding tag.",
+      "enum": [
+        "vertices",
+        "links",
+        "attribute",
+        "object_index",
+        "object_index_pending",
+        "object_attribute",
+        "groupings",
+        "groupings_attribute",
+        "cross_chunk_links",
+        "cross_chunk_faces",
+        "link_attribute",
+        "metanode_children"
+      ],
+      "title": "ZvArrayTag",
+      "type": "string"
+    }
+  },
+  "$id": "https://w3id.org/zarr-vectors/schema/0.3",
+  "$schema": "https://json-schema.org/draft/2019-09/schema",
+  "additionalProperties": true,
+  "metamodel_version": "1.7.0",
+  "title": "zarr_vectors",
+  "type": "object",
+  "version": null
+}

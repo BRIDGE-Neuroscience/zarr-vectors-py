@@ -1,6 +1,6 @@
-"""Ragged array encoding and decoding for ZVF spatial chunks.
+"""Ragged array encoding and decoding for ZV spatial chunks.
 
-Each spatial chunk in a ZVF store holds a variable number of vertex groups,
+Each spatial chunk in a ZV store holds a variable number of vertex groups,
 each of variable length.  This module serialises lists of numpy arrays into
 flat byte buffers with an accompanying offset array, and deserialises them
 back.

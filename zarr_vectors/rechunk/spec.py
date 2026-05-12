@@ -29,17 +29,24 @@ class RechunkSpec:
         bins: Explicit bin edges for continuous values. For
             ``by="object_id"``, these are ID boundaries. For
             ``by="attribute:length"``, these are value boundaries.
-            If None, each unique value gets its own bin.
+            If None *and* ``categorical`` is False, the legacy
+            quartile-based auto-binning is used for attributes with >10
+            unique values.
         spatial_chunk_shape: Override spatial chunk shape for the output
             store. If None, keeps the source chunk shape.
         prefix_dim_name: Custom name for the prefix dimension in
             metadata. Defaults to the ``by`` value.
+        categorical: If True, treat the binning dimension as categorical
+            — every unique value gets its own bin regardless of how many
+            unique values there are.  Set this for gene labels, bundle
+            labels, etc.  Ignored when ``bins`` is also set.
     """
 
     by: str
     bins: list[float] | None = None
     spatial_chunk_shape: tuple[float, ...] | None = None
     prefix_dim_name: str | None = None
+    categorical: bool = False
 
     @property
     def dimension_name(self) -> str:
@@ -133,24 +140,24 @@ class DimensionMapper:
     ) -> dict[int, int]:
         """Assign objects to bins by attribute value."""
         if self.spec.bins is None:
-            # No explicit bins: use quartile-based auto-binning
             unique_vals = np.unique(values)
-            if len(unique_vals) <= 10:
-                # Few unique values — each gets its own bin
-                val_to_bin = {float(v): i for i, v in enumerate(unique_vals)}
+            # Categorical path: one bin per unique value, no quartile
+            # fallback.  Also used implicitly when there are few enough
+            # unique values that quartile-binning would be silly.
+            if self.spec.categorical or len(unique_vals) <= 10:
+                val_to_bin = {_hashable(v): i for i, v in enumerate(unique_vals)}
                 return {
-                    oid: val_to_bin[float(values[oid])]
+                    oid: val_to_bin[_hashable(values[oid])]
                     for oid in range(n_objects)
                 }
-            else:
-                # Auto-generate 4 bins from quartiles
-                q = np.quantile(values, [0.0, 0.25, 0.5, 0.75, 1.0])
-                edges = np.unique(q)
-                if len(edges) < 2:
-                    return {oid: 0 for oid in range(n_objects)}
-                indices = np.searchsorted(edges[1:], values, side="right")
-                indices = np.clip(indices, 0, len(edges) - 2)
-                return {oid: int(indices[oid]) for oid in range(n_objects)}
+            # Continuous fallback: auto-bin to quartiles.
+            q = np.quantile(values, [0.0, 0.25, 0.5, 0.75, 1.0])
+            edges = np.unique(q)
+            if len(edges) < 2:
+                return {oid: 0 for oid in range(n_objects)}
+            indices = np.searchsorted(edges[1:], values, side="right")
+            indices = np.clip(indices, 0, len(edges) - 2)
+            return {oid: int(indices[oid]) for oid in range(n_objects)}
 
         edges = np.array(sorted(self.spec.bins), dtype=np.float64)
         indices = np.searchsorted(edges, values, side="right") - 1
@@ -163,3 +170,12 @@ class DimensionMapper:
         if self.spec.bins is not None:
             return len(self.spec.bins)
         return None
+
+
+def _hashable(v: Any) -> Any:
+    """Reduce a numpy scalar to a Python value usable as a dict key."""
+    if isinstance(v, np.generic):
+        return v.item()
+    if isinstance(v, bytes):
+        return v.decode("utf-8")
+    return v

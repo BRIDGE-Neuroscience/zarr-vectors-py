@@ -60,6 +60,7 @@ def write_parametric_objects(
     custom_types: list[ParametricTypeDef] | None = None,
     create_new_store: bool = False,
     store_kwargs: dict[str, Any] | None = None,
+    backend: str | None = None,
 ) -> dict[str, Any]:
     """Write parametric objects to a zarr vectors store.
 
@@ -113,9 +114,9 @@ def write_parametric_objects(
             kw["bounds"] = ([0, 0, 0], [1000, 1000, 1000])
         if "geometry_types" not in kw:
             kw["geometry_types"] = ["point_cloud"]
-        root = create_store(store_path, RootMetadata(**kw))
+        root = create_store(store_path, RootMetadata(**kw), backend=backend)
     else:
-        root = open_store(store_path, mode="r+")
+        root = open_store(store_path, mode="r+", backend=backend)
 
     # Write type registry
     write_parametric_types(root, all_types)
@@ -177,7 +178,7 @@ def write_parametric_objects(
         data = np.array(encoded_rows, dtype=np.float64)
         para.write_bytes("objects", "data", data.tobytes())
         para.write_array_meta("objects", {
-            "zvf_array": "parametric_objects",
+            "zv_array": "parametric_objects",
             "num_objects": n_objects,
             "max_row_length": max_len,
             "dtype": "float64",
@@ -189,7 +190,7 @@ def write_parametric_objects(
         names_str = "\n".join(names)
         para.write_bytes("names", "data", names_str.encode("utf-8"))
         para.write_array_meta("names", {
-            "zvf_array": "parametric_names",
+            "zv_array": "parametric_names",
             "num_objects": n_objects,
         })
 
@@ -243,6 +244,8 @@ def write_parametric_objects(
 
 def read_parametric_objects(
     store_path: str,
+    *,
+    backend: str | None = None,
 ) -> list[dict[str, Any]]:
     """Read all parametric objects from a zarr vectors store.
 
@@ -254,7 +257,7 @@ def read_parametric_objects(
         - ``"coefficient_names"``: list of coefficient name strings
         - ``"name"``: object name (if stored)
     """
-    root = open_store(store_path)
+    root = open_store(store_path, backend=backend)
     para = get_parametric_group(root)
 
     # Read type registry

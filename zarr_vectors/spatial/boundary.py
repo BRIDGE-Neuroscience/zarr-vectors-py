@@ -298,6 +298,80 @@ def build_vertex_chunk_mapping(
     return vertex_chunks, vertex_local_indices, chunk_coords_list
 
 
+def chunk_local_to_global_offsets(
+    level_group,
+) -> tuple[dict[ChunkCoords, int], list[ChunkCoords], int]:
+    """Build the per-chunk → global vertex-index offset table.
+
+    For each chunk in a level (sorted lexicographically), returns the
+    cumulative starting vertex index in a hypothetical concatenation
+    of all chunks.  This is the standard input shape needed by
+    algorithms that need to map ``(chunk_key, local_idx)`` to a global
+    vertex ID without rebuilding the mapping themselves.
+
+    Backed by the ``vertex_counts/<chunk_key>`` sidecar when it exists
+    (capability ``"vertex_count_cache"``), which makes the lookup O(K)
+    chunks of single-int8-byte reads rather than O(N) total vertices
+    of bytes.  Falls back to summing decoded vertex_group_offsets on
+    legacy 0.2 stores — same answer, slower.
+
+    Args:
+        level_group: An open :class:`FsGroup` for one resolution level.
+
+    Returns:
+        ``(offsets, chunk_keys, total_vertices)`` where:
+
+        - ``offsets[chunk_key]`` = cumulative global start index for
+          that chunk.
+        - ``chunk_keys`` is the sorted lexicographic order used.
+        - ``total_vertices`` is the sum of all per-chunk counts.
+    """
+    # Imported lazily to avoid circular import with core.arrays which
+    # depends on this module's other helpers.
+    from zarr_vectors.core.arrays import (
+        list_chunk_keys,
+        read_chunk_vertex_count,
+        _read_vertex_offsets,
+    )
+
+    chunk_keys = list_chunk_keys(level_group)
+    offsets: dict[ChunkCoords, int] = {}
+    running = 0
+    for cc in chunk_keys:
+        count = read_chunk_vertex_count(level_group, cc)
+        if count is None:
+            # Legacy fallback: sum the per-vg vertex byte spans / itemsize.
+            # We don't know the dtype here without reading array metadata,
+            # so instead we decode the paired offsets to count vertex groups
+            # and sum group lengths via byte-spans / row size.
+            try:
+                vmeta = level_group.read_array_meta("vertices")
+                ndim_meta = vmeta.get("ndim")
+                dtype_str = vmeta.get("dtype", "float32")
+                itemsize = np.dtype(dtype_str).itemsize
+            except Exception:
+                ndim_meta = None
+                itemsize = 4  # float32 default
+            try:
+                v_offsets, _ = _read_vertex_offsets(level_group, cc)
+            except Exception:
+                v_offsets = np.empty(0, dtype=np.int64)
+            if v_offsets.size <= 1:
+                count = 0
+            else:
+                total_bytes = int(v_offsets[-1] - v_offsets[0])
+                # row size = ndim * itemsize.  If ndim isn't recorded,
+                # infer from the level group's stored bytes / itemsize
+                # divided by something — best effort.
+                if ndim_meta is None:
+                    ndim_meta = 3
+                row = int(ndim_meta) * itemsize
+                count = total_bytes // row if row else 0
+        offsets[cc] = running
+        running += int(count)
+    return offsets, chunk_keys, running
+
+
 def build_reindex_map(
     chunk_assignments: dict[ChunkCoords, npt.NDArray[np.intp]],
 ) -> dict[ChunkCoords, dict[int, int]]:

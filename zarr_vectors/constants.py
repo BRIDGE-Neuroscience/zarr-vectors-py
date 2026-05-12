@@ -1,4 +1,4 @@
-"""Format constants for the Zarr Vector Format (ZVF).
+"""Format constants for the Zarr Vectors (ZV) format.
 
 These are the canonical names, prefixes, and default values used
 throughout the specification.  Changing a value here changes it
@@ -9,8 +9,20 @@ everywhere in the package.
 # Format version
 # ---------------------------------------------------------------------------
 
-FORMAT_VERSION: str = "0.2"
-"""Current ZVF specification version."""
+FORMAT_VERSION: str = "0.3"
+"""Current ZV specification version."""
+
+# Capability tokens stored in RootMetadata.format_capabilities.  Readers
+# inspect these to know which optional 0.3 features the store uses, and
+# degrade gracefully when a capability is absent.
+CAP_CROSS_CHUNK_FACES: str = "cross_chunk_faces"
+"""Store contains the cross_chunk_faces array (face-identity preservation)."""
+
+CAP_VERTEX_COUNT_CACHE: str = "vertex_count_cache"
+"""Per-chunk vertex_counts/<key> sidecars are present."""
+
+CAP_OBJECT_INDEX_PENDING: str = "object_index_pending"
+"""Store has uncompacted object_index pending sidecars."""
 
 # ---------------------------------------------------------------------------
 # Store layout names
@@ -35,8 +47,10 @@ OBJECT_ATTRIBUTES: str = "object_attributes"
 GROUPINGS: str = "groupings"
 GROUPINGS_ATTRIBUTES: str = "groupings_attributes"
 CROSS_CHUNK_LINKS: str = "cross_chunk_links"
+CROSS_CHUNK_FACES: str = "cross_chunk_faces"
 LINK_ATTRIBUTES: str = "link_attributes"
 METANODE_CHILDREN: str = "metanode_children"
+VERTEX_COUNTS: str = "vertex_counts"
 
 # Parametric sub-arrays
 PARAMETRIC_OBJECTS: str = "objects"
@@ -54,8 +68,10 @@ ALL_ARRAY_NAMES: frozenset[str] = frozenset({
     GROUPINGS,
     GROUPINGS_ATTRIBUTES,
     CROSS_CHUNK_LINKS,
+    CROSS_CHUNK_FACES,
     LINK_ATTRIBUTES,
     METANODE_CHILDREN,
+    VERTEX_COUNTS,
 })
 
 # ---------------------------------------------------------------------------

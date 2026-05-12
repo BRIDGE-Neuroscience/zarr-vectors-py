@@ -8,11 +8,53 @@ of vertices in one pass using ``np.floor`` and structured-array
 
 from __future__ import annotations
 
+import itertools
+from typing import Iterable
+
 import numpy as np
 import numpy.typing as npt
 
 from zarr_vectors.exceptions import ChunkingError
 from zarr_vectors.typing import BinCoords, BinShape, BoundingBox, ChunkCoords, ChunkShape
+
+
+def neighbouring_chunk_keys(
+    key: ChunkCoords,
+    *,
+    halo: int = 1,
+    occupied_keys: Iterable[ChunkCoords] | None = None,
+    include_self: bool = False,
+) -> list[ChunkCoords]:
+    """Return chunk keys within ``halo`` of ``key`` along every axis.
+
+    Pure integer-tuple work — no store I/O — so it composes with any
+    chunk-key arity (3D, 4D when attribute-chunked, etc.).
+
+    Args:
+        key: The reference chunk coord.
+        halo: Maximum per-axis distance.  ``halo=1`` returns the
+            (3^ndim - 1) chunks adjacent on at least one face, edge, or
+            corner; ``halo=2`` widens to a 5^ndim cube.
+        occupied_keys: If given, restrict the output to keys that
+            actually exist in the store.  Pass ``set(level.chunk_keys)``
+            to filter to occupied chunks.
+        include_self: If ``True``, include ``key`` itself in the output.
+
+    Returns:
+        Sorted list of unique :class:`ChunkCoords` tuples.
+    """
+    if halo < 0:
+        raise ValueError(f"halo must be >= 0, got {halo}")
+    deltas = range(-halo, halo + 1)
+    out: list[ChunkCoords] = []
+    for offset in itertools.product(deltas, repeat=len(key)):
+        if not include_self and all(d == 0 for d in offset):
+            continue
+        out.append(tuple(int(k) + int(d) for k, d in zip(key, offset)))
+    if occupied_keys is not None:
+        occupied = set(occupied_keys)
+        out = [k for k in out if k in occupied]
+    return sorted(out)
 
 
 def assign_chunks(

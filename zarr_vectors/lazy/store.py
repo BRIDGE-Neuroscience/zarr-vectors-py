@@ -10,12 +10,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from zarr_vectors.core.backends import StorageBackend
+from zarr_vectors.core.group import Group
 from zarr_vectors.core.store import (
     FsGroup,
     list_resolution_levels,
     open_store,
     read_root_metadata,
     read_level_metadata,
+    rebind,
 )
 from zarr_vectors.core.metadata import RootMetadata, LevelMetadata
 from zarr_vectors.lazy.level import ZVRLevel
@@ -32,7 +35,7 @@ class ZVRStore:
         meta: Parsed :class:`RootMetadata`.
     """
 
-    def __init__(self, root: FsGroup, meta: RootMetadata) -> None:
+    def __init__(self, root: Group, meta: RootMetadata) -> None:
         self._root = root
         self._meta = meta
         self._levels_cache: dict[int, ZVRLevel] = {}
@@ -44,8 +47,13 @@ class ZVRStore:
 
     @property
     def path(self) -> Path:
-        """Filesystem path of the store."""
+        """Filesystem path of the store (LocalBackend only)."""
         return self._root.path
+
+    @property
+    def url(self) -> str:
+        """Canonical URL of the store root.  Portable across backends."""
+        return self._root.url
 
     @property
     def chunk_shape(self) -> tuple[float, ...]:
@@ -88,12 +96,13 @@ class ZVRStore:
         return self._meta.format_version
 
     @property
-    def headers(self) -> dict[str, Any]:
+    def headers(self) -> dict[str, dict[str, Any]]:
         """Dict of stored format headers, keyed by format name.
 
         Returns:
-            ``{format_name: Header}`` for each stored header.
-            Empty dict if no headers are stored.
+            ``{format_name: header_dict}`` for each stored header.
+            Empty dict if no headers are stored.  Typed deserialisation
+            of header dicts is handled by the format package.
         """
         from zarr_vectors.headers.registry import HeaderRegistry
         try:
@@ -131,25 +140,58 @@ class ZVRStore:
     def __repr__(self) -> str:
         types = ", ".join(self.geometry_types)
         return (
-            f"ZVRStore('{self.path}', "
+            f"ZVRStore('{self._root.url}', "
             f"levels={self.levels}, "
             f"geometry=[{types}], "
             f"chunk={self.chunk_shape}, "
             f"bin={self.bin_shape})"
         )
 
+    # ---------------------------------------------------------------
+    # Backend rebinding
+    # ---------------------------------------------------------------
 
-def open_zvr(path: str | Path) -> ZVRStore:
+    def set_backend(
+        self,
+        backend: str | StorageBackend,
+        **backend_kwargs: Any,
+    ) -> None:
+        """Swap the underlying storage backend in place (no data movement).
+
+        Useful for switching driver (e.g. ``"fsspec"`` → ``"obstore"``)
+        or credentials on a store you already have open.  Any cached
+        level / array handles are invalidated and will be rebuilt on the
+        next access using the new backend.
+
+        Args:
+            backend: Backend name string or a pre-built
+                :class:`StorageBackend` already pointed at the same URL.
+            **backend_kwargs: Forwarded to the backend constructor when
+                ``backend`` is a string.
+        """
+        rebind(self._root, backend, **backend_kwargs)
+        self._levels_cache.clear()
+
+
+def open_zvr(
+    path: str | Path,
+    *,
+    backend: str | None = None,
+    **backend_kwargs: Any,
+) -> ZVRStore:
     """Open a zarr vectors store lazily.
 
-    Reads only root metadata (a few KB). No vertex data is loaded.
+    Reads only root metadata (a few KB).  No vertex data is loaded.
 
     Args:
-        path: Filesystem path to the ``.zarrvectors`` store.
+        path: URL or filesystem path to the ZV store.
+        backend: Force a backend (``"local"`` / ``"obstore"`` /
+            ``"fsspec"``).  Auto-detected from the URL scheme by default.
+        **backend_kwargs: Forwarded to the backend constructor.
 
     Returns:
         A :class:`ZVRStore` handle for lazy access.
     """
-    root = open_store(str(path))
+    root = open_store(str(path), backend=backend, **backend_kwargs)
     meta = read_root_metadata(root)
     return ZVRStore(root, meta)

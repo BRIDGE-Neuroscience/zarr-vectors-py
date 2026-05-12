@@ -1,4 +1,4 @@
-"""Point cloud I/O for ZVF stores.
+"""Point cloud I/O for ZV (Zarr Vectors) stores.
 
 Supports three point cloud variants:
 
@@ -51,6 +51,10 @@ from zarr_vectors.core.arrays import (
     write_object_attributes,
     write_object_index,
 )
+from zarr_vectors.core.attr_chunking import (
+    assign_attribute_bins,
+    compute_chunk_dim_names,
+)
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
     FsGroup,
@@ -59,6 +63,7 @@ from zarr_vectors.core.store import (
     get_resolution_level,
     open_store,
     read_root_metadata,
+    read_level_metadata,
 )
 from zarr_vectors.exceptions import ArrayError
 from zarr_vectors.spatial.chunking import (
@@ -90,8 +95,10 @@ def write_points(
     groups: dict[int, list[int]] | None = None,
     group_attributes: dict[str, npt.NDArray] | None = None,
     dtype: str = "float32",
+    backend: str | None = None,
+    chunk_by_attribute: str | None = None,
 ) -> dict[str, Any]:
-    """Write a point cloud to a new ZVF store.
+    """Write a point cloud to a new ZV store.
 
     Args:
         store_path: Path for the new store (must not exist).
@@ -106,6 +113,12 @@ def write_points(
         groups: Group memberships ``{group_id: [object_id, ...]}``.
         group_attributes: Per-group attributes ``{name: array}``.
         dtype: Numpy dtype string for vertex positions.
+        chunk_by_attribute: If set, the named per-vertex categorical
+            attribute (which must appear in ``attributes``) becomes the
+            **leading chunk axis**.  Chunk keys gain a prefix, e.g.
+            ``gene_bin.z.y.x``.  Vertices with mixed values within the
+            same object are split across multiple attribute chunks.
+            v1 supports integer / string dtypes only.
 
     Returns:
         Summary dict.
@@ -129,6 +142,34 @@ def write_points(
     for b in bins_per_chunk:
         total_bins_per_chunk *= b
 
+    # Attribute-chunking setup.  When enabled, every chunk key gains a
+    # leading attr-bin dim, vertices are split per-vertex, and we need
+    # object indexing for the prefixed read path.
+    attr_bins: npt.NDArray[np.int64] | None = None
+    attr_bin_values: list[Any] | None = None
+    if chunk_by_attribute is not None:
+        if not attributes or chunk_by_attribute not in attributes:
+            raise ArrayError(
+                f"chunk_by_attribute={chunk_by_attribute!r} must name a key "
+                f"in `attributes` (got: "
+                f"{sorted(attributes) if attributes else []})"
+            )
+        attr_bins, attr_bin_values = assign_attribute_bins(
+            attributes[chunk_by_attribute]
+        )
+        if attr_bins.shape[0] != n_vertices:
+            raise ArrayError(
+                f"chunk_by_attribute array length {attr_bins.shape[0]} "
+                f"!= n_vertices {n_vertices}"
+            )
+        # The chunk-by attribute is recoverable from the leading axis;
+        # don't also store it as a per-chunk attribute array.
+        attributes = {
+            k: v for k, v in attributes.items() if k != chunk_by_attribute
+        }
+        if object_ids is None:
+            object_ids = np.arange(n_vertices, dtype=np.int64)
+
     needs_objects = (
         object_ids is not None
         or object_attributes is not None
@@ -149,7 +190,7 @@ def write_points(
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
         base_bin_shape=bin_shape,
     )
-    root = create_store(store_path, root_meta)
+    root = create_store(store_path, root_meta, backend=backend)
 
     bin_assignments = assign_bins(positions, effective_bin)
     chunked_bins = group_bins_by_chunk(bin_assignments, bins_per_chunk)
@@ -161,7 +202,22 @@ def write_points(
     if needs_objects:
         arrays_present.append("object_index")
 
-    level_meta = LevelMetadata(level=0, vertex_count=n_vertices, arrays_present=arrays_present)
+    level_chunk_dims: list[str] | None = None
+    if chunk_by_attribute is not None:
+        level_chunk_dims = compute_chunk_dim_names(
+            chunk_by_attribute,
+            ndim,
+            spatial_dim_names=[a["name"] for a in axes],
+        )
+
+    level_meta = LevelMetadata(
+        level=0,
+        vertex_count=n_vertices,
+        arrays_present=arrays_present,
+        chunk_dims=level_chunk_dims,
+        chunk_attribute_name=chunk_by_attribute,
+        chunk_attribute_values=attr_bin_values,
+    )
     level_group = create_resolution_level(root, 0, level_meta)
     create_vertices_array(level_group, dtype=dtype)
 
@@ -180,9 +236,27 @@ def write_points(
 
     if object_ids is not None:
         # With objects: use per-object vertex groups per chunk (not per-bin)
-        # This preserves correct object_index semantics for read_object_vertices
-        chunk_assignments = assign_chunks(positions, chunk_shape)
-        for chunk_coords, global_indices in sorted(chunk_assignments.items()):
+        # This preserves correct object_index semantics for read_object_vertices.
+        # When ``attr_bins`` is set the chunk key gains a leading attr-bin
+        # dim and a single object's vertices may land in multiple keys.
+        spatial_assignments = assign_chunks(positions, chunk_shape)
+
+        # Build {combined_chunk_coords: global_indices}.  Combined coords
+        # are spatial-only when ``attr_bins is None``, else
+        # ``(attr_bin, *spatial)`` after splitting each spatial chunk by
+        # the per-vertex attr-bin.
+        combined_assignments: dict[ChunkCoords, npt.NDArray[np.int64]] = {}
+        for spatial_cc, global_indices in spatial_assignments.items():
+            global_indices = np.asarray(global_indices, dtype=np.int64)
+            if attr_bins is None:
+                combined_assignments[spatial_cc] = global_indices
+                continue
+            chunk_attr_bins = attr_bins[global_indices]
+            for ab in np.unique(chunk_attr_bins):
+                mask = chunk_attr_bins == ab
+                combined_assignments[(int(ab), *spatial_cc)] = global_indices[mask]
+
+        for chunk_coords, global_indices in sorted(combined_assignments.items()):
             chunk_positions = positions[global_indices]
             chunk_obj_ids = object_ids[global_indices]
             unique_objs = np.unique(chunk_obj_ids)
@@ -239,7 +313,8 @@ def write_points(
                                            dtype=attributes[attr_name].dtype)
 
     if needs_objects and object_manifests:
-        write_object_index(level_group, object_manifests, sid_ndim=ndim)
+        idx_ndim = ndim + 1 if attr_bins is not None else ndim
+        write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
 
     n_objects = len(object_manifests) if object_manifests else 0
     if object_attributes:
@@ -275,14 +350,16 @@ def read_points(
     object_ids: list[int] | None = None,
     group_ids: list[int] | None = None,
     attribute_names: list[str] | None = None,
+    attribute_filter: dict[str, Any] | None = None,
+    backend: str | None = None,
 ) -> dict[str, Any]:
-    """Read point cloud data from a ZVF store.
+    """Read point cloud data from a ZV store.
 
     Supports filtering by bounding box, object ID, or group ID.
     Filters are applied in order: group → object → spatial.
 
     Args:
-        store_path: Path to the ZVF store.
+        store_path: Path to the ZV store.
         level: Resolution level to read (default 0).
         bbox: Optional bounding box filter as ``(min_corner, max_corner)``.
         object_ids: Optional list of object IDs to read.
@@ -297,7 +374,7 @@ def read_points(
         - ``object_ids``: ``(M,)`` array of object IDs per vertex (if objects exist)
         - ``vertex_count``: total vertices returned
     """
-    root = open_store(store_path)
+    root = open_store(store_path, backend=backend)
     root_meta = read_root_metadata(root)
     level_group = get_resolution_level(root, level)
     ndim = root_meta.sid_ndim
@@ -365,6 +442,42 @@ def read_points(
 
     # Path 2: read by bounding box or read all
     chunk_keys = list_chunk_keys(level_group)
+
+    # attribute_filter: restrict to chunks with the matching leading bin
+    # index.  Cheap pre-filter on the chunk key — drops scans drastically
+    # for stores written with ``chunk_by_attribute``.
+    if attribute_filter:
+        try:
+            lm = read_level_metadata(root, level)
+        except Exception:
+            lm = None
+        if (
+            lm is None
+            or lm.chunk_attribute_name is None
+            or lm.chunk_attribute_values is None
+        ):
+            raise ArrayError(
+                "attribute_filter requires a store written with "
+                "chunk_by_attribute (level metadata has no chunk_attribute_name)"
+            )
+        if len(attribute_filter) != 1:
+            raise ArrayError(
+                "attribute_filter must specify exactly one attribute "
+                f"(got {len(attribute_filter)})"
+            )
+        filt_name, filt_value = next(iter(attribute_filter.items()))
+        if filt_name != lm.chunk_attribute_name:
+            raise ArrayError(
+                f"attribute_filter key {filt_name!r} does not match the "
+                f"store's chunk_attribute_name "
+                f"{lm.chunk_attribute_name!r}"
+            )
+        try:
+            bin_idx = lm.chunk_attribute_values.index(filt_value)
+        except ValueError:
+            return _empty_result(root_meta.sid_ndim)
+        chunk_keys = [k for k in chunk_keys if k and k[0] == bin_idx]
+
     effective_bin = root_meta.effective_bin_shape
     bins_per_chunk = root_meta.bins_per_chunk
     has_bins = any(b > 1 for b in bins_per_chunk)

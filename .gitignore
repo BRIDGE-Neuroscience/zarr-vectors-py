@@ -1,0 +1,28 @@
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+
+# Build / distribution
+build/
+dist/
+*.egg
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/

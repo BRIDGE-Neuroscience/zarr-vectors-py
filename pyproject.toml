@@ -49,7 +49,7 @@ fsspec = [
 # ``backend="icechunk"`` on create_store / open_store; never auto-
 # detected from URL scheme (icechunk has no native scheme).
 icechunk = [
-    "icechunk>=0.2",
+    "icechunk>=0.2; python_version >= '3.11'",
 ]
 # Alias: keep the existing [cloud] extras working; resolves to obstore
 # (the preferred cloud backend).

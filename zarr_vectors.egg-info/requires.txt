@@ -1,6 +1,12 @@
 numpy>=1.24
 numcodecs>=0.12
 
+[:python_version < "3.11"]
+zarr<3,>=2.18
+
+[:python_version >= "3.11"]
+zarr>=3.0
+
 [all]
 zarr-vectors[draco,fsspec,obstore]
 

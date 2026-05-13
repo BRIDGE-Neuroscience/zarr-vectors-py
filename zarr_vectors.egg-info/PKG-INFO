@@ -17,6 +17,8 @@ Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: numpy>=1.24
 Requires-Dist: numcodecs>=0.12
+Requires-Dist: zarr>=3.0; python_version >= "3.11"
+Requires-Dist: zarr<3,>=2.18; python_version < "3.11"
 Provides-Extra: draco
 Requires-Dist: DracoPy>=1.3; extra == "draco"
 Provides-Extra: obstore

@@ -503,7 +503,46 @@ class TestStoreCreate:
         assert tmp_store_path.is_dir()
         assert "zarr_vectors" in root.attrs.to_dict()
         assert f"resolution_0" in root
-        assert "parametric" in root
+        # /parametric is no longer auto-created; it is created lazily by
+        # get_parametric_group() on first use.
+        assert "parametric" not in root
+        # The warm shell already contains the empty ragged-vertex pair.
+        res0 = root["resolution_0"]
+        assert "vertices" in res0
+        assert "vertex_group_offsets" in res0
+
+    def test_create_store_minimal(self, tmp_store_path: Path) -> None:
+        """create_store(path) with no metadata produces a warm shell."""
+        root = create_store(tmp_store_path)
+        assert tmp_store_path.is_dir()
+        attrs = root.attrs.to_dict()
+        assert "zarr_vectors" in attrs
+        assert attrs["zarr_vectors"]["format_version"]
+        assert "spatial_index_dims" not in attrs["zarr_vectors"]
+        assert "chunk_shape" not in attrs["zarr_vectors"]
+        assert "resolution_0" in root
+        assert "parametric" not in root
+        res0 = root["resolution_0"]
+        assert "vertices" in res0
+        assert "vertex_group_offsets" in res0
+
+    def test_create_store_kwargs_partial(self, tmp_store_path: Path) -> None:
+        """Individual structural kwargs round-trip through root attrs."""
+        axes = [
+            {"name": "x", "type": "space", "unit": "um"},
+            {"name": "y", "type": "space", "unit": "um"},
+        ]
+        root = create_store(
+            tmp_store_path,
+            chunk_shape=(50.0, 50.0),
+            axes=axes,
+        )
+        zv = root.attrs.to_dict()["zarr_vectors"]
+        assert zv["chunk_shape"] == [50.0, 50.0]
+        assert zv["spatial_index_dims"] == axes
+        # bounds + geometry_types were not supplied → stay unset.
+        assert "bounds" not in zv
+        assert "geometry_types" not in zv
 
     def test_create_store_already_exists(self, tmp_store_path: Path) -> None:
         meta = _make_root_meta()

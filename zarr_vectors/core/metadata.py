@@ -354,35 +354,52 @@ class RootMetadata:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> RootMetadata:
+    def from_dict(cls, d: dict[str, Any], *, strict: bool = True) -> RootMetadata:
         """Deserialise from a dict (as stored in ``.zattrs``).
 
         Args:
             d: Dict with a ``"zarr_vectors"`` key containing the metadata.
+            strict: When True (default), every structural field
+                (``spatial_index_dims``, ``chunk_shape``, ``bounds``,
+                ``geometry_types``) must be present.  When False, missing
+                structural fields fall through as ``None``/``[]`` so a
+                freshly-warmed store can round-trip; the resulting
+                instance will fail :meth:`validate` until those fields
+                are filled in.
 
         Raises:
-            MetadataError: If the dict is malformed or missing required keys.
+            MetadataError: If the dict is malformed or (in strict mode)
+                missing required keys.
         """
         if "zarr_vectors" not in d:
             raise MetadataError("Root metadata must contain 'zarr_vectors' key")
         zv = d["zarr_vectors"]
 
-        required = [
-            "format_version", "spatial_index_dims", "chunk_shape",
-            "bounds", "geometry_types",
-        ]
-        for key in required:
-            if key not in zv:
-                raise MetadataError(f"Missing required root metadata key: '{key}'")
+        if strict:
+            required = [
+                "format_version", "spatial_index_dims", "chunk_shape",
+                "bounds", "geometry_types",
+            ]
+            for key in required:
+                if key not in zv:
+                    raise MetadataError(f"Missing required root metadata key: '{key}'")
+        elif "format_version" not in zv:
+            raise MetadataError("Missing required root metadata key: 'format_version'")
 
         bbs = zv.get("base_bin_shape")
         caps = zv.get("format_capabilities") or []
+        chunk_shape_raw = zv.get("chunk_shape")
+        bounds_raw = zv.get("bounds")
         return cls(
             format_version=zv["format_version"],
-            spatial_index_dims=zv["spatial_index_dims"],
-            chunk_shape=tuple(zv["chunk_shape"]),
-            bounds=(list(zv["bounds"][0]), list(zv["bounds"][1])),
-            geometry_types=zv["geometry_types"],
+            spatial_index_dims=zv.get("spatial_index_dims") or [],
+            chunk_shape=tuple(chunk_shape_raw) if chunk_shape_raw else (),
+            bounds=(
+                (list(bounds_raw[0]), list(bounds_raw[1]))
+                if bounds_raw
+                else ([], [])
+            ),
+            geometry_types=zv.get("geometry_types") or [],
             crs=zv.get("crs"),
             links_convention=zv.get("links_convention", LINKS_IMPLICIT_SEQUENTIAL),
             object_index_convention=zv.get("object_index_convention", OBJIDX_STANDARD),
@@ -393,6 +410,24 @@ class RootMetadata:
             base_bin_shape=tuple(bbs) if bbs else None,
             format_capabilities=list(caps),
         )
+
+    def is_complete(self) -> bool:
+        """True when all structural fields are populated and the meta
+        passes :meth:`validate`.
+
+        A freshly-warmed store (created via ``create_store(path)`` with
+        no inference yet) has ``is_complete() is False`` until the first
+        write fills in dims/chunk_shape/bounds.
+        """
+        if not self.spatial_index_dims or not self.chunk_shape:
+            return False
+        if not self.bounds or not self.bounds[0] or not self.bounds[1]:
+            return False
+        try:
+            self.validate()
+        except (MetadataError, ConventionError):
+            return False
+        return True
 
     @property
     def sid_ndim(self) -> int:

@@ -50,12 +50,14 @@ from zarr_vectors.core.arrays import (
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
     FsGroup,
+    _create_or_open_store,
+    _ensure_root_metadata_for_write,
     create_resolution_level,
     get_resolution_level,
     open_store,
     read_root_metadata,
 )
-from zarr_vectors.spatial.chunking import assign_chunks
+from zarr_vectors.spatial.chunking import assign_chunks, compute_bounds
 from zarr_vectors.typing import ChunkCoords, ObjectManifest
 
 
@@ -140,8 +142,31 @@ def add_geometry(
         ValueError: If the geometry type requires data not provided.
     """
     store_path = Path(store_path)
-    root = open_store(str(store_path), mode="r+")
-    meta = read_root_metadata(root)
+    root = _create_or_open_store(str(store_path))
+
+    # Infer ndim/bounds from input data so a warmed-but-empty store can
+    # be filled in here.  When the store already has full metadata, the
+    # bounds union is a no-op against the existing min/max.
+    sample_points: npt.NDArray | None = None
+    if positions is not None:
+        sample_points = np.asarray(positions)
+    elif polylines:
+        sample_points = np.concatenate([np.asarray(p) for p in polylines], axis=0)
+    if sample_points is None or sample_points.size == 0:
+        # Nothing to infer from — fall back to strict read (will raise
+        # MetadataError on a freshly-warmed store, surfacing the gap).
+        meta = read_root_metadata(root)
+    else:
+        inferred_bounds = compute_bounds(sample_points)
+        meta = _ensure_root_metadata_for_write(
+            root,
+            inferred_ndim=sample_points.shape[1],
+            inferred_bounds=(
+                inferred_bounds[0].tolist(),
+                inferred_bounds[1].tolist(),
+            ),
+            geometry_type=geometry_type,
+        )
     ndim = meta.sid_ndim
     chunk_shape = meta.chunk_shape
 

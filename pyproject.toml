@@ -44,13 +44,20 @@ fsspec = [
     "gcsfs>=2024.0",
     "adlfs>=2024.0",
 ]
+# Icechunk is a transactional Zarr Store (commit-based versioning on
+# top of a cloud or local object store).  Selected via
+# ``backend="icechunk"`` on create_store / open_store; never auto-
+# detected from URL scheme (icechunk has no native scheme).
+icechunk = [
+    "icechunk>=0.2",
+]
 # Alias: keep the existing [cloud] extras working; resolves to obstore
 # (the preferred cloud backend).
 cloud = [
     "zarr-vectors[obstore]",
 ]
 all = [
-    "zarr-vectors[draco,obstore,fsspec]",
+    "zarr-vectors[draco,obstore,fsspec,icechunk]",
 ]
 dev = [
     "pytest>=7.0",

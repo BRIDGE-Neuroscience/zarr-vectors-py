@@ -47,8 +47,11 @@ generated diffs between contributors quiet.
 | 12 per-array `.zattrs` shapes | `zarr_vectors.core.arrays.write_array_meta` call-sites — discriminator slot `zv_array` |
 | Enums                     | `zarr_vectors.constants.VALID_*` frozensets and `CAP_*` tokens |
 
-The `ParametricTypeDef` registry (plane/line/sphere) is deferred to a
-follow-up PR.
+The `ParametricTypeDef` registry (plane/line/sphere) is implemented in
+`zarr_vectors.core.metadata` (with built-in `PARAMETRIC_PLANE`,
+`PARAMETRIC_LINE`, `PARAMETRIC_SPHERE` defaults); the LinkML schema
+itself does not yet model it — adding `ParametricTypeDef` to the
+schema is a follow-up.
 
 ## Representation bridge
 

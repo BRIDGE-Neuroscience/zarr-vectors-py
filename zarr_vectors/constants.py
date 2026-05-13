@@ -41,6 +41,12 @@ CAP_MULTISCALE_LINKS: str = "multiscale_links"
 ``cross_chunk_link_attributes/<name>/<delta>/``) and may contain
 cross-pyramid-level edges (``delta != 0``)."""
 
+DEFAULT_AXES_NAMES: tuple[str, ...] = ("x", "y", "z", "w")
+"""Default axis names used when first-write inference creates root
+metadata for a store that was warmed without an explicit ``axes`` kwarg.
+Indexed by ``sid_ndim`` (1 → ``("x",)``, 2 → ``("x", "y")``, ...).
+Stops at 4 dims; higher-dim stores must pass axes explicitly."""
+
 # ---------------------------------------------------------------------------
 # Store layout names
 # ---------------------------------------------------------------------------

@@ -15,10 +15,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+
+# LinkML's DocGenerator inlines a Stack Overflow link about tabbed code
+# blocks as an HTML comment on every "Examples" section it can't render.
+# Strip these — they're tool noise, not user-facing.
+_DOCGEN_TODO_RE = re.compile(
+    r"<!--\s*TODO: investigate https://stackoverflow\.com/[^>]*-->\s*\n?"
+)
+
+
+def _strip_docgen_noise(text: str) -> str:
+    return _DOCGEN_TODO_RE.sub("", text)
 
 SCHEMA_DIR = Path(__file__).resolve().parent
 SOURCE = SCHEMA_DIR / "zarr_vectors.linkml.yaml"
@@ -63,12 +75,6 @@ def _gen_doc(source: Path, out: Path) -> None:
                 continue
             sections.append(f"\n\n---\n\n{p.read_text(encoding='utf-8')}")
         out.write_text("\n".join(sections), encoding="utf-8")
-
-
-def _diff_in_place(write_fn) -> bool:
-    """Run ``write_fn`` against a temp file and report whether the on-disk file would change."""
-    # Convenience: caller passes a callable that takes (out_path) and writes there.
-    raise NotImplementedError  # not used
 
 
 def regen(check: bool) -> int:

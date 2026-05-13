@@ -69,9 +69,6 @@ class ZVRWriter:
         self._level = level
         self._group = level._group
         self._committed = False
-        # In-memory dirty-flag tracking for future use (e.g. lazy
-        # commits).  Currently every method writes immediately.
-        self._dirty: bool = False
         # Manifests staged by ``append_vertices`` and flushed by
         # ``commit`` as a pending sidecar batch.
         self._pending_manifests: dict[int, ObjectManifest] = {}
@@ -182,7 +179,6 @@ class ZVRWriter:
         await asyncio.to_thread(
             write_object_attributes, self._group, name, arr,
         )
-        self._dirty = True
 
     # ---------------- internal helpers ----------------------------------
 
@@ -260,7 +256,6 @@ class ZVRWriter:
 
         # Make sure the level metadata advertises the new array.
         await asyncio.to_thread(self._touch_arrays_present, f"{subpath}/{name}")
-        self._dirty = True
 
     async def _write_per_face_attribute(
         self,
@@ -336,7 +331,6 @@ class ZVRWriter:
         await asyncio.to_thread(
             self._touch_arrays_present, f"face_attributes/{name}",
         )
-        self._dirty = True
 
     def _touch_arrays_present(self, entry: str) -> None:
         """Add ``entry`` to the level's ``arrays_present`` if missing."""
@@ -481,8 +475,6 @@ class ZVRWriter:
                 self._pending_sid_ndim = len(next(iter(results.keys())))
             else:
                 self._pending_sid_ndim = ndim
-
-        self._dirty = True
         return {
             "vertices_added": n_new,
             "new_objects": len(new_oids),
@@ -533,21 +525,8 @@ class ZVRWriter:
         # Stamp the pending capability on root metadata (idempotent).
         await asyncio.to_thread(self._stamp_capability, CAP_OBJECT_INDEX_PENDING)
 
-        # Update level vertex_count.
-        await asyncio.to_thread(
-            self._bump_level_vertex_count,
-            sum(
-                # Count distinct vertices we added: sum of group lengths
-                # for each (oid, cc, vg_idx) tuple.  Read fresh from disk
-                # by counting per-chunk sidecars vs the offset table is
-                # avoidable; instead, sum group lengths from each new VG.
-                # We don't have the source positions here, so derive
-                # from manifest entries by summing actual chunk reads.
-                # Keep it cheap: vertex_count is informational, callers
-                # rely on actual reads.
-                0 for _ in self._pending_manifests.values()
-            ),
-        )
+        # Update level vertex_count from the on-disk per-chunk sidecars.
+        await asyncio.to_thread(self._bump_level_vertex_count)
 
         committed = len(self._pending_manifests)
         self._pending_manifests = {}
@@ -599,7 +578,7 @@ class ZVRWriter:
             zv["format_capabilities"] = caps
             root_handle.attrs.update({"zarr_vectors": zv})
 
-    def _bump_level_vertex_count(self, _placeholder: int) -> None:
+    def _bump_level_vertex_count(self) -> None:
         """Recompute the level's vertex_count from the actual on-disk data.
 
         ``append_vertices`` doesn't track per-call totals, so we

@@ -1,10 +1,27 @@
 """Pluggable storage backends.
 
-This package contains the :class:`StorageBackend` protocol and built-in
-implementations (``local``, ``obstore``, ``fsspec``), plus the URL-scheme
-dispatcher used by :func:`zarr_vectors.core.store.create_store` and friends.
+zarr-vectors has **two** distinct backend layers, both of which can be
+selected via the ``backend=`` kwarg on
+:func:`zarr_vectors.core.store.create_store` /
+:func:`zarr_vectors.core.store.open_store`:
 
-Resolution order for the active backend:
+1. **Byte-level KV backends** (this package): implement the
+   :class:`StorageBackend` protocol.  Built-ins are ``local``,
+   ``obstore``, and ``fsspec``.  Resolution and instantiation live in
+   :func:`resolve_backend_name` and :func:`make_backend`.
+
+2. **Zarr-Store-level backends**: return a ``zarr.abc.store.Store``
+   directly.  Currently just ``icechunk`` (transactional, commit-based
+   versioning on top of any object store).  Wired in
+   :func:`zarr_vectors.core.store._make_zarr_store_with_session`.
+
+Both kinds share the same public ``backend=`` kwarg, so callers don't
+need to know which layer they're talking to.  Use ``backend="icechunk"``
+for transactional cloud or local storage; use ``backend="obstore"`` /
+``backend="fsspec"`` for direct byte-level cloud I/O without versioning.
+
+Resolution order for the byte-level layer (icechunk is always explicit,
+never auto-detected):
 
 1. Explicit ``backend=`` kwarg on the public API.
 2. ``ZARR_VECTORS_BACKEND`` environment variable.

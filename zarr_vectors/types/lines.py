@@ -47,6 +47,8 @@ from zarr_vectors.core.attr_chunking import (
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
     FsGroup,
+    _create_or_open_store,
+    _ensure_root_metadata_for_write,
     create_resolution_level,
     create_store,
     get_resolution_level,
@@ -158,22 +160,19 @@ def write_lines(
     bounds = compute_bounds(all_pts)
     bounds_list = (bounds[0].tolist(), bounds[1].tolist())
 
-    axes = [
-        {"name": f"dim{i}", "type": "space", "unit": "unit"}
-        for i in range(ndim)
-    ]
-
-    root_meta = RootMetadata(
-        spatial_index_dims=axes,
-        chunk_shape=chunk_shape,
-        bounds=bounds_list,
-        geometry_types=[GEOM_LINE],
+    root = _create_or_open_store(store_path, backend=backend)
+    root_meta = _ensure_root_metadata_for_write(
+        root,
+        inferred_ndim=ndim,
+        inferred_bounds=bounds_list,
+        chunk_shape_hint=chunk_shape,
+        geometry_type=GEOM_LINE,
+        base_bin_shape=bin_shape,
         links_convention=LINKS_IMPLICIT_SEQUENTIAL,
         object_index_convention=OBJIDX_STANDARD,
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
-        base_bin_shape=bin_shape,
     )
-    root = create_store(store_path, root_meta, backend=backend)
+    axes = root_meta.spatial_index_dims
 
     arrays_present = [VERTICES, "object_index"]
     level_chunk_dims: list[str] | None = None

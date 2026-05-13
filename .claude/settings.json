@@ -71,7 +71,26 @@
       "Bash(grep -v \"\\\\.md$\")",
       "Bash(grep -v \"^$\")",
       "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\andre\\\\zarr-vectors-py\" -Recurse -Directory -ErrorAction SilentlyContinue | Where-Object {$_.Name -match '\\(benchmark|benchmarks|perf|bench\\)$'})",
-      "Bash(python examples/benchmarks/_build.py)"
+      "Bash(python examples/benchmarks/_build.py)",
+      "Bash(python -m py_compile zarr_vectors/core/store.py zarr_vectors/core/backends/__init__.py zarr_vectors/core/backends/icechunk_backend.py tests/test_icechunk_backend.py)",
+      "Bash(python -c \"import icechunk; print\\('icechunk', icechunk.__version__\\)\")",
+      "Bash(python -m pytest tests/test_icechunk_backend.py --collect-only -q)",
+      "Bash(python -m pytest tests/test_icechunk_backend.py -v)",
+      "Bash(grep -v \"^\\\\s*$\")",
+      "Bash(awk '{print $NF, $5}')",
+      "Bash(python -c \"from zarr_vectors.core.store import create_store, open_store; import tempfile; from pathlib import Path; tmp = Path\\(tempfile.mkdtemp\\(\\)\\) / 'warm.zarr'; root = create_store\\(tmp\\); print\\('attrs:', root.attrs.to_dict\\(\\)\\); print\\('keys:', list\\(root.keys\\(\\)\\)\\); res0 = root['resolution_0']; print\\('res0 keys:', list\\(res0.keys\\(\\)\\)\\)\")",
+      "Bash(python -c \"import zarr; print\\(dir\\(zarr\\)\\)\")",
+      "Bash(c:/Users/andre/zarr-vectors-py/.venv/Scripts/python.exe -c \"import zarr; print\\(zarr.__version__\\)\")",
+      "Bash(c:/Users/andre/zarr-vectors-py/.venv/Scripts/python.exe -c \"from zarr_vectors.core.store import create_store; import tempfile; from pathlib import Path; tmp = Path\\(tempfile.mkdtemp\\(\\)\\) / 'warm.zarr'; root = create_store\\(tmp\\); print\\('attrs:', root.attrs.to_dict\\(\\)\\); print\\('keys:', list\\(root.keys\\(\\)\\)\\); res0 = root['resolution_0']; print\\('res0 keys:', list\\(res0.keys\\(\\)\\)\\)\")",
+      "Bash(c:/Users/andre/zarr-vectors-py/.venv/Scripts/python.exe -m pytest tests/test_core.py -x --tb=short)",
+      "Bash(c:/Users/andre/zarr-vectors-py/.venv/Scripts/python.exe -m pytest tests/test_core.py --tb=short --no-header -q)",
+      "Bash(c:/Users/andre/zarr-vectors-py/.venv/Scripts/python.exe -m pytest tests/test_backends.py tests/test_points.py tests/test_meshes.py tests/test_polylines.py tests/test_graphs.py tests/test_lines.py --tb=short --no-header -q)",
+      "Bash(python -m py_compile zarr_vectors/core/backends/icechunk_backend.py)",
+      "Bash(c:/Users/andre/zarr-vectors-py/.venv/Scripts/python.exe -m pytest tests/test_backends.py tests/test_points.py tests/test_meshes.py tests/test_polylines.py tests/test_graphs.py tests/test_lines_parametric.py --tb=short --no-header -q)",
+      "Bash(c:/Users/andre/zarr-vectors-py/.venv/Scripts/python.exe -m pytest tests/ --ignore=tests/test_icechunk_backend.py --tb=short --no-header -q)",
+      "Bash(c:/Users/andre/zarr-vectors-py/.venv/Scripts/python.exe -m pytest tests/test_icechunk_backend.py --tb=short --no-header -q)",
+      "Bash(c:/Users/andre/zarr-vectors-py/.venv/Scripts/python.exe -m pytest tests/ --ignore=tests/test_icechunk_backend.py --tb=line --no-header -q)",
+      "Bash(python -m py_compile zarr_vectors/lazy/writer.py schema/regen.py)"
     ]
   }
 }

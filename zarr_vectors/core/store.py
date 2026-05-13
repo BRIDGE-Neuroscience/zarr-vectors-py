@@ -19,9 +19,12 @@ import zarr
 from zarr.storage import LocalStore
 
 from zarr_vectors.constants import (
+    CAP_VERTEX_COUNT_CACHE,
+    DEFAULT_AXES_NAMES,
     FORMAT_VERSION,  # noqa: F401  (re-exported for callers)
     PARAMETRIC_GROUP,
     RESOLUTION_PREFIX,
+    VERTICES,
 )
 from zarr_vectors.core.group import Group, _BackendShim
 from zarr_vectors.core.metadata import (
@@ -64,26 +67,63 @@ def _detect_scheme(url: str | Path) -> str:
     return scheme
 
 
-def _make_zarr_store(
+def _make_zarr_store_with_session(
     path: str | Path,
     *,
-    backend: str | None = None,  # ignored for now; reserved for icechunk etc.
-    **_kwargs: Any,
-) -> LocalStore:
+    mode: str = "r+",
+    backend: str | None = None,
+    **kwargs: Any,
+) -> tuple[Any, Any]:
     """Construct a Zarr store for ``path``.
 
-    Phase 1-3 scope: only local (``file://`` or path) stores supported.
-    Cloud schemes (``s3://`` etc.) and Icechunk routing will land in a
-    follow-up phase.
+    Returns ``(store, session)`` where ``session`` is non-``None`` only
+    for transactional backends (currently just ``icechunk``).  The
+    session must be kept alive for the lifetime of the store and is
+    flushed via :func:`commit`.
+
+    ``backend="icechunk"`` routes through
+    :func:`zarr_vectors.core.backends.icechunk_backend.make_icechunk_session`
+    and accepts ``branch``, ``snapshot_id``, ``repository_config``, and
+    any storage-specific kwargs (``region``, ``endpoint_url``, ...).
+
+    Local / file:// URLs without an explicit backend use
+    :class:`zarr.storage.LocalStore`.  Cloud schemes without
+    ``backend="icechunk"`` raise: byte-level cloud routing through this
+    Zarr-Store layer is not wired up; use ``backend="icechunk"`` for a
+    transactional cloud-backed store.
     """
+    if backend == "icechunk":
+        from zarr_vectors.core.backends.icechunk_backend import (
+            make_icechunk_session,
+        )
+
+        return make_icechunk_session(str(path), mode=mode, **kwargs)
+
     scheme = _detect_scheme(path)
     if scheme not in {"", "file"}:
         raise StoreError(
-            f"URL scheme {scheme!r} not yet supported by the Zarr-native "
-            f"store layer (phase 1-3 covers local paths only). "
-            f"Cloud/icechunk routing arrives in a follow-up phase."
+            f"URL scheme {scheme!r} is not yet wired into the Zarr-native "
+            f"store layer for backend={backend!r}. Pass backend='icechunk' "
+            f"for a transactional cloud-backed store, or use a local path."
         )
-    return LocalStore(_resolve_local_path(path))
+    return LocalStore(_resolve_local_path(path)), None
+
+
+def _make_zarr_store(
+    path: str | Path,
+    *,
+    backend: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Back-compat wrapper that discards the session.
+
+    Existing call sites that don't care about transactional backends
+    can keep calling this; callers that need to keep a session alive
+    (``create_store``, ``open_store``) use
+    :func:`_make_zarr_store_with_session` directly.
+    """
+    store, _ = _make_zarr_store_with_session(path, backend=backend, **kwargs)
+    return store
 
 
 # ===================================================================
@@ -126,59 +166,262 @@ class FsGroup(Group):
 
 def create_store(
     path: str | Path,
-    root_metadata: RootMetadata,
+    root_metadata: RootMetadata | None = None,
     *,
+    chunk_shape: tuple[float, ...] | None = None,
+    bounds: tuple[list[float], list[float]] | None = None,
+    axes: list[dict[str, str]] | None = None,
+    geometry_types: list[str] | None = None,
+    crs: dict[str, Any] | None = None,
+    vertex_dtype: str = "float32",
+    vertex_encoding: str = "raw",
     backend: str | None = None,
     **backend_kwargs: Any,
 ) -> Group:
     """Create a new ZV store.
 
-    Creates the root group, writes ``root_metadata``, and creates the
-    ``resolution_0/`` and ``parametric/`` sub-groups.
+    The minimal form ``create_store(path)`` produces a structurally valid
+    "warm" shell: root group with format markers only, a ``resolution_0/``
+    sub-group, and the empty ragged-vertex pair
+    ``resolution_0/vertices/`` + ``resolution_0/vertex_group_offsets/``.
+    Dimensionality, bounds, and chunk shape are inferred and stamped
+    into root attrs on the first write call (e.g. :func:`write_points`).
+
+    Callers that already have a fully-populated :class:`RootMetadata`
+    can pass it as the second positional arg (or ``root_metadata=``);
+    its fields are written eagerly and validated up-front.
+
+    The ``/parametric`` sub-group is **not** created here.  It is created
+    lazily on first use via :func:`get_parametric_group`.
 
     Args:
-        path: URL or filesystem path for the new store (typically ends
-            in ``.zarr`` or ``.zarrvectors``).
-        root_metadata: Root metadata to write.
-        backend: Force a particular backend (``"local"`` / ``"obstore"`` /
-            ``"fsspec"``).  ``None`` (the default) auto-detects from the
-            URL scheme.
-        **backend_kwargs: Forwarded to the backend constructor (e.g.
-            credentials).
+        path: URL or filesystem path for the new store.
+        root_metadata: Optional fully-populated :class:`RootMetadata`.
+            When given, individual kwargs below are ignored.
+        chunk_shape: Spatial chunk size per dimension.  Optional — when
+            ``None``, inferred on first write.
+        bounds: ``(min_corner, max_corner)``.  Optional — when ``None``,
+            inferred on first write and grown across subsequent writes.
+        axes: OME-Zarr-style axes list.  Optional — when ``None``,
+            generated from :data:`DEFAULT_AXES_NAMES` on first write.
+        geometry_types: List of geometry types the store will contain.
+        crs: Coordinate reference system dict.
+        vertex_dtype: dtype for the level-0 vertices array.
+        vertex_encoding: ``"raw"`` or ``"draco"``.
+        backend: Force a particular backend (``"local"`` / ``"icechunk"``).
+        **backend_kwargs: Forwarded to the backend constructor.
 
     Returns:
         The root :class:`Group`.
 
     Raises:
         StoreError: If a store already exists at ``path``.
-        MetadataError: If ``root_metadata`` is invalid.
+        MetadataError: If ``root_metadata`` is supplied and invalid.
     """
-    root_metadata.validate()
-    # Auto-stamp the capability that every 0.3 writer emits.  Doing it
-    # here means callers don't have to remember.
-    from zarr_vectors.constants import CAP_VERTEX_COUNT_CACHE
-    if CAP_VERTEX_COUNT_CACHE not in root_metadata.format_capabilities:
-        root_metadata.format_capabilities = [
-            *root_metadata.format_capabilities,
-            CAP_VERTEX_COUNT_CACHE,
-        ]
-    local_root: Path | None = None
-    scheme = _detect_scheme(path)
-    if scheme in {"", "file"}:
-        local_root = _resolve_local_path(path)
-        if local_root.exists() and local_root.is_dir() and any(local_root.iterdir()):
-            raise StoreError(f"Store already exists at {local_root}")
-        local_root.mkdir(parents=True, exist_ok=True)
+    if root_metadata is not None:
+        root_metadata.validate()
+        if CAP_VERTEX_COUNT_CACHE not in root_metadata.format_capabilities:
+            root_metadata.format_capabilities = [
+                *root_metadata.format_capabilities,
+                CAP_VERTEX_COUNT_CACHE,
+            ]
+        full_attrs: dict[str, Any] | None = root_metadata.to_dict()
+    else:
+        full_attrs = None
 
-    store = _make_zarr_store(path, backend=backend, **backend_kwargs)
+    local_root: Path | None = None
+    if backend != "icechunk":
+        scheme = _detect_scheme(path)
+        if scheme in {"", "file"}:
+            local_root = _resolve_local_path(path)
+            if local_root.exists() and local_root.is_dir() and any(local_root.iterdir()):
+                raise StoreError(f"Store already exists at {local_root}")
+            local_root.mkdir(parents=True, exist_ok=True)
+
+    store, session = _make_zarr_store_with_session(
+        path, mode="w", backend=backend, **backend_kwargs,
+    )
+    if session is not None:
+        store._zv_icechunk_session = session
     zg = zarr.open_group(store, mode="w")
     root = FsGroup.__new__(FsGroup) if isinstance(store, LocalStore) else Group.__new__(Group)
     root._zarr = zg
 
-    root.attrs.update(root_metadata.to_dict())
-    root.create_group(f"{RESOLUTION_PREFIX}0")
-    root.create_group(PARAMETRIC_GROUP)
+    if full_attrs is not None:
+        root.attrs.update(full_attrs)
+    else:
+        _write_root_attrs_partial(
+            root,
+            chunk_shape=chunk_shape,
+            bounds=bounds,
+            axes=axes,
+            geometry_types=geometry_types,
+            crs=crs,
+        )
+
+    # resolution_0/ + empty vertices pair — the "warm" payload.
+    level0 = root.create_group(f"{RESOLUTION_PREFIX}0")
+    level0.attrs.update(
+        LevelMetadata(
+            level=0,
+            vertex_count=0,
+            arrays_present=[VERTICES],
+        ).to_dict()
+    )
+    # Defer import: arrays.py imports from store.py (FsGroup).
+    from zarr_vectors.core.arrays import create_vertices_array
+    create_vertices_array(level0, dtype=vertex_dtype, encoding=vertex_encoding)
     return root
+
+
+def _write_root_attrs_partial(
+    root: Group,
+    *,
+    chunk_shape: tuple[float, ...] | None,
+    bounds: tuple[list[float], list[float]] | None,
+    axes: list[dict[str, str]] | None,
+    geometry_types: list[str] | None,
+    crs: dict[str, Any] | None,
+) -> None:
+    """Write the ``zarr_vectors`` root-attrs block with only the fields
+    the caller supplied.  Missing structural fields stay absent and are
+    later filled in by :func:`_ensure_root_metadata_for_write` on the
+    first write.
+    """
+    existing = root.attrs.to_dict().get("zarr_vectors", {})
+    zv: dict[str, Any] = dict(existing)
+    zv["format_version"] = FORMAT_VERSION
+    caps = list(zv.get("format_capabilities") or [])
+    if CAP_VERTEX_COUNT_CACHE not in caps:
+        caps.append(CAP_VERTEX_COUNT_CACHE)
+    zv["format_capabilities"] = caps
+    if axes is not None:
+        zv["spatial_index_dims"] = axes
+    if chunk_shape is not None:
+        zv["chunk_shape"] = list(chunk_shape)
+    if bounds is not None:
+        zv["bounds"] = [list(bounds[0]), list(bounds[1])]
+    if geometry_types is not None:
+        zv["geometry_types"] = list(geometry_types)
+    if crs is not None:
+        zv["crs"] = crs
+    root.attrs.update({"zarr_vectors": zv})
+
+
+def _ensure_root_metadata_for_write(
+    root: Group,
+    *,
+    inferred_ndim: int,
+    inferred_bounds: tuple[list[float], list[float]],
+    chunk_shape_hint: tuple[float, ...] | None = None,
+    geometry_type: str | None = None,
+    base_bin_shape: tuple[float, ...] | None = None,
+    links_convention: str | None = None,
+    object_index_convention: str | None = None,
+    cross_chunk_strategy: str | None = None,
+) -> RootMetadata:
+    """Fill in any missing structural root-attrs from the values a writer
+    just inferred from its input data.
+
+    - If structural fields are already set, they are kept and ``bounds``
+      is grown by min/max union with ``inferred_bounds``.
+    - If unset, defaults are derived: axes from
+      :data:`DEFAULT_AXES_NAMES`, ``chunk_shape`` from a single-chunk-
+      covers-bounds heuristic when no hint is supplied.
+
+    Persists the result to root attrs and returns the now-complete
+    :class:`RootMetadata`.
+    """
+    existing = root.attrs.to_dict().get("zarr_vectors", {})
+    zv: dict[str, Any] = dict(existing)
+    zv.setdefault("format_version", FORMAT_VERSION)
+    caps = list(zv.get("format_capabilities") or [])
+    if CAP_VERTEX_COUNT_CACHE not in caps:
+        caps.append(CAP_VERTEX_COUNT_CACHE)
+    zv["format_capabilities"] = caps
+
+    axes_existing = zv.get("spatial_index_dims")
+    if not axes_existing:
+        if inferred_ndim > len(DEFAULT_AXES_NAMES):
+            raise MetadataError(
+                f"Cannot auto-generate axes for ndim={inferred_ndim}; "
+                f"pass an explicit `axes` kwarg to create_store."
+            )
+        names = DEFAULT_AXES_NAMES[:inferred_ndim]
+        zv["spatial_index_dims"] = [
+            {"name": n, "type": "space", "unit": ""} for n in names
+        ]
+    elif len(axes_existing) != inferred_ndim:
+        raise MetadataError(
+            f"Inferred ndim={inferred_ndim} does not match stored "
+            f"spatial_index_dims length {len(axes_existing)}"
+        )
+
+    existing_bounds = zv.get("bounds")
+    inf_min, inf_max = list(inferred_bounds[0]), list(inferred_bounds[1])
+    if existing_bounds and existing_bounds[0] and existing_bounds[1]:
+        new_min = [min(a, b) for a, b in zip(existing_bounds[0], inf_min)]
+        new_max = [max(a, b) for a, b in zip(existing_bounds[1], inf_max)]
+        zv["bounds"] = [new_min, new_max]
+    else:
+        zv["bounds"] = [inf_min, inf_max]
+
+    if not zv.get("chunk_shape"):
+        if chunk_shape_hint is not None:
+            zv["chunk_shape"] = list(chunk_shape_hint)
+        else:
+            min_corner = zv["bounds"][0]
+            max_corner = zv["bounds"][1]
+            extent = [hi - lo for hi, lo in zip(max_corner, min_corner)]
+            max_extent = max(extent) if extent else 1.0
+            max_abs_bound = max((abs(v) for v in max_corner), default=0.0)
+            side = max_extent + max_abs_bound + 1.0
+            zv["chunk_shape"] = [side] * inferred_ndim
+
+    if geometry_type is not None:
+        gts = list(zv.get("geometry_types") or [])
+        if geometry_type not in gts:
+            gts.append(geometry_type)
+        zv["geometry_types"] = gts
+    elif "geometry_types" not in zv:
+        zv["geometry_types"] = []
+
+    if base_bin_shape is not None:
+        zv["base_bin_shape"] = list(base_bin_shape)
+
+    if links_convention is not None:
+        zv.setdefault("links_convention", links_convention)
+    if object_index_convention is not None:
+        zv.setdefault("object_index_convention", object_index_convention)
+    if cross_chunk_strategy is not None:
+        zv.setdefault("cross_chunk_strategy", cross_chunk_strategy)
+
+    root.attrs.update({"zarr_vectors": zv})
+    return RootMetadata.from_dict({"zarr_vectors": zv})
+
+
+def _create_or_open_store(
+    path: str | Path,
+    *,
+    backend: str | None = None,
+    **backend_kwargs: Any,
+) -> Group:
+    """Warm the store with :func:`create_store` if no store exists at
+    ``path``, else open it read-write.  Writers route through this so
+    callers can either ``create_store(path)`` first and then write, or
+    write directly against a fresh path.
+    """
+    if backend == "icechunk":
+        try:
+            return create_store(path, backend=backend, **backend_kwargs)
+        except StoreError:
+            return open_store(path, mode="r+", backend=backend, **backend_kwargs)
+    scheme = _detect_scheme(path)
+    if scheme in {"", "file"}:
+        local_root = _resolve_local_path(path)
+        if local_root.exists() and local_root.is_dir() and any(local_root.iterdir()):
+            return open_store(path, mode="r+", backend=backend, **backend_kwargs)
+    return create_store(path, backend=backend, **backend_kwargs)
 
 
 def open_store(
@@ -205,18 +448,28 @@ def open_store(
         StoreError: If the store does not exist or is structurally invalid.
         MetadataError: If root metadata cannot be parsed.
     """
-    scheme = _detect_scheme(path)
-    if scheme in {"", "file"}:
-        local_root = _resolve_local_path(path)
-        if not local_root.is_dir():
-            raise StoreError(f"Store not found at {local_root}")
+    # Local-FS existence check; transactional backends (icechunk) verify
+    # repository existence inside their own session factory.
+    if backend != "icechunk":
+        scheme = _detect_scheme(path)
+        if scheme in {"", "file"}:
+            local_root = _resolve_local_path(path)
+            if not local_root.is_dir():
+                raise StoreError(f"Store not found at {local_root}")
 
-    store = _make_zarr_store(path, backend=backend, **backend_kwargs)
+    # Pass mode through so the icechunk backend can pick readonly_session
+    # vs writable_session.  For non-icechunk backends mode is ignored.
+    store, session = _make_zarr_store_with_session(
+        path, mode=mode, backend=backend, **backend_kwargs,
+    )
+    if session is not None:
+        store._zv_icechunk_session = session
     # mode is informational at the public API — the underlying zarr group
     # is always opened read-write so that ``lazy.writer`` can write
     # through the same handle returned by ``open_store(mode='r')``.
+    zarr_open_mode = "r" if mode == "r" else "r+"
     try:
-        zg = zarr.open_group(store, mode="r+")
+        zg = zarr.open_group(store, mode=zarr_open_mode)
     except zarr.errors.GroupNotFoundError as e:
         raise StoreError(f"Not a valid ZV store at {path}: {e}") from None
     root = FsGroup.__new__(FsGroup) if isinstance(store, LocalStore) else Group.__new__(Group)
@@ -228,9 +481,75 @@ def open_store(
             f"Not a valid ZV store: missing 'zarr_vectors' in root attrs "
             f"at {root.url}"
         )
-
-    RootMetadata.from_dict(attrs)  # validates; raises MetadataError if bad
+    # Permissive parse: a freshly-warmed store has no dims/bounds/chunk_
+    # _shape yet.  The required `format_version` key is still enforced.
+    RootMetadata.from_dict(attrs, strict=False)
     return root
+
+
+# ===================================================================
+# Transactional helpers (icechunk)
+# ===================================================================
+
+
+def session_for(group: Group) -> Any | None:
+    """Return the underlying ``icechunk.Session`` if any, else ``None``.
+
+    Looks up the session stashed on the group's Zarr store at
+    construction time (see :func:`create_store` / :func:`open_store`).
+    Works for root groups *and* any sub-group reached via
+    ``root.create_group(...)`` / ``root[name]`` — they all share the
+    same underlying Zarr store.
+
+    Useful when callers need branch / snapshot operations that aren't
+    surfaced by the zarr-vectors API (creating branches, tagging,
+    listing snapshots, etc.).
+    """
+    zg = getattr(group, "_zarr", None)
+    if zg is None:
+        return None
+    return getattr(zg.store, "_zv_icechunk_session", None)
+
+
+def commit(group: Group, message: str = "zarr-vectors write") -> str | None:
+    """Commit pending changes when the store is backed by a transactional
+    backend (currently ``icechunk``).
+
+    For non-transactional backends this is a no-op and returns ``None``;
+    writes are durable as soon as they hit the store.
+
+    For icechunk-backed stores this calls ``session.commit(message)``
+    and returns the new snapshot id (a hex string).  The same session
+    continues to be writable after the commit — subsequent ZV writes
+    accumulate uncommitted state until the next ``commit(group, ...)``
+    call.
+
+    Args:
+        group: A :class:`Group` returned by :func:`create_store` or
+            :func:`open_store` (or any sub-group of one).
+        message: Commit message; defaults to a placeholder.  Empty
+            strings are rejected by icechunk.
+
+    Returns:
+        Snapshot id (``str``) for icechunk-backed groups, else ``None``.
+    """
+    session = session_for(group)
+    if session is None:
+        return None
+    return session.commit(message)
+
+
+def discard_changes(group: Group) -> None:
+    """Drop uncommitted changes on a transactional backend.
+
+    No-op for non-transactional backends.
+    """
+    session = session_for(group)
+    if session is None:
+        return
+    discard = getattr(session, "discard_changes", None)
+    if discard is not None:
+        discard()
 
 
 def rebind(

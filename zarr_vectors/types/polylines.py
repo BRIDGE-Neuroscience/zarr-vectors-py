@@ -59,6 +59,8 @@ from zarr_vectors.core.attr_chunking import (
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
     FsGroup,
+    _create_or_open_store,
+    _ensure_root_metadata_for_write,
     create_resolution_level,
     create_store,
     get_resolution_level,
@@ -136,27 +138,24 @@ def write_polylines(
     bounds_list = (bounds[0].tolist(), bounds[1].tolist())
     total_vertices = len(all_pts)
 
-    axes = [
-        {"name": f"dim{i}", "type": "space", "unit": "unit"}
-        for i in range(ndim)
-    ]
-
     effective_bin = bin_shape if bin_shape is not None else chunk_shape
     bins_per_chunk = tuple(
         int(round(cs / bs)) for cs, bs in zip(chunk_shape, effective_bin)
     )
 
-    root_meta = RootMetadata(
-        spatial_index_dims=axes,
-        chunk_shape=chunk_shape,
-        bounds=bounds_list,
-        geometry_types=[geometry_type],
+    root = _create_or_open_store(store_path, backend=backend)
+    root_meta = _ensure_root_metadata_for_write(
+        root,
+        inferred_ndim=ndim,
+        inferred_bounds=bounds_list,
+        chunk_shape_hint=chunk_shape,
+        geometry_type=geometry_type,
+        base_bin_shape=bin_shape,
         links_convention=LINKS_IMPLICIT_SEQUENTIAL,
         object_index_convention=OBJIDX_STANDARD,
         cross_chunk_strategy=CROSS_CHUNK_EXPLICIT,
-        base_bin_shape=bin_shape,
     )
-    root = create_store(store_path, root_meta, backend=backend)
+    axes = root_meta.spatial_index_dims
 
     # Attribute-chunking setup.  The chunk-by attribute must be a
     # per-vertex array; vertex_attributes[<name>] is the same list-of-

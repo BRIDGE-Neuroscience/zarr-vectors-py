@@ -482,8 +482,9 @@ class TestLinkAttributes:
         write_chunk_link_attributes(lg, "weight", (0, 0, 0), weights)
 
         # Read back via raw bytes (link_attributes use same encoding as vertex groups)
+        # 0.4 multiscale layout: link_attributes/<name>/<delta>/<chunk_key>
         key = "0.0.0"
-        raw = lg.read_bytes("link_attributes/weight", key)
+        raw = lg.read_bytes("link_attributes/weight/0", key)
         arr = np.frombuffer(raw, dtype=np.float32)
         np.testing.assert_allclose(arr, [0.5, 0.8])
 

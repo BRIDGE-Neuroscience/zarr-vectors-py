@@ -9,7 +9,7 @@
 
 **Type-specific arrays**
 : Arrays that are required or optional for a given geometry type but not
-  for all types (e.g. `links/faces/` for `mesh`, `cross_chunk_links/` for
+  for all types (e.g. `links/<delta>/` for `mesh`, `cross_chunk_links/` for
   `polyline`).
 
 **Write function**

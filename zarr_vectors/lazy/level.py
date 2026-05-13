@@ -127,6 +127,63 @@ class ZVRLevel:
             return self._level_meta.chunk_attribute_values
         return None
 
+    # ---------------------------------------------------------------
+    # ID-preserving pyramid accessors
+    # ---------------------------------------------------------------
+
+    @property
+    def preserves_object_ids(self) -> bool:
+        """True when this level inherits the parent level's OID space.
+
+        On such a level, OIDs map 1:1 to their level-0 identity and
+        dropped objects appear as empty manifest slots.  Set by the
+        per-object pyramid writer.
+        """
+        if self._level_meta is not None:
+            return bool(self._level_meta.preserves_object_ids)
+        return False
+
+    @property
+    def shared_vertex_groups(self) -> bool:
+        """True when per-chunk vertex groups may be referenced by
+        multiple objects' manifests (shared metavertices)."""
+        if self._level_meta is not None:
+            return bool(self._level_meta.shared_vertex_groups)
+        return False
+
+    @property
+    def inherited_num_objects(self) -> int | None:
+        """OID-space size inherited from the parent level (or None)."""
+        if self._level_meta is not None:
+            return self._level_meta.inherited_num_objects
+        return None
+
+    def has_object(self, oid: int) -> bool:
+        """Return True if ``oid`` is present at this level.
+
+        Cheap: probes the object's manifest and treats an empty
+        manifest (or out-of-range OID) as absent.
+        """
+        from zarr_vectors.core.arrays import read_object_manifest
+        from zarr_vectors.exceptions import ArrayError
+        try:
+            manifest = read_object_manifest(self._group, int(oid))
+        except ArrayError:
+            return False
+        return bool(manifest)
+
+    @property
+    def present_oids(self) -> "np.ndarray":
+        """Sorted array of OIDs present at this level."""
+        from zarr_vectors.core.arrays import read_all_object_manifests
+        try:
+            manifests = read_all_object_manifests(self._group)
+        except Exception:
+            return np.zeros(0, dtype=np.int64)
+        return np.asarray(
+            [i for i, m in enumerate(manifests) if m], dtype=np.int64,
+        )
+
     def read_attribute_chunk(self, value: Any) -> list[npt.NDArray]:
         """Read all vertex groups for chunks whose attribute equals ``value``.
 

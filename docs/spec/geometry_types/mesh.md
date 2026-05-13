@@ -10,7 +10,7 @@
 **`GEOM_MESH`**
 : The geometry type constant `"mesh"`.
 
-**`links/faces/`**
+**`links/<delta>/`**
 : The array storing triplets of local-chunk vertex indices for each
   triangle in a chunk. Shape `(F, 3)` int32 per chunk.
 
@@ -21,7 +21,7 @@
   `"winding_order"`.
 
 **Draco compression**
-: An optional codec applied to mesh geometry (`vertices/` and `links/faces/`)
+: An optional codec applied to mesh geometry (`vertices/` and `links/<delta>/`)
   that can achieve 6–15× compression over uncompressed float32 data.
   Requires `zarr-vectors[draco]`.
 
@@ -56,12 +56,12 @@ object (distinct connected surface) to its constituent chunks.
 |-----------|----------|-------------|
 | `vertices/` | Yes | Vertex positions, shape `(N, D)` float32 per chunk |
 | `vertex_group_offsets/` | Yes | VG index |
-| `links/faces/` | Yes | Triangle vertex triplets, shape `(F, 3)` int32 per chunk |
+| `links/<delta>/` | Yes | Triangle vertex triplets, shape `(F, 3)` int32 per chunk |
 | `object_index/` | Yes | Object (mesh surface) ID → primary chunk |
 | `attributes/<name>/` | No | Per-vertex attributes (normals, UVs, colours) |
 | `object_attributes/<name>/` | No | Per-mesh attributes (volume, surface area) |
 
-No `links/edges/` and no `cross_chunk_links/`. Face-level cross-chunk
+No `links/<delta>/` and no `cross_chunk_links/`. Face-level cross-chunk
 references use the global vertex ID mechanism described below.
 
 ### Root `.zattrs` type-specific keys
@@ -124,7 +124,7 @@ the face's chunk neighbourhood).
 
 Pass `use_draco=True` and a `draco_quantization` value when writing a
 mesh (via `write_mesh()` or the format converters in
-`zarr-vectors-tools`). The `vertices/` and `links/faces/` arrays then
+`zarr-vectors-tools`). The `vertices/` and `links/<delta>/` arrays then
 use the `draco` codec.
 
 Reading requires `zarr-vectors[draco]`. See
@@ -186,7 +186,7 @@ result = read_mesh("cells.zarrvectors", object_ids=[42, 107])
 
 ### Validation
 
-L1: `vertices/`, `vertex_group_offsets/`, `links/faces/`, `object_index/`
+L1: `vertices/`, `vertex_group_offsets/`, `links/<delta>/`, `object_index/`
 exist.
 
 L3:

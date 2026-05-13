@@ -61,10 +61,7 @@ from zarr_vectors.multiresolution.coarsen import build_pyramid
 
 build_pyramid(
     "tracts.zarrvectors",
-    level_configs=[
-        {"bin_ratio": (2, 2, 2), "object_sparsity": 1.0},   # level 1: no thinning
-        {"bin_ratio": (4, 4, 4), "object_sparsity": 0.25},  # level 2: keep 25%
-    ],
+    factors=[(2.0, 1.00), (4.0, 4.00)],
 )
 ```
 
@@ -207,14 +204,7 @@ per level and `D = 3`:
 ```python
 build_pyramid(
     "tracts.zarrvectors",
-    level_configs=[
-        # Level 1: 16× reduction — 8× vertex × 2× object
-        {"bin_ratio": (2, 2, 2), "object_sparsity": 0.5,  "sparsity_strategy": "spatial_coverage"},
-        # Level 2: 256× reduction from base — 64× vertex × 4× object
-        {"bin_ratio": (4, 4, 4), "object_sparsity": 0.25, "sparsity_strategy": "spatial_coverage"},
-        # Level 3: 4096× reduction — 512× vertex × 8× object
-        {"bin_ratio": (8, 8, 8), "object_sparsity": 0.125,"sparsity_strategy": "spatial_coverage"},
-    ],
+    factors=[(2.0, 2.00), (4.0, 4.00), (8.0, 8.00)],
 )
 ```
 

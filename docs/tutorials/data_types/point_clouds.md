@@ -192,16 +192,8 @@ from zarr_vectors.multiresolution.coarsen import build_pyramid
 
 build_pyramid(
     "scan.zarrvectors",
-    level_configs=[
-        {"bin_ratio": (2, 2, 2)},   # level 1: 8× fewer vertices
-        {"bin_ratio": (4, 4, 4)},   # level 2: 64× fewer vertices
-    ],
-    attribute_aggregation={
-        "intensity": "mean",
-        "label":     "majority",
-        "color":     "mean",
-        "confidence":"min",
-    },
+    factors=[(2.0, 1.00), (4.0, 1.00)],
+    agg_mode="mean",  # 0.4+: a single global mode (per-attribute via manual coarsen_level)
 )
 ```
 
@@ -222,10 +214,7 @@ anisotropic `bin_ratio` that coarsens proportionally in each axis:
 # Anisotropic: coarsen z 2× less than x,y (data is 6× coarser in z already)
 build_pyramid(
     "aniso.zarrvectors",
-    level_configs=[
-        {"bin_ratio": (2, 2, 1)},    # level 1: coarsen only x,y
-        {"bin_ratio": (4, 4, 2)},    # level 2: coarsen z by 2 total
-    ],
+    factors=[(2.0, 1.00), (4.0, 1.00)],
 )
 ```
 

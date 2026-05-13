@@ -192,10 +192,7 @@ from zarr_vectors.multiresolution.coarsen import build_pyramid
 
 build_pyramid(
     "tracts.zarrvectors",
-    level_configs=[
-        {"bin_ratio": (2, 2, 2), "object_sparsity": 1.0},  # level 1: 8×
-        {"bin_ratio": (4, 4, 4), "object_sparsity": 0.5},  # level 2: 128×
-    ],
+    factors=[(2.0, 1.00), (4.0, 2.00)],
 )
 ```
 

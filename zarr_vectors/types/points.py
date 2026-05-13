@@ -35,6 +35,7 @@ from zarr_vectors.core.arrays import (
     create_object_index_array,
     create_vertices_array,
     list_chunk_keys,
+    resolve_chunk_keys,
     read_all_groupings,
     read_all_object_manifests,
     read_chunk_attributes,
@@ -42,6 +43,7 @@ from zarr_vectors.core.arrays import (
     read_group_object_ids,
     read_groupings_attributes,
     read_object_attributes,
+    read_object_manifest,
     read_object_vertices,
     read_vertex_group,
     write_chunk_attributes,
@@ -349,14 +351,16 @@ def read_points(
     bbox: BoundingBox | None = None,
     object_ids: list[int] | None = None,
     group_ids: list[int] | None = None,
+    chunks: list[ChunkCoords] | None = None,
     attribute_names: list[str] | None = None,
     attribute_filter: dict[str, Any] | None = None,
     backend: str | None = None,
 ) -> dict[str, Any]:
     """Read point cloud data from a ZV store.
 
-    Supports filtering by bounding box, object ID, or group ID.
-    Filters are applied in order: group → object → spatial.
+    Supports filtering by bounding box, object ID, group ID, or chunk
+    whitelist. Filters AND together — every filter that is supplied
+    must accept a point for it to appear in the output.
 
     Args:
         store_path: Path to the ZV store.
@@ -364,6 +368,9 @@ def read_points(
         bbox: Optional bounding box filter as ``(min_corner, max_corner)``.
         object_ids: Optional list of object IDs to read.
         group_ids: Optional list of group IDs — expands to their object IDs.
+        chunks: Optional whitelist of chunk coordinate tuples; only data
+            in those chunks is returned. ``chunks=[]`` yields an empty
+            result; ``chunks=None`` (default) applies no chunk filter.
         attribute_names: Optional list of attribute names to read.
             If None, reads all available attributes.
 
@@ -397,6 +404,17 @@ def read_points(
             resolved_obj_ids &= set(object_ids)
         object_ids = sorted(resolved_obj_ids)
 
+    # Pre-resolve the chunks whitelist once (intersected with bbox-implied
+    # chunks) so both code paths can reuse it.
+    chunk_set: set[ChunkCoords] | None = None
+    if chunks is not None:
+        chunk_set = set(
+            resolve_chunk_keys(
+                level_group, root_meta.chunk_shape,
+                bbox=bbox, chunks=chunks,
+            )
+        )
+
     # Path 1: read by object ID (via object_index)
     if object_ids is not None:
         all_positions: list[npt.NDArray] = []
@@ -405,14 +423,29 @@ def read_points(
 
         for oid in object_ids:
             try:
-                verts_list = read_object_vertices(
-                    level_group, oid, dtype=dtype, ndim=ndim
-                )
+                manifest = read_object_manifest(level_group, oid)
             except ArrayError:
                 continue
 
-            for vg in verts_list:
+            # Optionally restrict the manifest to listed chunks.
+            if chunk_set is not None:
+                manifest = [
+                    (cc, vgi) for (cc, vgi) in manifest if cc in chunk_set
+                ]
+            if not manifest:
+                continue
+
+            for chunk_coords, vg_index in manifest:
+                try:
+                    vg = read_vertex_group(
+                        level_group, chunk_coords, vg_index,
+                        dtype=dtype, ndim=ndim,
+                    )
+                except ArrayError:
+                    continue
                 n_pts = len(vg)
+                if n_pts == 0:
+                    continue
                 all_positions.append(vg)
                 all_obj_labels.append(np.full(n_pts, oid, dtype=np.int64))
 
@@ -442,6 +475,8 @@ def read_points(
 
     # Path 2: read by bounding box or read all
     chunk_keys = list_chunk_keys(level_group)
+    if chunk_set is not None:
+        chunk_keys = [k for k in chunk_keys if k in chunk_set]
 
     # attribute_filter: restrict to chunks with the matching leading bin
     # index.  Cheap pre-filter on the chunk key — drops scans drastically

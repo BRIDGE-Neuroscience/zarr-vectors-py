@@ -84,7 +84,7 @@ def validate_conformance(store_path: str | Path) -> ValidationResult:
         # Check mesh link_width — in composite stores, look at links_mesh/
         found_mesh_links = False
         try:
-            lmeta = lg.read_array_meta("links")
+            lmeta = lg.read_array_meta("links/0")
             lw = lmeta.get("link_width", 0)
             if lw >= 3:
                 result.add_pass(f"Mesh link_width={lw}")
@@ -112,7 +112,7 @@ def validate_conformance(store_path: str | Path) -> ValidationResult:
         gt in geom_types for gt in [GEOM_GRAPH, GEOM_SKELETON, GEOM_MESH]
     ):
         try:
-            lg.read_array_meta("links")
+            lg.read_array_meta("links/0")
             result.add_warning("Point cloud but links array exists")
         except Exception:
             result.add_pass("Point cloud: no links (correct)")

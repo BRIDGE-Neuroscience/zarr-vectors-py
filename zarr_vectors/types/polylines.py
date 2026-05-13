@@ -35,6 +35,7 @@ from zarr_vectors.core.arrays import (
     create_object_index_array,
     create_vertices_array,
     list_chunk_keys,
+    resolve_chunk_keys,
     read_all_groupings,
     read_all_object_manifests,
     read_chunk_vertices,
@@ -207,7 +208,7 @@ def write_polylines(
     level_group = create_resolution_level(root, 0, level_meta)
     create_vertices_array(level_group, dtype=dtype)
     create_object_index_array(level_group)
-    create_cross_chunk_links_array(level_group)
+    create_cross_chunk_links_array(level_group, delta=0)
 
     # Create attribute arrays
     if vertex_attributes:
@@ -321,7 +322,9 @@ def write_polylines(
 
     # Write cross-chunk links
     if all_cross_links:
-        write_cross_chunk_links(level_group, all_cross_links, sid_ndim=idx_ndim)
+        write_cross_chunk_links(
+            level_group, all_cross_links, sid_ndim=idx_ndim, delta=0,
+        )
 
     # Write object attributes
     if object_attributes:
@@ -357,6 +360,7 @@ def read_polylines(
     object_ids: list[int] | None = None,
     group_ids: list[int] | None = None,
     bbox: BoundingBox | None = None,
+    chunks: list[ChunkCoords] | None = None,
     attribute_filter: dict[str, Any] | None = None,
     backend: str | None = None,
 ) -> dict[str, Any]:
@@ -369,6 +373,18 @@ def read_polylines(
         group_ids: Optional group IDs — expands to their object IDs.
         bbox: Optional bounding box filter. Returns polylines that have
             at least one segment in a matching chunk.
+        chunks: Optional whitelist of chunk coordinate tuples. Unlike
+            ``bbox`` (which keeps the whole polyline if any segment
+            matches), ``chunks`` crops at the *segment* level: only
+            vertex groups stored in listed chunks are returned, and each
+            surviving contiguous run becomes its own output polyline.
+            A polyline whose middle segments lie in unlisted chunks may
+            therefore appear in the result as multiple shorter polylines
+            — the output ``polyline_count`` can exceed the input
+            ``object_count``. AND-ed with ``bbox`` when both are given
+            (the effective whitelist is the intersection of the two
+            chunk sets). ``chunks=[]`` yields an empty result;
+            ``chunks=None`` (default) applies no chunk filter.
 
     Returns:
         Dict with:
@@ -449,19 +465,72 @@ def read_polylines(
             root_meta.chunk_shape,
         ))
 
+    # Explicit chunks whitelist switches read_polylines into segment-level
+    # crop mode. When both `chunks` and `bbox` are given, the effective
+    # whitelist is the intersection of the two chunk sets.
+    chunk_whitelist: set[ChunkCoords] | None = None
+    if chunks is not None:
+        chunk_whitelist = set(
+            resolve_chunk_keys(
+                level_group, root_meta.chunk_shape,
+                bbox=bbox, chunks=chunks,
+            )
+        )
+
     result_polylines: list[list[npt.NDArray]] = []
     total_verts = 0
 
-    # When attribute_filter is active, read manifests so we can pick
-    # only the sub-segments whose chunk key has the matching leading bin.
+    # Manifests are needed for both attribute_filter and chunks (segment
+    # crop) paths. Load once.
     manifests = None
-    if filter_bin is not None:
+    if filter_bin is not None or chunk_whitelist is not None:
         try:
             manifests = read_all_object_manifests(level_group)
         except Exception:
             manifests = None
 
     for oid in object_ids:
+        # ------------------------------------------------------------------
+        # Segment-level crop mode (chunks=).
+        # ------------------------------------------------------------------
+        if chunk_whitelist is not None:
+            if manifests is None or oid >= len(manifests):
+                continue
+            obj_manifest = manifests[oid]
+            if filter_bin is not None:
+                obj_manifest = [
+                    (cc, vg) for (cc, vg) in obj_manifest
+                    if cc and cc[0] == filter_bin
+                ]
+
+            # Split the manifest into runs of consecutive entries whose
+            # chunk lies in the whitelist. Each run becomes its own
+            # output polyline.
+            run: list[VertexGroupRef] = []
+            for cc, vg_idx in obj_manifest:
+                if cc in chunk_whitelist:
+                    run.append((cc, vg_idx))
+                else:
+                    if run:
+                        vg_list = _read_manifest_run(
+                            level_group, run, dtype, ndim,
+                        )
+                        if vg_list:
+                            result_polylines.append(vg_list)
+                            total_verts += sum(len(vg) for vg in vg_list)
+                        run = []
+            if run:
+                vg_list = _read_manifest_run(
+                    level_group, run, dtype, ndim,
+                )
+                if vg_list:
+                    result_polylines.append(vg_list)
+                    total_verts += sum(len(vg) for vg in vg_list)
+            continue
+
+        # ------------------------------------------------------------------
+        # Existing whole-object paths (attribute_filter, bbox, no filter).
+        # ------------------------------------------------------------------
         if filter_bin is not None:
             if manifests is None or oid >= len(manifests):
                 continue
@@ -513,6 +582,28 @@ def read_polylines(
         "polyline_count": len(result_polylines),
         "vertex_count": total_verts,
     }
+
+
+def _read_manifest_run(
+    level_group: FsGroup,
+    run: list[VertexGroupRef],
+    dtype: np.dtype,
+    ndim: int,
+) -> list[npt.NDArray]:
+    """Read a contiguous manifest slice into a list of vertex groups.
+
+    Used by ``read_polylines`` in segment-crop mode to materialise each
+    surviving run of in-whitelist manifest entries.
+    """
+    out: list[npt.NDArray] = []
+    for cc, vg_idx in run:
+        try:
+            out.append(read_vertex_group(
+                level_group, cc, vg_idx, dtype=dtype, ndim=ndim,
+            ))
+        except ArrayError:
+            continue
+    return out
 
 
 def _empty_polyline_result() -> dict[str, Any]:

@@ -3,49 +3,65 @@
 ## Terms
 
 **Metanode**
-: A synthetic vertex that represents all vertices within a supervoxel bin
-  at a coarser resolution level. Its position is the centroid (or another
-  representative position) of the original vertices in the bin. Metanodes
-  are the fundamental unit of spatial coarsening in ZVF.
+: A synthetic vertex at a coarser resolution level that represents
+  a group of source vertices co-located within a supervoxel bin.
+  Its position is the centroid (or another aggregation) of the source
+  vertices in the bin. Metanodes are the fundamental unit of spatial
+  coarsening.
 
-**Centroid**
-: The mean position of all vertices within a bin, weighted equally. The
-  default position strategy for metanodes. Other strategies (first vertex,
-  median, weighted centroid) are supported.
+**Coarsening factor**
+: Per-level isotropic vertex-reduction target — `coarsen_factor=2.0`
+  means each axis is binned 2× coarser, giving up to ~8× fewer
+  vertices in 3D (exact reduction depends on the actual vertex
+  distribution).
 
-**Vertex reduction**
-: The factor by which the number of stored vertices decreases from one
-  level to the next. Determined by `bin_ratio`: a ratio of `(r, r, r)`
-  gives at most `r^D × ` vertex reduction (exact reduction depends on
-  actual vertex distribution).
+**Sparsity factor**
+: Per-level object-keep target — `sparsity_factor=3.0` keeps every
+  third object on average. `1.0` keeps all objects (the default).
 
-**Object reduction**
-: The factor by which the number of stored objects decreases from one
-  level to the next. Determined by `object_sparsity`. Independent of
-  `bin_ratio`.
+**Aggregation mode** (`agg_mode`)
+: How per-vertex / per-object attributes are combined within a bin
+  when producing the metanode's attribute value. Options:
+  `mean` (default), `sum`, `mode`, `count`, `min`, `max` —
+  see [`constants.VALID_AGGREGATIONS`](../../../zarr_vectors/constants.py).
 
-**Total reduction**
-: The product of vertex reduction and object reduction. Determines the
-  total data volume at a coarser level relative to the base level.
+**Coarsening method**
+: How the writer reconciles object identity across levels —
+  `per_object` (default; OID-stable, metavertices may be shared) or
+  `cross_object_metanode` (legacy alias `grid_metanode`; fresh OID
+  space per level).
 
-**Attribute aggregation**
-: The strategy used to compute the attribute value of a metanode from the
-  attributes of the original vertices in its bin. Options: `mean`
-  (default), `sum`, `max`, `min`, `median`, `first`.
+**Cross-level link**
+: An edge from a fine-level vertex to its coarse-level parent
+  metanode. Materialised as a separate array family at each level
+  (`links/<delta>/`, `cross_chunk_links/<delta>/`) — see
+  [Links and cross-chunk links](../object_model/cross_chunk_links.md).
 
 ---
 
 ## Introduction
 
 Building a resolution pyramid means constructing one or more coarser
-representations of the base-level data. In ZVF, coarsening operates
-independently on two axes: *spatial coarsening* (merging vertices into
-metanodes via binning) and *object thinning* (retaining only a subset of
-discrete objects).
+representations of the base-level data. Coarsening operates
+independently on two axes:
 
-This page documents the coarsening algorithms for each geometry type,
-the API for controlling pyramid construction, and the design choices made
-in `zarr-vectors-py`.
+- **Spatial coarsening** — merge vertices in the same supervoxel bin
+  into a single metanode (per the `coarsen_factor`).
+- **Object thinning** — drop a fraction of discrete objects (per the
+  `sparsity_factor`).
+
+In 0.4, every coarsening pass can additionally emit **cross-pyramid-
+level links** that record which fine vertex maps to which coarse
+metanode. Cross-level links live alongside the per-level intra-chunk
+edges under `links/<delta>/` and `cross_chunk_links/<delta>/`; see
+[Links and cross-chunk links](../object_model/cross_chunk_links.md)
+for the on-disk layout and
+[`examples/07_multiscale_links.ipynb`](../../../examples/07_multiscale_links.ipynb)
+for a walkthrough.
+
+This page documents the coarsening algorithm per geometry type, the
+two public APIs (`build_pyramid` and `coarsen_level`), and the
+cross-level link options.
 
 ---
 
@@ -55,115 +71,119 @@ in `zarr-vectors-py`.
 
 #### Point cloud
 
-Point cloud coarsening is purely spatial. For each bin at the coarser level,
-all vertices in the corresponding bin at the base level (or the previous
-level) are merged into a single metanode:
+Pure spatial coarsening. For each bin at the coarser level, all
+vertices in the corresponding bin at the base level are merged into a
+single metanode:
 
 ```
-metanode_position = mean(positions in bin)   (default: centroid)
-metanode_attribute = aggregation(attributes in bin)
+metanode_position  = mean(positions in bin)        # centroid
+metanode_attribute = agg_mode(attributes in bin)
 ```
 
-There are no discrete objects in a point cloud; `object_sparsity` is
-ignored (always `1.0`).
-
-**Example:**
-
-```
-Base level bin contains:   [100.2, 200.5, 300.1]
-                           [101.3, 199.8, 301.0]
-                           [100.9, 200.1, 299.7]
-
-Metanode at level 1:       [100.8, 200.1, 300.3]  ← centroid
-```
+There are no discrete objects in a point cloud; `sparsity_factor` is
+ignored (always 1.0).
 
 #### Polyline and streamline
 
 Two-stage coarsening:
 
-1. **Spatial coarsening (always):** for each object, the vertex sequence is
-   downsampled by replacing each contiguous run of vertices within the same
-   bin with one metanode at their centroid. Edge connectivity is preserved:
-   consecutive metanodes are connected.
+1. **Spatial:** for each object, the vertex sequence is downsampled by
+   replacing each contiguous run of vertices within the same bin with
+   one metanode at their centroid. Edge connectivity is preserved
+   (consecutive metanodes are connected).
+2. **Object thinning** (when `sparsity_factor > 1.0`): a subset of
+   objects is selected for the coarser level using
+   `sparsity_strategy`. Non-selected objects are not written.
 
-2. **Object thinning (when `object_sparsity < 1.0`):** a subset of objects
-   is selected for the coarser level using the declared `sparsity_strategy`.
-   Non-selected objects are not written to the coarser level.
-
-After both stages, cross-chunk links are recomputed for the coarser level
-(because metanode positions may fall in different chunks than the original
-vertices).
-
-**Illustration (single streamline, bin_ratio = 2):**
-
-```
-Base level vertices:     A  B  C  D | E  F  G  H      (| = chunk boundary)
-Bin assignment:          0  0  0  1 | 0  0  1  1
-
-Level 1 coarsening:
-  Chunk 0: bin 0 → centroid(A,B,C), bin 1 → D
-  Chunk 1: bin 0 → centroid(E,F),   bin 1 → centroid(G,H)
-
-Level 1 streamline:      ABC' D  | EF'  GH'            (primed = metanode)
-Cross-chunk link:        D → EF' (same as base level, different vertex IDs)
-```
+After both stages, the per-level intra-chunk `links/0/` and
+`cross_chunk_links/0/` arrays are recomputed at the coarser level
+(metanode positions may fall in different chunks than the originals).
 
 #### Graph and skeleton
 
-Graph coarsening merges spatially close nodes into metanodes. For each bin,
-all vertices in the bin are merged into one metanode. Edges are
-updated: an edge `(u, v)` at the base level becomes an edge between the
-metanodes of `u` and `v` at the coarser level. Self-loops (both endpoints
-in the same bin) are removed. Duplicate edges (multiple base-level edges
-mapping to the same pair of metanodes) are deduplicated.
+For each bin, all vertices in the bin merge into one metanode. Edges
+are remapped: an edge `(u, v)` at the base level becomes an edge
+between the metanodes of `u` and `v`. Self-loops (both endpoints in
+the same bin) are removed; duplicate edges deduplicated.
 
-For skeletons, the tree structure is preserved: the metanode with the
-smallest path distance to the root inherits the root designation.
+For skeletons, the tree structure is preserved across coarsening.
 
-Object thinning for multi-skeleton stores is supported: when a store
-contains many independent skeletons (e.g. a connectome store with many
-neurons), `object_sparsity` controls how many are retained.
+Multi-skeleton stores support `sparsity_factor > 1.0` for thinning
+when the store contains many independent skeletons.
 
 #### Mesh
 
-Mesh coarsening is more complex than other types because mesh connectivity
-(face topology) must be maintained. `zarr-vectors-py` uses a
-**vertex-merging** approach:
+Mesh coarsening uses **vertex merging**:
 
-1. Identify all vertices in each bin and replace them with one metanode.
+1. Identify all vertices in each bin and replace them with one
+   metanode.
 2. Update face vertex indices to reference metanodes.
-3. Remove degenerate faces (triangles with two or more identical vertices
-   after merging).
+3. Remove degenerate faces (faces with two or more identical
+   vertices after merging).
 4. Remove duplicate faces.
 
-This approach is conservative (it preserves topology at the cost of some
-geometric quality) but does not require a full mesh simplification algorithm.
-For high-quality coarsening of mesh data, consider pre-processing with a
-dedicated mesh decimation tool before writing to ZVF.
+This is conservative — it preserves topology at the cost of some
+geometric quality. For high-quality mesh decimation, pre-process
+with a dedicated mesh tool before writing.
 
 ### `build_pyramid` API
+
+The recommended entry point. Pass `factors=[(coarsen, sparsity), ...]`
+where the *i*-th tuple produces level `i+1` from level `i`:
 
 ```python
 from zarr_vectors.multiresolution.coarsen import build_pyramid
 
 build_pyramid(
     "scan.zarrvectors",
-    level_configs=[
-        {"bin_ratio": (2, 2, 2), "object_sparsity": 1.0},
-        {"bin_ratio": (4, 4, 4), "object_sparsity": 0.5},
+    factors=[
+        (2.0, 1.0),                 # level 1: 2× coarsen, no sparsity
+        (2.0, 1.0),                 # level 2: 2× coarsen
+        (2.0, 3.0),                 # level 3: 2× coarsen + drop 2/3 objects
     ],
-    attribute_aggregation="mean",   # how to aggregate per-vertex attributes
-    position_strategy="centroid",   # metanode position (centroid | first | median)
+    method="per_object",            # OID-stable (default); see "Methods"
+    agg_mode="mean",                # attribute aggregation
+    sparsity_strategy="random",
+    sparsity_seed=None,
+    cross_level_depth=1,            # ±1 cross-level edges per pair
+    cross_level_storage="explicit", # write both +1 (fine) and -1 (coarse)
 )
 ```
 
-`level_configs` is applied sequentially: level 1 is coarsened from level 0,
-level 2 is coarsened from level 1, and so on. Each level's `bin_ratio` is
-relative to `base_bin_shape`, not to the previous level.
+Each factor pair `(coarsen, sparsity)` opts out by passing `1.0` on
+that axis. Passing the same factors with `method="cross_object_metanode"`
+uses the legacy path.
+
+**Full signature** (see
+[`zarr_vectors/multiresolution/coarsen.py:build_pyramid`](../../../zarr_vectors/multiresolution/coarsen.py)):
+
+```python
+def build_pyramid(
+    store_path: str | Path,
+    *,
+    factors: list[tuple[float, float]] | None = None,
+    method: str = "per_object",
+    level_configs: list[dict] | None = None,        # legacy: explicit bin_ratio
+    target_volume_reduction: float = 8.0,           # legacy: auto-plan mode
+    sparsity_weight: float = 0.0,                   # legacy: auto-plan mode
+    reduction_factor: int = 8,                      # legacy: heuristic threshold
+    max_levels: int = 10,
+    min_vertices: int = 8,
+    agg_mode: str = "mean",
+    sparsity_strategy: str = "random",
+    sparsity_seed: int | None = None,
+    cross_level_depth: int = 1,
+    cross_level_storage: str = "explicit",
+) -> dict[str, Any]
+```
+
+The `factors=` interface is the recommended path. The
+`level_configs=` / `sparsity_weight=` / auto-plan branches are kept
+for backwards compatibility.
 
 ### `coarsen_level` API
 
-For finer control, use `coarsen_level` directly:
+For one level at a time:
 
 ```python
 from zarr_vectors.multiresolution.coarsen import coarsen_level
@@ -172,71 +192,134 @@ coarsen_level(
     "scan.zarrvectors",
     source_level=0,
     target_level=1,
-    bin_ratio=(2, 2, 2),
-    object_sparsity=0.5,
-    sparsity_strategy="spatial_coverage",
-    attribute_aggregation="mean",
-    position_strategy="centroid",
+    coarsen_factor=2.0,
+    sparsity_factor=1.0,
+    method="per_object",
+    agg_mode="mean",
 )
 ```
 
-`source_level` does not have to be 0. You can coarsen from level 1 to
-level 2 to build a three-level pyramid incrementally.
+`source_level` does not have to be 0 — you can incrementally build
+deeper pyramids by chaining `coarsen_level` calls. Cross-level
+emission for individual `coarsen_level` calls is **not** automatic;
+to materialise `±delta` arrays, call `build_pyramid(..., factors=...)`
+instead (which post-processes the whole pyramid in one pass via
+`_finalize_cross_level_for_store`).
 
-### Attribute aggregation strategies
+### Methods: `per_object` vs `cross_object_metanode`
 
-| Strategy | Description | Use case |
-|----------|-------------|----------|
-| `mean` | Mean of values in bin | Continuous scalars (FA, intensity, concentration) |
-| `sum` | Sum of values in bin | Counts, densities |
-| `max` | Maximum in bin | Peak activations, distance-to-surface |
-| `min` | Minimum in bin | Minimum stress, threshold fields |
-| `median` | Median of values in bin | Robust aggregation, ignores outliers |
-| `first` | First vertex value | Categorical labels (takes majority instead; see below) |
-| `majority` | Most frequent value | Categorical/label attributes |
+| Method | Behaviour | OID stability | Capabilities stamped |
+|--------|-----------|---------------|----------------------|
+| `per_object` (default) | Per-object pyramid; metavertices may be shared between objects | **Stable** — each surviving object keeps its OID across levels | `CAP_PRESERVED_OBJECT_IDS`, `CAP_SHARED_VERTEX_GROUPS` |
+| `cross_object_metanode` (alias: `grid_metanode`) | Legacy grid-binning; merges vertices across object boundaries | Fresh OID space per level | (none additional) |
 
-Different attributes within the same store can use different aggregation
-strategies:
+Choose `per_object` when downstream consumers need to track the
+"same object" across resolution levels (e.g. drill-down navigation
+in Neuroglancer, ID-preserving analytics). Choose
+`cross_object_metanode` when you want the smallest possible coarse
+representation and don't need OID continuity.
+
+Implementations:
+[`_per_object_coarsen`](../../../zarr_vectors/multiresolution/coarsen.py)
+and
+[`_cross_object_metanode_coarsen`](../../../zarr_vectors/multiresolution/coarsen.py).
+
+### Aggregation modes
+
+Set globally via `agg_mode=` on `build_pyramid` or `coarsen_level`.
+Applies to every per-vertex / per-object attribute:
+
+| `agg_mode` | Description | Use case |
+|------------|-------------|----------|
+| `mean`     | Mean of values in bin | Continuous scalars (FA, intensity, concentration) |
+| `sum`      | Sum of values in bin | Counts, densities |
+| `mode`     | Most frequent value | Categorical / label attributes |
+| `count`    | Number of source vertices in bin | Density tracking |
+| `min` / `max` | Bin extrema | Thresholds, peak activations |
+
+Canonical token set:
+[`zarr_vectors.constants.VALID_AGGREGATIONS`](../../../zarr_vectors/constants.py).
+
+### Cross-level link emission (0.4+)
+
+Two kwargs on `build_pyramid` control whether and how cross-pyramid-
+level edges are materialised at each adjacent level pair:
 
 ```python
-coarsen_level(
+build_pyramid(
     "scan.zarrvectors",
-    source_level=0, target_level=1,
-    bin_ratio=(2, 2, 2),
-    attribute_aggregation={
-        "intensity":  "mean",
-        "label":      "majority",
-        "confidence": "min",
-    },
+    factors=[(2.0, 1.0), (2.0, 1.0)],
+    cross_level_depth=2,                    # ±1, ±2 per applicable pair
+    cross_level_storage="explicit",         # both +N and -N
 )
 ```
 
-### Metanode position strategies
+**`cross_level_depth: int = 1`** controls how far the cross-level
+emission reaches:
 
-| Strategy | Formula | Notes |
-|----------|---------|-------|
-| `centroid` | `mean(positions in bin)` | Default. Best spatial accuracy. |
-| `first` | First vertex (by VG order) | Fast; biased toward lower-coordinate vertices. |
-| `median` | Component-wise median | Robust to outliers in the bin. |
-| `weighted_centroid` | Weighted mean using a named attribute | Useful when one attribute encodes importance. |
+| Value | Meaning |
+|-------|---------|
+| `0`   | Disabled (same as `cross_level_storage="none"`) |
+| `N`   | Materialise up to `±N` for every adjacent pair we can reach |
+| `-1`  | Walk **all** available pyramid levels |
 
-```python
-coarsen_level(
-    "scan.zarrvectors", 0, 1, bin_ratio=(2, 2, 2),
-    position_strategy="weighted_centroid",
-    position_weight_attribute="intensity",
-)
-```
+For `depth >= 2`, parents are composed across coarsening steps —
+`grandparent[i] = parent_at_L1[parent_at_L0[i]]` — so a single
+edge goes from a level-0 vertex straight to its level-2 metanode
+(instead of forcing readers to chain two `+1` lookups).
+
+**`cross_level_storage: Literal["none","implicit","explicit"]`**
+controls direction:
+
+| Mode | `+N` at fine level | `-N` at coarse level |
+|------|--------------------|----------------------|
+| `none`     | no  | no  |
+| `implicit` | yes | no  (reconstruct on read by flipping `+N` at target) |
+| `explicit` (default) | yes | yes |
+
+`implicit` saves disk; `explicit` gives O(1) drill-down *and* drill-up
+reads.
+
+**Algorithm.** After all coarser levels have been written by the
+normal coarsening loop, `build_pyramid` calls
+[`_finalize_cross_level_for_store`](../../../zarr_vectors/multiresolution/coarsen.py)
+which:
+
+1. Walks every adjacent `(fine, coarse)` level pair.
+2. Reconstructs the fine→parent map from the coarse level's
+   `metanode_children` sidecar.
+3. Builds the trivial edge list `[(i, parent[i]) for i in range(n_fine)]`.
+4. Partitions via
+   [`partition_cross_level_edges`](../../../zarr_vectors/spatial/boundary.py)
+   into chunk-aligned (`links/+delta/<chunk>`) and cross-chunk
+   (`cross_chunk_links/+delta/data`) buckets.
+5. Writes the `+delta` arrays at the fine level; if
+   `cross_level_storage="explicit"`, also writes the swapped-endpoint
+   `-delta` arrays at the coarse level.
+6. For `depth >= 2`, composes parents as above and emits `±2`, `±3`,
+   … in the same way.
+
+**Persistence.** Root metadata gains `cross_level_depth` and
+`cross_level_storage`, and the `CAP_MULTISCALE_LINKS` capability
+token is stamped on `format_capabilities` whenever any `delta != 0`
+array is emitted. Readers MAY use the capability to short-circuit
+walks of stores that don't carry cross-level edges at all.
+
+See [`examples/07_multiscale_links.ipynb`](../../../examples/07_multiscale_links.ipynb)
+for a walkthrough that builds a 3-level pyramid, inspects the
+resulting `<delta>` subdirs, and reads both intra- and cross-level
+edges.
 
 ### Legacy automatic pyramid
 
-`build_pyramid` with no `level_configs` argument uses a legacy heuristic:
-levels are added until the total vertex count falls below 10 000, using
-`bin_ratio = (2, 2, 2)` and `object_sparsity = 1.0` at each level.
+`build_pyramid` with no `factors=` and no `level_configs=` falls back
+to a legacy auto-planner driven by `target_volume_reduction`,
+`sparsity_weight`, `reduction_factor`, `max_levels`, and
+`min_vertices`:
 
 ```python
-build_pyramid("scan.zarrvectors")   # legacy: auto-select levels
+build_pyramid("scan.zarrvectors")               # legacy: auto-select levels
 ```
 
-This is convenient for quick exploratory use but not recommended for
-production pipelines, where explicit `level_configs` are preferred.
+Convenient for exploratory use; for production pipelines prefer
+explicit `factors=`.

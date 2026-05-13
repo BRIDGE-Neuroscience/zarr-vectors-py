@@ -58,7 +58,7 @@ the distinction is in the metadata and semantic interpretation.
 |-----------|----------|-------------|
 | `vertices/` | Yes | Streamline vertex positions |
 | `vertex_group_offsets/` | Yes | VG index |
-| `links/edges/` | Yes | Intra-chunk consecutive vertex pairs |
+| `links/<delta>/` | Yes | Intra-chunk consecutive vertex pairs |
 | `object_index/` | Yes | Object ID → primary chunk + VG offset |
 | `cross_chunk_links/` | Yes* | Inter-chunk vertex connections |
 | `attributes/<name>/` | No | Per-vertex attributes (e.g. FA, MD per point) |

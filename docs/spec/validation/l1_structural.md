@@ -58,12 +58,12 @@ structurally incomplete and cannot be read by any ZVF reader.
 | Geometry type | Required arrays | Warning if absent |
 |---------------|----------------|-------------------|
 | `point_cloud` | `vertices/`, `vertex_group_offsets/` | `attributes/` if attributes were written at other levels |
-| `line` | + `links/edges/` | — |
-| `polyline` | + `links/edges/`, `object_index/` | `cross_chunk_links/` if objects may span chunks |
-| `streamline` | + `links/edges/`, `object_index/` | `cross_chunk_links/` |
-| `graph` | + `links/edges/`, `object_index/` | `cross_chunk_links/` |
-| `skeleton` | + `links/edges/`, `object_index/` | `cross_chunk_links/` |
-| `mesh` | + `links/faces/`, `object_index/` | — |
+| `line` | + `links/<delta>/` | — |
+| `polyline` | + `links/<delta>/`, `object_index/` | `cross_chunk_links/<delta>/` if objects may span chunks |
+| `streamline` | + `links/<delta>/`, `object_index/` | `cross_chunk_links/<delta>/` |
+| `graph` | + `links/<delta>/`, `object_index/` | `cross_chunk_links/<delta>/` |
+| `skeleton` | + `links/<delta>/`, `object_index/` | `cross_chunk_links/<delta>/` |
+| `mesh` | + `links/<delta>/`, `object_index/` | — |
 
 #### Attribute sub-groups
 
@@ -95,7 +95,7 @@ PASS  level_zattrs [level=0]       resolution_0/.zattrs exists
 PASS  vertices_array [level=0]     resolution_0/vertices/ is an array
 PASS  vg_offsets_array [level=0]   resolution_0/vertex_group_offsets/ is an array
 PASS  object_index_array [level=0] resolution_0/object_index/ is an array
-PASS  edges_array [level=0]        resolution_0/links/edges/ is an array
+PASS  edges_array [level=0]        resolution_0/links/<delta>/ is an array
 ERROR cross_chunk_links [level=0]  resolution_0/cross_chunk_links/ missing;
                                    required for streamline type
 

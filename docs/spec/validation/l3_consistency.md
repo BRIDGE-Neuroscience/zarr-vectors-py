@@ -83,13 +83,20 @@ For every chunk at every level:
 
 ### Cross-chunk link checks
 
+The L3 walker enumerates every `<delta>` subdir under
+`cross_chunk_links/` via `list_cross_link_deltas` (see
+[`zarr_vectors/validate/consistency.py`](../../../zarr_vectors/validate/consistency.py))
+and validates each independently.
+
 | Check | Rule | Failure type |
 |-------|------|--------------|
-| `ccl_global_id_valid` | Every global vertex ID in `cross_chunk_links/` is in `[0, chunk_flat_max × N_max + N_chunk_max)` | Error |
-| `ccl_different_chunks` | `src // N_max != dst // N_max` for all links | Error |
-| `ccl_vertices_exist` | The vertices referenced by all global IDs actually exist (count > 0 in the VG containing them) | Error |
-| `ccl_no_polyline_cycles` | The directed graph formed by `cross_chunk_links/` for polyline/streamline stores contains no cycles | Error |
-| `ccl_no_duplicate_undirected` | For undirected graph stores: no link `[a, b]` co-exists with `[b, a]` | Error |
+| `ccl_chunk_coords_arity` | Every endpoint's chunk-coord tuple has length `sid_ndim` | Error |
+| `ccl_src_chunk_exists` | For every `<delta>`: endpoint A's chunk_coords name a chunk present in the owning level's chunk grid (i.e. exists in `vertex_group_offsets/`) | Error |
+| `ccl_tgt_chunk_exists` | For `delta == 0` only: endpoint B's chunk_coords name a chunk present in the owning level's chunk grid | Error |
+| `ccl_tgt_chunk_at_offset_level` | For `delta != 0`: endpoint B's chunk_coords are validated when the walker reaches level `source_level + delta` | Error |
+| `ccl_attribute_length` | For every `cross_chunk_link_attributes/<name>/<delta>/`: meta `num_links` matches the parallel `cross_chunk_links/<delta>/` meta | Error |
+| `ccl_no_polyline_cycles` | For polyline/streamline stores at `delta == 0`: the directed graph formed by intra-level cross-chunk links contains no cycles | Error |
+| `ccl_no_duplicate_undirected` | For undirected graph stores at `delta == 0`: no link `[a, b]` co-exists with `[b, a]` | Error |
 
 ### Edge index checks
 
@@ -97,7 +104,7 @@ For polyline, streamline, graph, and skeleton types:
 
 | Check | Rule | Failure type |
 |-------|------|--------------|
-| `edge_indices_in_bounds` | All local vertex indices in `links/edges/` are in `[0, N_chunk)` or equal `−1` | Error |
+| `edge_indices_in_bounds` | All local vertex indices in `links/<delta>/` are in `[0, N_chunk)` or equal `−1` | Error |
 | `no_self_loops` | No edge has `src == dst` | Error |
 | `polyline_continuity` | For polyline/streamline: every non-terminal vertex has exactly one outgoing intra-chunk edge (or a cross-chunk link as continuation) | Error |
 

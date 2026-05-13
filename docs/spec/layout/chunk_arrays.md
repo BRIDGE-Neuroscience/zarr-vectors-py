@@ -99,7 +99,7 @@ The two values per bin are `[offset, count]` where `offset` is the index
 of the first vertex of this bin within the chunk's vertex slice, and
 `count` is the number of vertices in this bin.
 
-### `links/edges/`
+### `links/<delta>/`
 
 Present for: polyline, streamline, graph, skeleton.
 
@@ -122,7 +122,7 @@ For polylines and streamlines, edges are stored in traversal order: edge `i`
 connects vertex `i` to vertex `i+1` along the polyline. For graphs and
 skeletons, edge order is not semantically significant.
 
-### `links/faces/`
+### `links/<delta>/`
 
 Present for: mesh only.
 

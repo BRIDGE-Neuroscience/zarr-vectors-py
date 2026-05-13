@@ -97,7 +97,7 @@ jsonschema.validate(my_root_metadata_dict, fragment)
 ## Versioning
 
 The schema's `$id` carries the format version
-(`https://w3id.org/zarr-vectors/schema/0.3`); the value is nominal
+(`https://w3id.org/zarr-vectors/schema/0.4`); the value is nominal
 until the project owns the `w3id.org` namespace prefix.  No code
 reads it — it's a stable identifier for downstream tools.
 

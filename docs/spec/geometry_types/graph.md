@@ -20,12 +20,12 @@
 : A boolean flag in root `.zattrs` indicating that the graph is a tree
   (connected, acyclic, exactly `n_vertices - 1` edges). When `true`, the
   store may omit edges that can be inferred from the parent-child
-  relationship stored in `links/edges/`. Enabling `is_tree` also enables
+  relationship stored in `links/<delta>/`. Enabling `is_tree` also enables
   tree-specific validation (cycle detection, connectivity check).
 
 **Root vertex**
 : For tree graphs (`is_tree = true`), the root is the vertex with no parent.
-  Its entry in `links/edges/` has the parent index set to `-1`.
+  Its entry in `links/<delta>/` has the parent index set to `-1`.
 
 ---
 
@@ -52,7 +52,7 @@ distinction is semantic and enforced by metadata flags and validation:
 |-----------|----------|-------------|
 | `vertices/` | Yes | Node positions |
 | `vertex_group_offsets/` | Yes | VG index |
-| `links/edges/` | Yes | Vertex pairs; shape `(E, 2)` int32 per chunk |
+| `links/<delta>/` | Yes | Vertex pairs; shape `(E, 2)` int32 per chunk |
 | `object_index/` | Yes | Object (component) ID → primary chunk + VG offset |
 | `cross_chunk_links/` | Yes* | Inter-chunk edges |
 | `attributes/<name>/` | No | Per-vertex attributes |
@@ -78,7 +78,7 @@ distinction is semantic and enforced by metadata flags and validation:
 
 ### Edge encoding
 
-Edges in `links/edges/` are local-chunk vertex index pairs `[i, j]`. For
+Edges in `links/<delta>/` are local-chunk vertex index pairs `[i, j]`. For
 undirected graphs, each edge is stored once in canonical form `[min(i,j),
 max(i,j)]`; readers must treat `[i,j]` and `[j,i]` as the same edge.
 
@@ -177,7 +177,7 @@ result = read_graph("connectome.zarrvectors", object_ids=[42, 107, 318])
 
 ### Validation
 
-L1: `vertices/`, `vertex_group_offsets/`, `links/edges/`, `object_index/`
+L1: `vertices/`, `vertex_group_offsets/`, `links/<delta>/`, `object_index/`
 exist.
 
 L2:

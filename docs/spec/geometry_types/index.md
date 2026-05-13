@@ -24,8 +24,8 @@ from zarr_vectors.constants import (
 | Property | `point_cloud` | `line` | `polyline` | `streamline` | `graph` | `skeleton` | `mesh` |
 |----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Discrete objects | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `links/edges/` | — | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| `links/faces/` | — | — | — | — | — | — | ✓ |
+| `links/<delta>/` | — | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `links/<delta>/` | — | — | — | — | — | — | ✓ |
 | `object_index/` | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `cross_chunk_links/` | — | — | ✓ | ✓ | ✓ | ✓ | — |
 | `object_attributes/` | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |

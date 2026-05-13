@@ -87,7 +87,7 @@ destination chunk have been collected, the chunk is sorted into VG order
 
 **Phase 2 — Attribute and link re-assignment.** Per-vertex attributes are
 re-ordered to match the new vertex ordering. For polyline and streamline
-stores, `links/edges` arrays are also recomputed: within-chunk edges are
+stores, `links/<delta>` arrays are also recomputed: within-chunk edges are
 reconstructed from the new vertex ordering; cross-chunk edges are identified
 and written to `cross_chunk_links`.
 
@@ -123,10 +123,7 @@ from zarr_vectors.multiresolution.coarsen import build_pyramid
 rechunk_store("scan.zarrvectors", "scan_rechunked.zarrvectors",
               chunk_shape=(500.0, 500.0, 500.0), levels=[0])
 
-build_pyramid("scan_rechunked.zarrvectors", level_configs=[
-    {"bin_ratio": (2, 2, 2), "object_sparsity": 1.0},
-    {"bin_ratio": (4, 4, 4), "object_sparsity": 0.5},
-])
+build_pyramid("scan_rechunked.zarrvectors", factors=[(2.0, 1.00), (4.0, 2.00)])
 ```
 
 ### Memory usage
@@ -162,7 +159,7 @@ The `zarr-vectors rechunk` CLI subcommand lives in the companion package
 |-------|-----------|-------|
 | `vertices/` values | Yes | Same positions, different chunk assignment |
 | `vertex_group_offsets/` | Recomputed | VG layout changes with new bin grid |
-| `links/edges/` | Recomputed | Vertex indices are local to chunks |
+| `links/<delta>/` | Recomputed | Vertex indices are local to chunks |
 | `cross_chunk_links/` | Recomputed | Chunk boundaries change |
 | `attributes/` values | Yes | Reordered to match new vertex ordering |
 | `object_index/` | Recomputed | Chunk coordinates change |

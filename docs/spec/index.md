@@ -34,7 +34,7 @@ OME-Zarr-compatible metadata so any NGFF-aware viewer can discover them.
 **Geometry-type agnostic layout.** Points, streamlines, graphs, and meshes
 all use the same spatial chunking layout. This means a single I/O layer
 handles all types; type-specific logic lives only in the arrays present
-within each chunk group (e.g. meshes have a `links/faces` array that point
+within each chunk group (e.g. meshes have a `links/<delta>` array that point
 clouds do not).
 
 **Format transparency.** A ZVF store is a plain Zarr v3 directory tree.

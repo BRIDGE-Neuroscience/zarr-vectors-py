@@ -1,20 +1,49 @@
 # Cloud stores
 
-ZVF stores on Amazon S3, Google Cloud Storage, and Azure Blob Storage are
-accessed using `zarr-vectors[cloud]`, which brings in `s3fs` and `gcsfs`
-as dependencies. The read/write API is identical to local stores — only
-the path argument changes.
+ZV stores on Amazon S3, Google Cloud Storage, Azure Blob Storage, and
+public HTTP are accessed through the **backend layer** described in the
+[store types spec page](../../spec/foundations/store_types.md). The
+read/write API is identical to local stores — only the URL changes.
 
 ---
 
 ## Installation
 
+The library ships with two cloud-capable backends; install whichever
+matches your needs. `obstore` is preferred (Rust-based, faster parallel
+reads), and the library auto-prefers it when both are installed.
+
 ```bash
-pip install "zarr-vectors[cloud]"
+pip install "zarr-vectors[obstore]"    # preferred
+# OR
+pip install "zarr-vectors[cloud]"      # fsspec + s3fs/gcsfs/adlfs (fallback)
 ```
 
-This installs `s3fs`, `gcsfs`, and the `adlfs` Azure driver alongside the
-core package.
+You can also install both — the library will pick `obstore` and fall back
+to `fsspec` for any URL scheme it can't handle.
+
+---
+
+## Backend resolution at a glance
+
+When you pass a cloud URL to any `read_*` / `write_*` / `open_store` /
+`open_zvr` call, the backend is chosen in this order:
+
+1. **Explicit `backend=` kwarg** — e.g. `backend="fsspec"` forces fsspec
+   even if obstore is installed.
+2. **`ZARR_VECTORS_BACKEND` environment variable** — e.g.
+   `export ZARR_VECTORS_BACKEND=obstore`.
+3. **URL-scheme auto-detect** — `s3://`, `gs://`, `gcs://`, `az://`,
+   `azure://`, `abfs://`, `http(s)://` → `obstore` if installed else
+   `fsspec`.
+
+If neither cloud backend is installed for a cloud URL, the call raises a
+`StoreError` with an install hint.
+
+See [`zarr_vectors/core/backends/__init__.py`](../../../zarr_vectors/core/backends/__init__.py)
+for the canonical scheme table and
+[`tests/test_backends.py`](../../../tests/test_backends.py) for the
+test matrix.
 
 ---
 
@@ -22,66 +51,89 @@ core package.
 
 ### Anonymous (public) read access
 
-Many open neuroscience datasets on S3 allow anonymous access:
+Many open neuroscience datasets on S3 allow anonymous access. The
+backend layer handles it transparently — there's no `anon=True` kwarg
+to pass:
 
 ```python
-import s3fs
 from zarr_vectors.types.points import read_points
 
-fs    = s3fs.S3FileSystem(anon=True)
-store = fs.get_mapper("s3://open-neuro-data/datasets/synchrotron.zarrvectors")
-
-result = read_points(store, level=2)   # reads coarse level — fast
+result = read_points(
+    "s3://open-neuro-data/datasets/synchrotron.zarrvectors",
+    level=2,                                # coarse level — fast
+)
 print(result["vertex_count"])
+```
+
+Authentication is opt-in: if the bucket allows anonymous reads, the
+default backend config will use it. If you need to force anonymous
+access in a credentialed environment, pass it through:
+
+```python
+read_points(
+    "s3://open-neuro-data/scan.zarrvectors",
+    backend="obstore",
+    skip_signature=True,                    # obstore-specific kwarg
+)
 ```
 
 ### Authenticated access
 
+Ambient credentials work without configuration — `obstore` and `fsspec`
+both read `~/.aws/credentials`, environment variables, and IAM roles:
+
 ```python
-import s3fs
+result = read_points("s3://my-bucket/scan.zarrvectors")
+```
 
-# Uses ~/.aws/credentials or IAM role automatically
-fs = s3fs.S3FileSystem(anon=False)
+To pass credentials explicitly, forward them through `**backend_kwargs`:
 
-# Or pass credentials explicitly (prefer environment variables instead)
-fs = s3fs.S3FileSystem(
-    key=os.environ["AWS_ACCESS_KEY_ID"],
-    secret=os.environ["AWS_SECRET_ACCESS_KEY"],
-    token=os.environ.get("AWS_SESSION_TOKEN"),
+```python
+import os
+from zarr_vectors.types.points import read_points
+
+result = read_points(
+    "s3://my-bucket/scan.zarrvectors",
+    backend="obstore",
+    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    region="us-east-1",
 )
 ```
+
+Keyword names match the active backend (`obstore` uses `aws_*`;
+`fsspec`/`s3fs` uses `key` / `secret`). Prefer ambient credentials when
+possible.
 
 ### Writing to S3
 
 ```python
-import s3fs
 import numpy as np
 from zarr_vectors.types.points import write_points
-
-fs    = s3fs.S3FileSystem(anon=False)
-store = fs.get_mapper("s3://my-bucket/datasets/scan.zarrvectors")
 
 rng = np.random.default_rng(0)
 positions = rng.uniform(0, 1000, (100_000, 3)).astype(np.float32)
 
 write_points(
-    store,
+    "s3://my-bucket/datasets/scan.zarrvectors",
     positions,
-    chunk_shape=(500.0, 500.0, 500.0),   # larger chunks = fewer S3 objects
-    bin_shape=(100.0, 100.0, 100.0),
+    chunk_shape=(500., 500., 500.),       # larger chunks = fewer S3 objects
+    bin_shape=(100., 100., 100.),
+    backend="obstore",
+    region="us-east-1",
 )
 ```
 
-**Chunk size guidance for S3.** Each ZVF spatial chunk becomes one S3
+**Chunk size guidance for S3.** Each ZV spatial chunk becomes one S3
 object. S3 charges per PUT (write) and GET (read) request. To minimise
 cost and request count, use `chunk_shape` values that produce chunks of
-at least 100 KB compressed. For typical synchrotron point clouds at 100
-000 vertices per chunk (float32, Blosc-compressed), this is roughly
-200–500 µm per axis.
+at least 100 KB compressed. For typical synchrotron point clouds at
+~100 000 vertices per chunk (float32, Blosc-compressed), this is
+roughly 200–500 µm per axis.
 
 ### S3 bucket configuration for Neuroglancer serving
 
-To serve a ZVF store from S3 to `zv-ngtools` or the Neuroglancer web
+To serve a ZV store from S3 to `zv-ngtools` or the Neuroglancer web
 app, configure CORS on the bucket:
 
 ```json
@@ -108,31 +160,16 @@ aws s3api put-bucket-cors \
 
 ## Google Cloud Storage
 
-### Authenticated access
-
 ```python
-import gcsfs
-from zarr_vectors.types.polylines import read_polylines
+from zarr_vectors.types.polylines import read_polylines, write_polylines
 
-# Uses Application Default Credentials (gcloud auth application-default login)
-fs    = gcsfs.GCSFileSystem(project="my-gcp-project")
-store = fs.get_mapper("gs://my-bucket/tracts.zarrvectors")
-
-result = read_polylines(store, level=1)
+# Read — uses Application Default Credentials
+result = read_polylines("gs://my-bucket/tracts.zarrvectors", level=1)
 print(result["polyline_count"])
-```
 
-### Writing to GCS
-
-```python
-import gcsfs
-from zarr_vectors.types.polylines import write_polylines
-
-fs    = gcsfs.GCSFileSystem(project="my-gcp-project")
-store = fs.get_mapper("gs://my-bucket/tracts.zarrvectors")
-
+# Write
 write_polylines(
-    store,
+    "gs://my-bucket/tracts.zarrvectors",
     streamlines,
     chunk_shape=(100., 100., 100.),
     bin_shape=(25., 25., 25.),
@@ -140,48 +177,69 @@ write_polylines(
 )
 ```
 
-### GCS CORS configuration
+To pass GCS credentials explicitly:
+
+```python
+read_polylines(
+    "gs://my-bucket/tracts.zarrvectors",
+    backend="fsspec",                       # gcsfs route
+    token="/path/to/service-account.json",
+)
+```
+
+GCS CORS:
 
 ```bash
 gsutil cors set cors.json gs://my-bucket
 ```
 
-`cors.json` uses the same structure as the S3 example above.
+---
+
+## Azure Blob Storage
+
+```python
+from zarr_vectors.types.points import read_points
+
+result = read_points("az://account/container/scan.zarrvectors")
+# or:   "abfs://container@account.dfs.core.windows.net/scan.zarrvectors"
+```
+
+Ambient credentials follow the standard `DefaultAzureCredential` chain
+(env vars, managed identity, Azure CLI session).
 
 ---
 
 ## Building a pyramid on a remote store
 
+The pyramid builder takes a path or URL the same way the writers do:
+
 ```python
-import s3fs
 from zarr_vectors.multiresolution.coarsen import build_pyramid
 
-fs    = s3fs.S3FileSystem(anon=False)
-store = fs.get_mapper("s3://my-bucket/scan.zarrvectors")
-
 build_pyramid(
-    store,
-    level_configs=[
-        {"bin_ratio": (2, 2, 2)},
-        {"bin_ratio": (4, 4, 4)},
-    ],
-    n_workers=8,    # parallel chunk reads/writes
+    "s3://my-bucket/scan.zarrvectors",
+    factors=[(2.0, 1.0), (2.0, 1.0)],     # coarsen 2× per level, no sparsity
+    cross_level_depth=1,                  # ±1 cross-level edges per pair
+    cross_level_storage="explicit",       # write both +1 and -1
 )
 ```
 
-For very large datasets on cloud, the pyramid build is I/O bound. Use
-a cloud VM in the same region as the bucket to minimise network latency:
-building a pyramid from within AWS `us-east-1` against a bucket in the
-same region is ~10× faster than from a laptop.
+For very large datasets on cloud, the pyramid build is I/O bound. Run
+on a cloud VM in the same region as the bucket — building a pyramid
+from within AWS `us-east-1` against a bucket in the same region is
+~10× faster than from a laptop.
+
+See [`docs/tutorials/multiscale/building_pyramids.md`](../multiscale/building_pyramids.md)
+for the full pyramid API, and [`examples/07_multiscale_links.ipynb`](../../../examples/07_multiscale_links.ipynb)
+for the cross-level link layout that `build_pyramid` produces.
 
 ---
 
 ## Consolidated metadata
 
-On stores with many resolution levels and attribute arrays, opening the
-store requires one metadata request per Zarr group and array. For a store
-with 3 levels × 6 arrays = 18 metadata requests, this adds ~1 s of latency
-on S3 (at ~50 ms per request).
+On stores with many resolution levels and attribute arrays, opening
+the store requires one metadata request per Zarr group and array. On
+S3 with ~50 ms per request, this adds noticeable latency.
 
 Consolidated metadata packs all `.zattrs` and `zarr.json` files into a
 single `.zmetadata` key, reducing store-open latency to one request:
@@ -190,107 +248,61 @@ single `.zmetadata` key, reducing store-open latency to one request:
 import zarr
 from zarr_vectors.core.store import open_store
 
-# Write the consolidated metadata file
-root = open_store("scan.zarrvectors", mode="r+")
-zarr.consolidate_metadata(root.store)
+root = open_store("s3://my-bucket/scan.zarrvectors", mode="r+")
+zarr.consolidate_metadata(root.zarr_group.store)
 ```
 
-After consolidation, subsequent opens are dramatically faster:
-
-```python
-# This now takes ~1 request instead of ~18
-root = open_store("s3://my-bucket/scan.zarrvectors", mode="r")
-```
-
-Regenerate consolidated metadata after adding a resolution level or
-modifying `.zattrs`:
-
-```python
-root = open_store(store, mode="r+")
-zarr.consolidate_metadata(root.store)
-```
-
-**Automate at write time.** All `write_*` functions accept
-`consolidate=True` to consolidate immediately after writing:
-
-```python
-write_points(
-    store,
-    positions,
-    chunk_shape=(500., 500., 500.),
-    consolidate=True,   # writes .zmetadata after write completes
-)
-```
-
----
-
-## Parallel writes from HPC
-
-For large datasets written by multiple processes (e.g. one process per
-HPC node), assign non-overlapping chunk ranges to each process:
-
-```python
-from mpi4py import MPI
-from zarr_vectors.types.points import write_points_partition
-
-comm  = MPI.COMM_WORLD
-rank  = comm.Get_rank()
-nrank = comm.Get_size()
-
-# Partition vertices across ranks by spatial region
-x_min = rank       * (total_x / nrank)
-x_max = (rank + 1) * (total_x / nrank)
-local_positions = positions[(positions[:, 0] >= x_min) &
-                             (positions[:, 0] < x_max)]
-
-write_points_partition(
-    store,
-    local_positions,
-    chunk_shape=(200., 200., 200.),
-    rank=rank,
-    nranks=nrank,
-)
-
-# Rank 0 finalises metadata after all ranks finish
-comm.Barrier()
-if rank == 0:
-    import zarr
-    from zarr_vectors.core.store import open_store
-    root = open_store(store, mode="r+")
-    zarr.consolidate_metadata(root.store)
-```
-
-`write_points_partition` writes only the chunks whose spatial extent
-falls within the partition's x range, avoiding write contention.
+After consolidation, subsequent opens are dramatically faster.
+Regenerate consolidated metadata after any structural change (adding
+a resolution level, writing new attributes).
 
 ---
 
 ## Reading from cloud with the lazy API
 
 ```python
-import s3fs
-from zarr_vectors.lazy import ZarrVectorStore
+import numpy as np
+from zarr_vectors.lazy import open_zvr
 
-fs = s3fs.S3FileSystem(anon=True)
+store = open_zvr("s3://open-neuro/scan.zarrvectors")
 
-with ZarrVectorStore(
-    fs.get_mapper("s3://open-neuro/scan.zarrvectors"),
-    cache_size=128,
-    n_workers=4,
-) as store:
+print(store.levels)                          # metadata only — no chunk I/O
+print(store[2].vertex_count)                 # one metadata request
 
-    # Metadata — no data I/O
-    print(store.vertex_count(level=0))   # from .zmetadata
+# Coarse overview — a handful of chunk requests
+coarse = store[store.levels[-1]].vertices.compute()
 
-    # Coarse overview — 1 chunk request
-    overview = store.read(level=3)
+# Detail in a small region — N chunk requests
+from zarr_vectors.types.points import read_points
+detail = read_points(
+    "s3://open-neuro/scan.zarrvectors",
+    bbox=(np.array([500., 500., 500.]),
+          np.array([700., 700., 700.])),
+)
+```
 
-    # Detail in a small region — N chunk requests
-    detail = store.read(
-        level=0,
-        bbox=(np.array([500., 500., 500.]),
-              np.array([700., 700., 700.])),
-    )
+`open_zvr` accepts the same `backend=` / `**backend_kwargs` as
+`open_store`.
+
+---
+
+## Forcing a specific backend
+
+Pass `backend="obstore"` or `backend="fsspec"` to override
+auto-detection:
+
+```python
+# Force fsspec even though obstore is installed
+read_points("s3://my-bucket/scan.zarrvectors", backend="fsspec")
+
+# Use fsspec for a non-cloud URL (e.g. SFTP)
+read_points("sftp://host/path/scan.zarrvectors", backend="fsspec")
+```
+
+Or set it globally for the process:
+
+```bash
+export ZARR_VECTORS_BACKEND=fsspec
 ```
 
 ---
@@ -300,18 +312,24 @@ with ZarrVectorStore(
 A quick estimate for an S3-hosted point cloud store:
 
 ```python
+import zarr
 from zarr_vectors.core.store import open_store
 
-root = open_store(store, mode="r")
-info = zarr.open(root.store).info_complete()
+root = open_store("s3://my-bucket/scan.zarrvectors", mode="r")
+zg   = root.zarr_group
 
-# Total compressed bytes across all arrays and levels
-total_bytes = sum(arr.nbytes_stored for arr in zarr.open(root.store).arrays(recurse=True))
+# Walk every array and sum stored bytes / chunk counts.
+total_bytes  = sum(a.nbytes_stored        for _, a in zg.arrays(recurse=True))
+total_chunks = sum(a.nchunks_initialized  for _, a in zg.arrays(recurse=True))
+
 print(f"Total compressed size: {total_bytes / 1e9:.2f} GB")
-
-# Number of S3 objects (chunks)
-total_chunks = sum(arr.nchunks_initialized for arr in zarr.open(root.store).arrays(recurse=True))
-print(f"Total S3 objects: {total_chunks}")
-print(f"Monthly S3 storage: ~${total_bytes / 1e9 * 0.023:.2f} (us-east-1 standard)")
-print(f"Cost per 1M reads: ~${total_chunks / 1e6 * 0.40:.4f}")
+print(f"Total S3 objects:      {total_chunks:,}")
+print(f"Monthly S3 storage:    ~${total_bytes / 1e9 * 0.023:.2f}"
+      f"  (us-east-1 standard)")
+print(f"Cost per 1M GETs:      ~${total_chunks / 1e6 * 0.40:.4f}")
 ```
+
+This counts every chunk across all resolution levels and every array
+family — including the new `links/<delta>/`, `cross_chunk_links/<delta>/`,
+and `cross_chunk_link_attributes/<name>/<delta>/` arrays produced by
+the multiscale-links layout.

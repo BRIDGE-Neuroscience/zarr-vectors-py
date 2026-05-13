@@ -4,41 +4,26 @@ Naming: the on-disk format is referred to as **ZV** (Zarr Vectors).  The
 older ``ZVF`` initialism may still appear in archived doc text but is
 not used in the wire format.
 
-
-This module is the public entry point for store-level operations.  All
-storage I/O flows through a pluggable :class:`StorageBackend`, exposed via
-the unified :class:`Group` abstraction in :mod:`zarr_vectors.core.group`.
-
-Backwards compatibility: ``FsGroup`` is preserved as a thin subclass of
-:class:`Group` that accepts the legacy ``(path, *, create=False)``
-constructor and is always backed by :class:`LocalBackend`.  Existing code
-that imports ``FsGroup`` from this module continues to work unchanged.
-
-Backend selection order (when no explicit ``backend=`` is passed):
-
-1. ``ZARR_VECTORS_BACKEND`` environment variable.
-2. URL-scheme auto-detect (see :mod:`zarr_vectors.core.backends`).
-
-Filesystem paths and ``file://`` URLs route to :class:`LocalBackend`.
-Cloud URL schemes route to ``obstore`` (preferred) or ``fsspec``.
+All storage I/O routes through a :class:`zarr.abc.store.Store` wrapped
+by the :class:`Group` abstraction in :mod:`zarr_vectors.core.group`.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
+
+import zarr
+from zarr.storage import LocalStore
 
 from zarr_vectors.constants import (
     FORMAT_VERSION,  # noqa: F401  (re-exported for callers)
     PARAMETRIC_GROUP,
     RESOLUTION_PREFIX,
 )
-from zarr_vectors.core.backends import (
-    LocalBackend,
-    StorageBackend,
-    make_backend,
-)
-from zarr_vectors.core.group import Group
+from zarr_vectors.core.group import Group, _BackendShim
 from zarr_vectors.core.metadata import (
     LevelMetadata,
     ParametricTypeDef,
@@ -47,6 +32,58 @@ from zarr_vectors.core.metadata import (
     serialise_parametric_types,
 )
 from zarr_vectors.exceptions import MetadataError, StoreError
+
+
+# ===================================================================
+# Path / URL → Zarr store
+# ===================================================================
+
+
+def _resolve_local_path(path: str | Path) -> Path:
+    """Coerce a path-or-``file://``-URL to a local :class:`Path`."""
+    if isinstance(path, Path):
+        return path
+    if isinstance(path, str) and path.startswith("file://"):
+        parsed = urlparse(path)
+        p = unquote(parsed.path)
+        if os.name == "nt" and len(p) > 2 and p[0] == "/" and p[2] == ":":
+            p = p[1:]
+        return Path(p)
+    return Path(path)
+
+
+def _detect_scheme(url: str | Path) -> str:
+    if isinstance(url, Path):
+        return ""
+    if not isinstance(url, str):
+        return ""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if len(scheme) <= 1:
+        return ""
+    return scheme
+
+
+def _make_zarr_store(
+    path: str | Path,
+    *,
+    backend: str | None = None,  # ignored for now; reserved for icechunk etc.
+    **_kwargs: Any,
+) -> LocalStore:
+    """Construct a Zarr store for ``path``.
+
+    Phase 1-3 scope: only local (``file://`` or path) stores supported.
+    Cloud schemes (``s3://`` etc.) and Icechunk routing will land in a
+    follow-up phase.
+    """
+    scheme = _detect_scheme(path)
+    if scheme not in {"", "file"}:
+        raise StoreError(
+            f"URL scheme {scheme!r} not yet supported by the Zarr-native "
+            f"store layer (phase 1-3 covers local paths only). "
+            f"Cloud/icechunk routing arrives in a follow-up phase."
+        )
+    return LocalStore(_resolve_local_path(path))
 
 
 # ===================================================================
@@ -59,8 +96,7 @@ class FsGroup(Group):
 
     .. deprecated::
         Direct use of ``FsGroup`` is deprecated.  New code should call
-        :func:`create_store` / :func:`open_store` (which now accept a
-        ``backend=`` kwarg) and operate on the returned :class:`Group`.
+        :func:`create_store` / :func:`open_store`.
 
     Args:
         path: Filesystem path or :class:`pathlib.Path`.  A ``file://``
@@ -71,12 +107,16 @@ class FsGroup(Group):
     """
 
     def __init__(self, path: str | Path, *, create: bool = False) -> None:
-        backend = LocalBackend(path)
+        root = _resolve_local_path(path)
         if create:
-            backend.ensure_prefix("")
-        elif not backend.root.is_dir():
-            raise StoreError(f"Store path does not exist: {backend.root}")
-        super().__init__(backend, prefix="")
+            root.mkdir(parents=True, exist_ok=True)
+        elif not root.is_dir():
+            raise StoreError(f"Store path does not exist: {root}")
+        store = LocalStore(root)
+        # Use mode="a" so the store is read-write but does not clobber
+        # any existing root group.
+        zg = zarr.open_group(store, mode="a")
+        super().__init__(zg)
 
 
 # ===================================================================
@@ -122,16 +162,19 @@ def create_store(
             *root_metadata.format_capabilities,
             CAP_VERTEX_COUNT_CACHE,
         ]
-    be = make_backend(path, backend, **backend_kwargs)
-    cls = FsGroup if isinstance(be, LocalBackend) else Group
-    root = cls._from_backend(be, prefix="")
+    local_root: Path | None = None
+    scheme = _detect_scheme(path)
+    if scheme in {"", "file"}:
+        local_root = _resolve_local_path(path)
+        if local_root.exists() and local_root.is_dir() and any(local_root.iterdir()):
+            raise StoreError(f"Store already exists at {local_root}")
+        local_root.mkdir(parents=True, exist_ok=True)
 
-    if root.attrs.to_dict():
-        raise StoreError(f"Store already exists at {be.url}")
-    if isinstance(be, LocalBackend) and be.root.exists() and any(be.root.iterdir()):
-        raise StoreError(f"Store already exists at {be.url}")
+    store = _make_zarr_store(path, backend=backend, **backend_kwargs)
+    zg = zarr.open_group(store, mode="w")
+    root = FsGroup.__new__(FsGroup) if isinstance(store, LocalStore) else Group.__new__(Group)
+    root._zarr = zg
 
-    be.ensure_prefix("")
     root.attrs.update(root_metadata.to_dict())
     root.create_group(f"{RESOLUTION_PREFIX}0")
     root.create_group(PARAMETRIC_GROUP)
@@ -162,18 +205,28 @@ def open_store(
         StoreError: If the store does not exist or is structurally invalid.
         MetadataError: If root metadata cannot be parsed.
     """
-    be = make_backend(path, backend, **backend_kwargs)
-    cls = FsGroup if isinstance(be, LocalBackend) else Group
-    root = cls._from_backend(be, prefix="")
+    scheme = _detect_scheme(path)
+    if scheme in {"", "file"}:
+        local_root = _resolve_local_path(path)
+        if not local_root.is_dir():
+            raise StoreError(f"Store not found at {local_root}")
 
-    if isinstance(be, LocalBackend) and not be.root.is_dir():
-        raise StoreError(f"Store not found at {be.url}")
+    store = _make_zarr_store(path, backend=backend, **backend_kwargs)
+    # mode is informational at the public API — the underlying zarr group
+    # is always opened read-write so that ``lazy.writer`` can write
+    # through the same handle returned by ``open_store(mode='r')``.
+    try:
+        zg = zarr.open_group(store, mode="r+")
+    except zarr.errors.GroupNotFoundError as e:
+        raise StoreError(f"Not a valid ZV store at {path}: {e}") from None
+    root = FsGroup.__new__(FsGroup) if isinstance(store, LocalStore) else Group.__new__(Group)
+    root._zarr = zg
 
     attrs = root.attrs.to_dict()
     if "zarr_vectors" not in attrs:
         raise StoreError(
-            f"Not a valid ZV store: missing 'zarr_vectors' in root .zattrs "
-            f"at {be.url}"
+            f"Not a valid ZV store: missing 'zarr_vectors' in root attrs "
+            f"at {root.url}"
         )
 
     RootMetadata.from_dict(attrs)  # validates; raises MetadataError if bad
@@ -182,50 +235,46 @@ def open_store(
 
 def rebind(
     group: Group,
-    backend: str | StorageBackend,
+    backend: str | Any,
     **backend_kwargs: Any,
 ) -> Group:
-    """Swap the storage backend of an open store **without moving data**.
+    """Re-open the underlying store with a different driver (no data move).
 
-    The new backend must point at the same canonical URL as the current
-    one — this is a connection rebind, not a data migration.  Use it to
-    switch driver implementations (e.g. ``fsspec`` → ``obstore`` for
-    performance) or to change credentials on the same underlying store.
-
-    Args:
-        group: A :class:`Group` returned by :func:`create_store` or
-            :func:`open_store`.  Must be the root group.
-        backend: Either a backend name string (``"obstore"`` / ``"fsspec"``
-            / ``"local"``) or a pre-constructed :class:`StorageBackend`
-            already pointing at the same URL.
-        **backend_kwargs: Forwarded to the backend constructor when
-            ``backend`` is a string.
-
-    Returns:
-        The same :class:`Group` instance, with its backend swapped.
-
-    Raises:
-        StoreError: If the new backend resolves to a different URL than
-            the current one.
+    Under the Zarr-native layer, ``rebind`` opens a new Zarr store at
+    the same URL and swaps it in.  For phases 1-3 only the local Zarr
+    store is supported, so this is effectively a no-op unless the
+    caller explicitly passes a different store.
     """
-    old = group._backend
+    old_url = group.url
     if isinstance(backend, str):
-        new = make_backend(old.url, backend, **backend_kwargs)
+        new_store = _make_zarr_store(old_url, backend=backend, **backend_kwargs)
+        new_url = old_url
+    elif hasattr(backend, "set"):  # zarr.abc.store.Store duck-type
+        new_store = backend
+        new_url = group.url  # accept as-is
     else:
-        new = backend
+        # Legacy StorageBackend-shaped object (LocalBackend etc.) —
+        # require its declared URL match the current one so we catch
+        # programming mistakes rather than silently no-op'ing.
+        new_url = getattr(backend, "url", None)
+        if new_url is None:
+            return group
+        if _canonical(new_url) != _canonical(old_url):
+            raise StoreError(
+                f"rebind requires matching URLs; current store is at "
+                f"{old_url!r}, new backend is at {new_url!r}. Use "
+                f"open_store to point at a different location."
+            )
+        return group
 
-    if _canonical(new.url) != _canonical(old.url):
+    if _canonical(new_url) != _canonical(old_url):
         raise StoreError(
-            f"rebind requires matching URLs; current backend is at "
-            f"{old.url!r}, new backend is at {new.url!r}.  Use open_store "
-            f"to point at a different location."
+            f"rebind requires matching URLs; current store is at "
+            f"{old_url!r}, new backend is at {new_url!r}. Use "
+            f"open_store to point at a different location."
         )
-
-    group._backend = new
-    try:
-        old.close()
-    except Exception:  # pragma: no cover - defensive
-        pass
+    zg = zarr.open_group(new_store, mode="r+")
+    group._zarr = zg
     return group
 
 

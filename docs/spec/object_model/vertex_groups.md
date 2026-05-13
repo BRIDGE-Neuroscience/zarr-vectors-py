@@ -143,7 +143,7 @@ connectivity:
   chunk.
 
 - For **graphs and skeletons**, the VG list is unordered (connectivity is
-  given by `links/edges/`). The full set of chunks containing the object's
+  given by `links/<delta>/`). The full set of chunks containing the object's
   vertices is determined from the object's bounding box and the
   `cross_chunk_links/`.
 

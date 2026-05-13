@@ -123,10 +123,51 @@
       "title": "CrossChunkFacesMeta",
       "type": "object"
     },
+    "CrossChunkLinkAttributeMeta": {
+      "additionalProperties": false,
+      "description": "``.zattrs`` for each ``cross_chunk_link_attributes/<name>/<delta>/`` array.  Stored as a flat blob parallel to the ``data`` blob of the matching ``cross_chunk_links/<delta>/`` array; ``num_links`` MUST equal the parallel CCL array's ``num_links``.",
+      "properties": {
+        "dtype": {
+          "description": "Numpy dtype string of the array's value type (e.g. \"float32\").",
+          "type": "string"
+        },
+        "level_delta": {
+          "description": "Pyramid-level delta between the source side (the level that owns this array) and the target side of the edges.  ``0`` for intra-level arrays (the only kind written pre-0.4), ``+N`` for edges from this level to ``this_level + N`` (coarser), ``-N`` for edges to ``this_level - N`` (finer).\n",
+          "type": "integer"
+        },
+        "name": {
+          "description": "NGFF axis or attribute name (e.g. \"x\", \"intensity\").",
+          "type": "string"
+        },
+        "num_links": {
+          "description": "Total cross-chunk link count.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "zv_array": {
+          "$ref": "#/$defs/ZvArrayTag",
+          "const": "cross_chunk_link_attribute",
+          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
+        }
+      },
+      "required": [
+        "zv_array",
+        "name",
+        "dtype",
+        "level_delta",
+        "num_links"
+      ],
+      "title": "CrossChunkLinkAttributeMeta",
+      "type": "object"
+    },
     "CrossChunkLinksMeta": {
       "additionalProperties": false,
-      "description": "``.zattrs`` for ``cross_chunk_links/``.",
+      "description": "``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Under the 0.4 multiscale layout, each delta segment carries its own meta block; ``level_delta=0`` is the intra-level array.  Source-side endpoints live at the array's own resolution level; target-side endpoints live at ``this_level + level_delta``.",
       "properties": {
+        "level_delta": {
+          "description": "Pyramid-level delta between the source side (the level that owns this array) and the target side of the edges.  ``0`` for intra-level arrays (the only kind written pre-0.4), ``+N`` for edges from this level to ``this_level + N`` (coarser), ``-N`` for edges to ``this_level - N`` (finer).\n",
+          "type": "integer"
+        },
         "num_links": {
           "description": "Total cross-chunk link count.",
           "minimum": 0,
@@ -146,7 +187,8 @@
       "required": [
         "zv_array",
         "num_links",
-        "sid_ndim"
+        "sid_ndim",
+        "level_delta"
       ],
       "title": "CrossChunkLinksMeta",
       "type": "object"
@@ -159,6 +201,16 @@
         "both"
       ],
       "title": "CrossChunkStrategy",
+      "type": "string"
+    },
+    "CrossLevelStorage": {
+      "description": "How cross-pyramid-level edges are stored in the multiscale links layout (``links/<delta>/`` and ``cross_chunk_links/<delta>/``).",
+      "enum": [
+        "none",
+        "implicit",
+        "explicit"
+      ],
+      "title": "CrossLevelStorage",
       "type": "string"
     },
     "Encoding": {
@@ -175,7 +227,10 @@
       "enum": [
         "cross_chunk_faces",
         "vertex_count_cache",
-        "object_index_pending"
+        "object_index_pending",
+        "preserved_object_ids",
+        "shared_vertex_groups",
+        "multiscale_links"
       ],
       "title": "FormatCapability",
       "type": "string"
@@ -315,6 +370,14 @@
             "null"
           ]
         },
+        "inherited_num_objects": {
+          "description": "OID-space size inherited from the parent level (= ``parent_level.num_objects``).  Required when ``preserves_object_ids`` is true; absent on standalone levels.\n",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "level": {
           "description": "Resolution level index (0 = full resolution).",
           "minimum": 0,
@@ -337,6 +400,20 @@
             "null"
           ]
         },
+        "preserves_object_ids": {
+          "description": "True for levels written by the per-object pyramid regime.  When set, ``num_objects`` and ``object_attributes`` row count inherit from the parent level's OID space; dropped objects leave empty manifest slots and zero ``present_mask`` bytes.  ``parent_level`` is load-bearing under this flag.\n",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "shared_vertex_groups": {
+          "description": "True when per-chunk vertex groups may be referenced by multiple objects' manifests (shared metavertices in the per-object pyramid regime).  Readers MAY use this to short-circuit dedup work.\n",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "vertex_count": {
           "description": "Total number of vertices at this level.",
           "minimum": 0,
@@ -353,11 +430,15 @@
     },
     "LinkAttributeMeta": {
       "additionalProperties": false,
-      "description": "``.zattrs`` for each ``link_attributes/<name>/`` array.",
+      "description": "``.zattrs`` for each ``link_attributes/<name>/<delta>/`` array. Parallel to the ``links/<delta>/`` array of the same ``<delta>``.",
       "properties": {
         "dtype": {
           "description": "Numpy dtype string of the array's value type (e.g. \"float32\").",
           "type": "string"
+        },
+        "level_delta": {
+          "description": "Pyramid-level delta between the source side (the level that owns this array) and the target side of the edges.  ``0`` for intra-level arrays (the only kind written pre-0.4), ``+N`` for edges from this level to ``this_level + N`` (coarser), ``-N`` for edges to ``this_level - N`` (finer).\n",
+          "type": "integer"
         },
         "name": {
           "description": "NGFF axis or attribute name (e.g. \"x\", \"intensity\").",
@@ -372,7 +453,8 @@
       "required": [
         "zv_array",
         "name",
-        "dtype"
+        "dtype",
+        "level_delta"
       ],
       "title": "LinkAttributeMeta",
       "type": "object"
@@ -389,11 +471,15 @@
     },
     "LinksMeta": {
       "additionalProperties": false,
-      "description": "``.zattrs`` for the ``links/`` array.",
+      "description": "``.zattrs`` for a ``links/<delta>/`` array.  Under the 0.4 multiscale layout, each delta segment carries its own meta block; ``level_delta=0`` is the intra-level array (the only one written pre-0.4).",
       "properties": {
         "dtype": {
           "description": "Numpy dtype string of the array's value type (e.g. \"float32\").",
           "type": "string"
+        },
+        "level_delta": {
+          "description": "Pyramid-level delta between the source side (the level that owns this array) and the target side of the edges.  ``0`` for intra-level arrays (the only kind written pre-0.4), ``+N`` for edges from this level to ``this_level + N`` (coarser), ``-N`` for edges to ``this_level - N`` (finer).\n",
+          "type": "integer"
         },
         "link_width": {
           "description": "Width of a links row (2 for edges, 3 or 4 for face rows).",
@@ -409,7 +495,8 @@
       "required": [
         "zv_array",
         "dtype",
-        "link_width"
+        "link_width",
+        "level_delta"
       ],
       "title": "LinksMeta",
       "type": "object"
@@ -575,6 +662,18 @@
         "cross_chunk_strategy": {
           "$ref": "#/$defs/CrossChunkStrategy"
         },
+        "cross_level_depth": {
+          "description": "Maximum absolute level delta for which cross-pyramid-level link arrays are materialized.  ``0`` = none (no ``+N`` or ``-N`` arrays), ``N`` = generate up to ``\u00b1N`` (or ``+N`` only when ``cross_level_storage=\"implicit\"``), ``-1`` = all available pyramid levels.  Default ``1``.\n",
+          "minimum": -1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cross_level_storage": {
+          "$ref": "#/$defs/CrossLevelStorage",
+          "description": "Whether cross-level link arrays are written in both directions (``explicit``: ``+N`` at the finer level AND ``-N`` at the coarser level) or only positive deltas (``implicit``: only ``+N``, with ``-N`` reconstructed on read).  Default ``explicit``.\n"
+        },
         "crs": {
           "description": "Optional coordinate reference system metadata (free-form dict matching whatever CRS vocabulary the store uses).\n",
           "type": [
@@ -677,13 +776,14 @@
         "cross_chunk_links",
         "cross_chunk_faces",
         "link_attribute",
+        "cross_chunk_link_attribute",
         "metanode_children"
       ],
       "title": "ZvArrayTag",
       "type": "string"
     }
   },
-  "$id": "https://w3id.org/zarr-vectors/schema/0.3",
+  "$id": "https://w3id.org/zarr-vectors/schema/0.4",
   "$schema": "https://json-schema.org/draft/2019-09/schema",
   "additionalProperties": true,
   "metamodel_version": "1.7.0",

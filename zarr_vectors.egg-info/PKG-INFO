@@ -15,20 +15,27 @@ Classifier: Programming Language :: Python :: 3.12
 Classifier: Topic :: Scientific/Engineering
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
-Requires-Dist: zarr>=3.0
 Requires-Dist: numpy>=1.24
 Requires-Dist: numcodecs>=0.12
 Provides-Extra: draco
 Requires-Dist: DracoPy>=1.3; extra == "draco"
+Provides-Extra: obstore
+Requires-Dist: obstore>=0.3; extra == "obstore"
+Provides-Extra: fsspec
+Requires-Dist: fsspec>=2024.0; extra == "fsspec"
+Requires-Dist: s3fs>=2024.0; extra == "fsspec"
+Requires-Dist: gcsfs>=2024.0; extra == "fsspec"
+Requires-Dist: adlfs>=2024.0; extra == "fsspec"
 Provides-Extra: cloud
-Requires-Dist: s3fs>=2024.0; extra == "cloud"
-Requires-Dist: gcsfs>=2024.0; extra == "cloud"
+Requires-Dist: zarr-vectors[obstore]; extra == "cloud"
 Provides-Extra: all
-Requires-Dist: zarr-vectors[cloud,draco]; extra == "all"
+Requires-Dist: zarr-vectors[draco,fsspec,obstore]; extra == "all"
 Provides-Extra: dev
 Requires-Dist: pytest>=7.0; extra == "dev"
 Requires-Dist: ruff>=0.4; extra == "dev"
 Requires-Dist: mypy>=1.10; extra == "dev"
+Requires-Dist: linkml<2,>=1.7; extra == "dev"
+Requires-Dist: jsonschema<5,>=4.0; extra == "dev"
 
 > [!NOTE]
 > This package is under development and will change. It will also be migrated to another location once completed.

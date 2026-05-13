@@ -303,20 +303,26 @@ def _read_attribute_chunk(
 ) -> npt.NDArray:
     """Read all attribute groups from a chunk and concatenate."""
     try:
-        # Try to detect ncols from array metadata
+        # Pull dtype + ncols from the array's metadata; writers persist
+        # dtype via `create_attribute_array(..., dtype=...)`, so reading
+        # blindly as float32 corrupts integer or float64 attributes.
         ncols = 1
+        dtype: np.dtype = np.dtype(np.float32)
         try:
             meta = group.read_array_meta(f"attributes/{attr_name}")
             cn = meta.get("channel_names")
             if cn:
                 ncols = len(cn)
+            md = meta.get("dtype")
+            if md:
+                dtype = np.dtype(md)
         except Exception:
             pass
 
         try:
             groups = read_chunk_attributes(
                 group, attr_name, chunk_coords,
-                dtype=np.float32, ncols=ncols,
+                dtype=dtype, ncols=ncols,
             )
             non_empty = [g for g in groups if len(g) > 0]
             if non_empty:
@@ -329,8 +335,8 @@ def _read_attribute_chunk(
         key = f"{chunk_coords[0]}" + "".join(f".{c}" for c in chunk_coords[1:])
         raw = group.read_bytes(f"{ATTRIBUTES}/{attr_name}", key)
         if len(raw) == 0:
-            return np.array([], dtype=np.float32)
-        arr = np.frombuffer(raw, dtype=np.float32)
+            return np.array([], dtype=dtype)
+        arr = np.frombuffer(raw, dtype=dtype)
         if ncols > 1:
             arr = arr.reshape(-1, ncols)
         return arr

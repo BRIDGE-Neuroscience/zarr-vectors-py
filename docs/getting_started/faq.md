@@ -149,8 +149,9 @@ for a detailed comparison.
   and building the pyramid as a post-processing step rather than inline.
 - On networked file systems (NFS, SMB), increase `chunk_shape` to reduce the
   number of file creates.
-- For cloud writes, use `zarr-vectors[cloud]` and pass an `s3fs.S3FileSystem`
-  or `gcsfs.GCSFileSystem` instance as the store argument.
+- For cloud writes, install `zarr-vectors[obstore]` (or `[cloud]` for the
+  fsspec fallback) and pass the URL directly: `open_store("s3://bucket/scan.zarrvectors")`.
+  See [Cloud stores tutorial](../tutorials/io/cloud_stores.md).
 
 ### Validation is slow on large stores. Can I run only level 1?
 

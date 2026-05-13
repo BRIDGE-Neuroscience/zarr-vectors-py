@@ -162,8 +162,8 @@ def test_local_backend_url_is_round_trippable(tmp_path):
 
 
 def test_group_create_subgroup(tmp_path):
-    be = LocalBackend(tmp_path)
-    root = Group(be)
+    from zarr_vectors.core.store import FsGroup
+    root = FsGroup(tmp_path, create=True)
     child = root.create_group("child")
     assert "child" in root
     assert isinstance(child, Group)
@@ -171,16 +171,16 @@ def test_group_create_subgroup(tmp_path):
 
 
 def test_group_url_property(tmp_path):
-    be = LocalBackend(tmp_path)
-    root = Group(be)
+    from zarr_vectors.core.store import FsGroup
+    root = FsGroup(tmp_path, create=True)
     child = root.create_group("a").create_group("b")
     assert child.url.endswith("/a/b")
 
 
 def test_group_path_only_for_local(tmp_path):
-    be = LocalBackend(tmp_path)
-    root = Group(be)
-    # Local backend → .path returns a Path
+    from zarr_vectors.core.store import FsGroup
+    root = FsGroup(tmp_path, create=True)
+    # Local-backed store → .path returns a Path
     assert isinstance(root.path, Path)
 
 

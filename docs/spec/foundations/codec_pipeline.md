@@ -33,7 +33,7 @@
 **Draco**
 : Google's geometry compression library, optimised for 3-D mesh data.
   `zarr-vectors-py` registers a custom Zarr codec (`draco`) that applies
-  Draco encoding to the `links/faces` and `vertices/` arrays of mesh-type
+  Draco encoding to the `links/<delta>` and `vertices/` arrays of mesh-type
   stores. Requires `zarr-vectors[draco]`.
 
 **Fill value**
@@ -107,15 +107,16 @@ Different arrays in a ZVF store may use different codec pipelines. The
 |-------|---------------|-----------|
 | `vertices/` | `bytes → blosc(zstd, bitshuffle, l5)` | Float32 positions compress well with bitshuffle |
 | `vertex_group_offsets/` | `bytes → blosc(zstd, byteshuffle, l3)` | Int64 offsets; lighter compression |
-| `links/edges` | `bytes → blosc(zstd, byteshuffle, l5)` | Int32/Int64 index pairs |
-| `links/faces` | `bytes → blosc(zstd, byteshuffle, l5)` | Or Draco if `[draco]` installed |
+| `links/<delta>/` | `bytes → blosc(zstd, byteshuffle, l5)` | Int32/Int64 index pairs; same codec for `link_width=2` (graph/poly) and `link_width=3` (mesh faces) — or Draco for mesh `delta=0` if `[draco]` installed |
+| `link_attributes/<name>/<delta>/` | `bytes → blosc(zstd, bitshuffle, l5)` | Varies by dtype; parallel to `links/<delta>/` |
+| `cross_chunk_links/<delta>/` | `bytes → blosc(zstd, byteshuffle, l3)` | Typically small flat blob |
+| `cross_chunk_link_attributes/<name>/<delta>/` | `bytes → blosc(zstd, bitshuffle, l5)` | Parallel to `cross_chunk_links/<delta>/data` (new in 0.4) |
 | `attributes/*` | `bytes → blosc(zstd, bitshuffle, l5)` | Varies by dtype |
 | `object_index/` | `bytes → blosc(zstd, byteshuffle, l3)` | Int64 index pairs |
-| `cross_chunk_links/` | `bytes → blosc(zstd, byteshuffle, l3)` | Typically small array |
 
 ### Draco codec (mesh geometry)
 
-When `zarr-vectors[draco]` is installed, the `links/faces` and `vertices/`
+When `zarr-vectors[draco]` is installed, the `links/<delta>` and `vertices/`
 arrays of mesh-type stores can use Draco compression. Enable it by
 passing `use_draco=True` and `draco_quantization=<bits>` to `write_mesh()`
 (or to the OBJ/STL/PLY converters in `zarr-vectors-tools`).

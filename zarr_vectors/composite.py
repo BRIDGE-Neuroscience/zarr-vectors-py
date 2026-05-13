@@ -371,34 +371,29 @@ def _write_namespaced_vertices(
     positions = np.asarray(positions, dtype=np.float32)
     n_verts = len(positions)
 
-    # Create the namespaced array directory
     arr_group = level_group.require_group(array_name)
-    # Write array metadata
     arr_group.attrs.update({
         "dtype": "float32",
         "ndim": ndim,
         "vertex_count": n_verts,
     })
+    # offsets group used downstream by read paths that follow this
+    # function's convention; ensure it exists.
+    level_group.require_group(f"{array_name}_offsets")
 
-    # Assign to chunks and write
     chunk_assignments = assign_chunks(positions, chunk_shape)
-    offsets_group = level_group.require_group(f"{array_name}_offsets")
 
     for chunk_coords, global_indices in sorted(chunk_assignments.items()):
         chunk_verts = positions[global_indices]
         key = ".".join(str(c) for c in chunk_coords)
 
-        # Write raw vertex bytes
         raw = chunk_verts.astype(np.float32).tobytes()
-        arr_path = level_group.path / array_name
-        arr_path.mkdir(parents=True, exist_ok=True)
-        (arr_path / key).write_bytes(raw)
+        level_group.write_bytes(array_name, key, raw)
 
-        # Write offset (single group = full array)
         offsets = np.array([0], dtype=np.int64)
-        off_path = level_group.path / f"{array_name}_offsets"
-        off_path.mkdir(parents=True, exist_ok=True)
-        (off_path / key).write_bytes(offsets.tobytes())
+        level_group.write_bytes(
+            f"{array_name}_offsets", key, offsets.tobytes(),
+        )
 
     return n_verts
 
@@ -409,17 +404,15 @@ def _read_namespaced_vertices(
     ndim: int,
 ) -> npt.NDArray[np.float32]:
     """Read all vertices from a namespaced array."""
-    arr_dir = level_group.path / array_name
-    if not arr_dir.is_dir():
+    if not level_group.array_exists(array_name):
         return np.zeros((0, ndim), dtype=np.float32)
 
     parts: list[npt.NDArray] = []
-    for f in sorted(arr_dir.iterdir()):
-        if f.is_file() and not f.name.startswith("."):
-            raw = f.read_bytes()
-            if len(raw) > 0:
-                arr = np.frombuffer(raw, dtype=np.float32).reshape(-1, ndim)
-                parts.append(arr)
+    for chunk_key in level_group.list_chunks(array_name):
+        raw = level_group.read_bytes(array_name, chunk_key)
+        if raw:
+            arr = np.frombuffer(raw, dtype=np.float32).reshape(-1, ndim)
+            parts.append(arr)
 
     if not parts:
         return np.zeros((0, ndim), dtype=np.float32)
@@ -433,11 +426,7 @@ def _write_namespaced_links(
 ) -> None:
     """Write links (edges/faces) to a namespaced array."""
     links = np.asarray(links, dtype=np.int64)
-    arr_dir = level_group.path / array_name
-    arr_dir.mkdir(parents=True, exist_ok=True)
-    (arr_dir / "data").write_bytes(links.tobytes())
-
-    # Write metadata
+    level_group.write_bytes(array_name, "data", links.tobytes())
     link_group = level_group.require_group(array_name)
     link_group.attrs.update({
         "link_count": len(links),
@@ -450,17 +439,14 @@ def _read_namespaced_links(
     array_name: str,
 ) -> npt.NDArray[np.int64]:
     """Read links from a namespaced array."""
-    arr_dir = level_group.path / array_name
-    data_path = arr_dir / "data"
-    if not data_path.exists():
+    if not level_group.array_exists(array_name):
         return np.zeros((0, 2), dtype=np.int64)
-
-    raw = data_path.read_bytes()
-    # Get link_width from metadata
+    if not level_group.chunk_exists(array_name, "data"):
+        return np.zeros((0, 2), dtype=np.int64)
+    raw = level_group.read_bytes(array_name, "data")
     try:
         link_group = level_group[array_name]
         link_width = link_group.attrs.to_dict().get("link_width", 2)
     except Exception:
         link_width = 2
-
     return np.frombuffer(raw, dtype=np.int64).reshape(-1, link_width)

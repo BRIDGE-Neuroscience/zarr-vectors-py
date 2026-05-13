@@ -94,7 +94,7 @@ write_multiscale_metadata(root)
 zarr.consolidate_metadata(root.store)
 
 build_pyramid(args.output,
-              level_configs=[{"bin_ratio":(2,2,2)}, {"bin_ratio":(4,4,4)}])
+              factors=[(2.0, 1.0), (2.0, 1.0)])
 print("Store finalised.")
 ```
 
@@ -216,8 +216,8 @@ pip install "zarr-vectors[cloud]"
 import s3fs
 from zarr_vectors.types.points import write_points_partition
 
-fs    = s3fs.S3FileSystem(anon=False)
-store = fs.get_mapper("s3://my-bucket/scan.zarrvectors")
+# 0.4+: pass the URL directly; backend layer auto-routes to obstore/fsspec
+store = "s3://my-bucket/scan.zarrvectors"
 
 write_points_partition(store, positions, chunk_shape=..., z_range=...)
 ```

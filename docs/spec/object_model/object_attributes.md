@@ -206,11 +206,8 @@ from zarr_vectors.multiresolution.coarsen import build_pyramid
 
 build_pyramid(
     "scan.zarrvectors",
-    level_configs=[{"bin_ratio": (2,2,2), "object_sparsity": 1.0}],
-    attribute_aggregation={
-        "intensity": "mean",
-        "label":     "majority",
-    },
+    factors=[(2.0, 1.0)],
+    agg_mode="mean",  # 0.4+: a single global mode (per-attribute via manual coarsen_level)
 )
 ```
 

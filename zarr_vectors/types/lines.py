@@ -193,7 +193,7 @@ def write_lines(
     level_group = create_resolution_level(root, 0, level_meta)
     create_vertices_array(level_group, dtype=dtype)
     create_object_index_array(level_group)
-    create_cross_chunk_links_array(level_group)
+    create_cross_chunk_links_array(level_group, delta=0)
 
     # Classify endpoints by bin → chunk
     chunk_a_arr = np.array([
@@ -253,7 +253,9 @@ def write_lines(
 
     # Write cross-chunk links
     if cross_links:
-        write_cross_chunk_links(level_group, cross_links, sid_ndim=idx_ndim)
+        write_cross_chunk_links(
+            level_group, cross_links, sid_ndim=idx_ndim, delta=0,
+        )
 
     # Write line attributes (per-object)
     if line_attributes:

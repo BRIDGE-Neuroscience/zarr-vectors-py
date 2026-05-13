@@ -207,15 +207,8 @@ from zarr_vectors.multiresolution.coarsen import build_pyramid
 
 build_pyramid(
     "tracts.zarrvectors",
-    level_configs=[
-        # Level 1: 8× vertex reduction, all streamlines retained
-        {"bin_ratio": (2, 2, 2), "object_sparsity": 1.0,
-         "sparsity_strategy": "spatial_coverage"},
-        # Level 2: 64× vertex reduction, keep best-coverage 25%
-        {"bin_ratio": (4, 4, 4), "object_sparsity": 0.25,
-         "sparsity_strategy": "spatial_coverage"},
-    ],
-    attribute_aggregation={"fa": "mean"},
+    factors=[(2.0, 1.00), (4.0, 4.00)],
+    agg_mode="mean",  # 0.4+: a single global mode (per-attribute via manual coarsen_level)
 )
 ```
 
@@ -241,7 +234,7 @@ live in the companion package **`zarr-vectors-tools`**.
 **Cross-chunk links not generated for same-chunk vertices.**
 `cross_chunk_links/` only stores connections between different chunks.
 If two consecutive vertices of a streamline happen to fall in the same
-chunk, the connection is stored in `links/edges/` (intra-chunk), not in
+chunk, the connection is stored in `links/<delta>/` (intra-chunk), not in
 `cross_chunk_links/`. Manually inspecting `cross_chunk_links/` will not
 show all edges — use `read_polylines(object_ids=[k])` to retrieve the
 complete vertex sequence.

@@ -84,14 +84,13 @@ in the store.
 | `vg_offsets_dtype` | `vertex_group_offsets/` dtype is `int64` | Error |
 | `vg_offsets_shape` | `vertex_group_offsets/` second-to-last dim equals `B_per_chunk` | Error |
 | `vg_offsets_last_dim` | `vertex_group_offsets/` last dim equals 2 | Error |
-| `edges_dtype` | `links/edges/` dtype is `int32` or `int64` | Warning if `int64` |
-| `edges_shape` | `links/edges/` last dim equals 2 | Error |
-| `faces_dtype` | `links/faces/` dtype is `int32` or `int64` | Warning if `int64` |
-| `faces_shape` | `links/faces/` last dim equals 3 | Error |
+| `links_dtype` | `links/<delta>/` `.zattrs` declares `dtype` as an integer type (`int32`/`int64`) | Warning if `int64` |
+| `links_link_width` | `links/<delta>/` `.zattrs` declares `link_width` ≥ 2 (2 for graph/poly/skeleton edges; 3 for triangle faces; 4 for quad faces) | Error |
+| `links_level_delta` | `links/<delta>/` `.zattrs` declares `level_delta` matching the path segment | Error |
 | `obj_index_dtype` | `object_index/` dtype is `int64` | Error |
 | `obj_index_shape` | `object_index/` last dim equals 2 | Error |
-| `cross_chunk_dtype` | `cross_chunk_links/` dtype is `int64` | Error |
-| `cross_chunk_shape` | `cross_chunk_links/` last dim equals 2 | Error |
+| `ccl_meta` | `cross_chunk_links/<delta>/` `.zattrs` declares `num_links`, `sid_ndim`, `level_delta` | Error |
+| `ccl_attr_num_links` | `cross_chunk_link_attributes/<name>/<delta>/` `num_links` matches parallel CCL meta (0.4+) | Error |
 
 ### Multiscale metadata checks
 

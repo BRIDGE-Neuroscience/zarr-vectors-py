@@ -20,6 +20,7 @@ import numpy.typing as npt
 from zarr_vectors.constants import (
     ATTRIBUTES,
     CROSS_CHUNK_FACES,
+    CROSS_CHUNK_LINK_ATTRIBUTES,
     CROSS_CHUNK_LINKS,
     GROUPINGS,
     GROUPINGS_ATTRIBUTES,
@@ -31,6 +32,14 @@ from zarr_vectors.constants import (
     VERTEX_COUNTS,
     VERTEX_GROUP_OFFSETS,
     VERTICES,
+)
+from zarr_vectors.core.paths import (
+    cross_chunk_link_attributes_path,
+    cross_chunk_links_path,
+    format_delta,
+    link_attributes_path,
+    links_path,
+    parse_delta,
 )
 from zarr_vectors.core.store import FsGroup
 from zarr_vectors.encoding.ragged import (
@@ -117,20 +126,30 @@ def create_links_array(
     level_group: FsGroup,
     link_width: int,
     dtype: str = "int64",
+    *,
+    delta: int = 0,
 ) -> None:
-    """Create the ``links/`` array.
+    """Create a ``links/<delta>/`` array.
+
+    Under the 0.4 multiscale links layout each ``<delta>`` segment is a
+    distinct array; ``delta=0`` is the intra-level array (the only one
+    written pre-0.4) and non-zero deltas hold edges that point ``delta``
+    pyramid levels away (positive = coarser, negative = finer).
 
     Args:
         level_group: The resolution level FsGroup.
         link_width: Number of vertex indices per link entry (L).
             1 for skeleton parents, 2 for edges, 3 for triangle faces.
         dtype: Integer dtype.
+        delta: Level delta; see :mod:`zarr_vectors.core.paths`.
     """
-    _ensure_array_dir(level_group, LINKS)
-    level_group.write_array_meta(LINKS, {
+    full_name = links_path(delta)
+    _ensure_array_dir(level_group, full_name)
+    level_group.write_array_meta(full_name, {
         "zv_array": "links",
         "dtype": dtype,
         "link_width": link_width,
+        "level_delta": int(delta),
     })
 
 
@@ -217,11 +236,21 @@ def create_groupings_attributes_array(
     })
 
 
-def create_cross_chunk_links_array(level_group: FsGroup) -> None:
-    """Create the ``cross_chunk_links/`` array."""
-    _ensure_array_dir(level_group, CROSS_CHUNK_LINKS)
-    level_group.write_array_meta(CROSS_CHUNK_LINKS, {
+def create_cross_chunk_links_array(
+    level_group: FsGroup,
+    *,
+    delta: int = 0,
+) -> None:
+    """Create a ``cross_chunk_links/<delta>/`` array.
+
+    Source-side endpoints live at the owning resolution level;
+    target-side endpoints live at ``this_level + delta``.
+    """
+    full_name = cross_chunk_links_path(delta)
+    _ensure_array_dir(level_group, full_name)
+    level_group.write_array_meta(full_name, {
         "zv_array": "cross_chunk_links",
+        "level_delta": int(delta),
     })
 
 
@@ -229,14 +258,41 @@ def create_link_attributes_array(
     level_group: FsGroup,
     name: str,
     dtype: str = "float32",
+    *,
+    delta: int = 0,
 ) -> None:
-    """Create a link attribute array ``link_attributes/<name>/``."""
-    full_name = f"{LINK_ATTRIBUTES}/{name}"
+    """Create a ``link_attributes/<name>/<delta>/`` array (parallel to
+    the matching ``links/<delta>/`` array)."""
+    full_name = link_attributes_path(name, delta)
     _ensure_array_dir(level_group, full_name)
     level_group.write_array_meta(full_name, {
         "zv_array": "link_attribute",
         "name": name,
         "dtype": dtype,
+        "level_delta": int(delta),
+    })
+
+
+def create_cross_chunk_link_attributes_array(
+    level_group: FsGroup,
+    name: str,
+    dtype: str = "float32",
+    *,
+    delta: int = 0,
+) -> None:
+    """Create a ``cross_chunk_link_attributes/<name>/<delta>/`` array.
+
+    Parallel attribute storage for the matching
+    ``cross_chunk_links/<delta>/`` array; one value (or one ``C``-vector
+    row) per cross-chunk link in path order.
+    """
+    full_name = cross_chunk_link_attributes_path(name, delta)
+    _ensure_array_dir(level_group, full_name)
+    level_group.write_array_meta(full_name, {
+        "zv_array": "cross_chunk_link_attribute",
+        "name": name,
+        "dtype": dtype,
+        "level_delta": int(delta),
     })
 
 
@@ -319,26 +375,41 @@ def write_chunk_links(
     chunk_coords: ChunkCoords,
     link_groups: list[npt.NDArray[np.integer]],
     dtype: np.dtype | str = np.int64,
+    *,
+    delta: int = 0,
 ) -> npt.NDArray[np.int64]:
-    """Write link groups to a spatial chunk and update paired offsets.
+    """Write link groups to a spatial chunk under ``links/<delta>/``.
+
+    For ``delta=0`` (intra-level links) the per-chunk link byte offsets
+    are paired with the existing ``vertex_group_offsets`` table so
+    readers can look up a link group by its vertex-group index.
+
+    For ``delta != 0`` (cross-pyramid-level links) the source vertex
+    groups and link groups live at *different* levels, so the
+    ``vertex_group_offsets`` pairing is meaningless and skipped — the
+    on-disk paired-offsets table continues to reference only the
+    ``delta=0`` link array.
 
     Args:
         level_group: Resolution level group.
         chunk_coords: Spatial chunk coordinates.
         link_groups: List of arrays, each ``(M_k, L)``.
         dtype: Integer dtype.
+        delta: Level delta; see :mod:`zarr_vectors.core.paths`.
 
     Returns:
         ``(K,)`` int64 array of link byte offsets.
     """
     dtype = np.dtype(dtype)
     key = _chunk_key(chunk_coords)
+    full_name = links_path(delta)
 
     raw_bytes, link_offsets = encode_ragged_ints(link_groups, dtype)
-    level_group.write_bytes(LINKS, key, raw_bytes)
+    level_group.write_bytes(full_name, key, raw_bytes)
 
-    # Update the paired offsets to include link offsets
-    if level_group.chunk_exists(VERTEX_GROUP_OFFSETS, key):
+    # Pair link byte offsets with vertex byte offsets only for the
+    # intra-level (delta=0) array — see docstring above.
+    if delta == 0 and level_group.chunk_exists(VERTEX_GROUP_OFFSETS, key):
         existing = level_group.read_bytes(VERTEX_GROUP_OFFSETS, key)
         vertex_offsets, _ = decode_paired_offsets(existing)
         if len(vertex_offsets) != len(link_offsets):
@@ -384,20 +455,23 @@ def write_chunk_link_attributes(
     chunk_coords: ChunkCoords,
     attr_groups: list[npt.NDArray],
     dtype: np.dtype | str = np.float32,
+    *,
+    delta: int = 0,
 ) -> None:
-    """Write per-edge attribute data parallel to the links array.
+    """Write per-edge attribute data parallel to ``links/<delta>/``.
 
     Args:
         level_group: Resolution level group.
         attr_name: Attribute name (e.g. ``"weight"``).
         chunk_coords: Spatial chunk coordinates.
         attr_groups: List of arrays, each ``(M_k,)`` or ``(M_k, C)``,
-            aligned with link groups.
+            aligned with link groups in the ``links/<delta>/`` array.
         dtype: Numpy dtype.
+        delta: Level delta; see :mod:`zarr_vectors.core.paths`.
     """
     dtype = np.dtype(dtype)
     key = _chunk_key(chunk_coords)
-    full_name = f"{LINK_ATTRIBUTES}/{attr_name}"
+    full_name = link_attributes_path(attr_name, delta)
     raw_bytes, _ = encode_vertex_groups(attr_groups, dtype)
     level_group.write_bytes(full_name, key, raw_bytes)
 
@@ -406,22 +480,34 @@ def write_object_index(
     level_group: FsGroup,
     manifests: dict[int, ObjectManifest],
     sid_ndim: int,
+    *,
+    total_objects: int | None = None,
 ) -> None:
     """Write object index: object_id → ordered vertex group references.
 
     Args:
         level_group: Resolution level group.
         manifests: ``{object_id: [(chunk_coords, vg_index), ...], ...}``.
-            Object IDs must be contiguous starting from 0.
+            Sparse — OIDs absent from the dict get empty manifests.
         sid_ndim: Number of spatial index dimensions.
+        total_objects: Number of OID slots to write.  When provided,
+            the dense manifest list spans ``range(total_objects)`` even
+            if the largest OID present is smaller — used by the
+            ID-preserving pyramid regime, where surviving OIDs are a
+            sparse subset of the parent's OID space.  When ``None``
+            (default), the size is ``max(manifests.keys()) + 1``
+            (legacy behaviour).
     """
-    if not manifests:
+    if not manifests and total_objects is None:
         return
 
-    max_id = max(manifests.keys())
+    if total_objects is not None:
+        size = int(total_objects)
+    else:
+        size = max(manifests.keys()) + 1
     # Build a dense list, filling gaps with empty manifests
     manifest_list: list[list[tuple[tuple[int, ...], int]]] = []
-    for oid in range(max_id + 1):
+    for oid in range(size):
         manifest_list.append(manifests.get(oid, []))
 
     raw_bytes, offsets = encode_object_index(manifest_list, sid_ndim)
@@ -429,7 +515,7 @@ def write_object_index(
     level_group.write_bytes(OBJECT_INDEX, "offsets", offsets.tobytes())
     level_group.write_array_meta(OBJECT_INDEX, {
         "zv_array": "object_index",
-        "num_objects": max_id + 1,
+        "num_objects": size,
         "sid_ndim": sid_ndim,
     })
 
@@ -438,6 +524,8 @@ def write_object_attributes(
     level_group: FsGroup,
     attr_name: str,
     data: npt.NDArray,
+    *,
+    present_mask: npt.NDArray | None = None,
 ) -> None:
     """Write dense O×C object attribute data.
 
@@ -445,16 +533,53 @@ def write_object_attributes(
         level_group: Resolution level group.
         attr_name: Attribute name.
         data: ``(O,)`` or ``(O, C)`` array.
+        present_mask: Optional ``(O,)`` byte array (``0``/``1`` per
+            object) marking which rows are real.  Required for levels
+            that use ID-preserving sparsification — rows for dropped
+            objects have ``mask[i] == 0`` and the corresponding
+            ``data[i]`` row is dtype-zero padding.  When omitted, every
+            row is assumed real (backwards compatible).
     """
     full_name = f"{OBJECT_ATTRIBUTES}/{attr_name}"
     _ensure_array_dir(level_group, full_name)
     level_group.write_bytes(full_name, "data", data.tobytes())
+    if present_mask is not None:
+        mask = np.asarray(present_mask, dtype=np.uint8)
+        if mask.shape[0] != data.shape[0]:
+            raise ArrayError(
+                f"present_mask length {mask.shape[0]} != data row count "
+                f"{data.shape[0]}"
+            )
+        level_group.write_bytes(full_name, "present_mask", mask.tobytes())
     level_group.write_array_meta(full_name, {
         "zv_array": "object_attribute",
         "name": attr_name,
         "dtype": str(data.dtype),
         "shape": list(data.shape),
+        "has_present_mask": bool(present_mask is not None),
     })
+
+
+def read_object_attribute_present_mask(
+    level_group: FsGroup,
+    attr_name: str,
+) -> npt.NDArray[np.uint8] | None:
+    """Read the optional ``present_mask`` byte sidecar for an attribute.
+
+    Returns ``None`` when the level was written without a mask (every
+    row real) or the array is missing.
+    """
+    full_name = f"{OBJECT_ATTRIBUTES}/{attr_name}"
+    try:
+        meta = level_group.read_array_meta(full_name)
+    except Exception:
+        return None
+    if not meta.get("has_present_mask"):
+        return None
+    if not level_group.chunk_exists(full_name, "present_mask"):
+        return None
+    raw = level_group.read_bytes(full_name, "present_mask")
+    return np.frombuffer(raw, dtype=np.uint8)
 
 
 def write_groupings(
@@ -513,34 +638,93 @@ def write_cross_chunk_links(
     level_group: FsGroup,
     links: list[CrossChunkLink],
     sid_ndim: int,
+    *,
+    delta: int = 0,
 ) -> None:
-    """Write cross-chunk link pairs.
+    """Write cross-chunk link pairs under ``cross_chunk_links/<delta>/``.
 
     Each link is ``((chunk_A, vertex_A), (chunk_B, vertex_B))``.
+    Endpoint A is interpreted at the owning resolution level; endpoint B
+    is interpreted at ``this_level + delta`` (the level delta is
+    encoded in the array path).
+
+    Source and target levels are assumed to share ``sid_ndim`` (the
+    spatial-index dimensionality is uniform per store), even when their
+    chunk grids differ in spacing.
 
     Args:
         level_group: Resolution level group.
         links: List of CrossChunkLink tuples.
         sid_ndim: Number of spatial index dimensions.
+        delta: Level delta; see :mod:`zarr_vectors.core.paths`.
     """
     if not links:
         return
 
-    # Each link → 2 * (sid_ndim + 1) ints
-    entry_len = 2 * (sid_ndim + 1)
+    full_name = cross_chunk_links_path(delta)
     flat: list[int] = []
     for (chunk_a, vi_a), (chunk_b, vi_b) in links:
+        if len(chunk_a) != sid_ndim or len(chunk_b) != sid_ndim:
+            raise ArrayError(
+                f"chunk coords arity mismatch in cross_chunk_links/{format_delta(delta)}: "
+                f"sid_ndim={sid_ndim}, got len(a)={len(chunk_a)}, len(b)={len(chunk_b)}"
+            )
         flat.extend(chunk_a)
         flat.append(vi_a)
         flat.extend(chunk_b)
         flat.append(vi_b)
 
     arr = np.array(flat, dtype=np.int64)
-    level_group.write_bytes(CROSS_CHUNK_LINKS, "data", arr.tobytes())
-    level_group.write_array_meta(CROSS_CHUNK_LINKS, {
+    level_group.write_bytes(full_name, "data", arr.tobytes())
+    level_group.write_array_meta(full_name, {
         "zv_array": "cross_chunk_links",
         "num_links": len(links),
         "sid_ndim": sid_ndim,
+        "level_delta": int(delta),
+    })
+
+
+def write_cross_chunk_link_attributes(
+    level_group: FsGroup,
+    attr_name: str,
+    attr_data: npt.NDArray,
+    *,
+    num_links: int,
+    delta: int = 0,
+) -> None:
+    """Write per-edge attribute data parallel to ``cross_chunk_links/<delta>/data``.
+
+    The cross-chunk-link attribute array is a single flat blob whose
+    rows are in the same order as the cross-chunk links written by
+    :func:`write_cross_chunk_links` for the same ``delta``.  Length is
+    runtime-checked against the parallel CCL array's ``num_links`` so a
+    desynchronized write fails loudly instead of producing silent
+    corruption.
+
+    Args:
+        level_group: Resolution level group.
+        attr_name: Attribute name.
+        attr_data: ``(num_links,)`` or ``(num_links, C)`` array.
+        num_links: Expected length (the ``num_links`` value on the
+            parallel ``cross_chunk_links/<delta>/`` array).
+        delta: Level delta; see :mod:`zarr_vectors.core.paths`.
+    """
+    if attr_data.shape[0] != num_links:
+        raise ArrayError(
+            f"cross_chunk_link_attributes[{attr_name}] row count "
+            f"{attr_data.shape[0]} != num_links {num_links} "
+            f"(delta={format_delta(delta)})"
+        )
+    full_name = cross_chunk_link_attributes_path(attr_name, delta)
+    _ensure_array_dir(level_group, full_name)
+    level_group.write_bytes(full_name, "data", np.ascontiguousarray(attr_data).tobytes())
+    level_group.write_array_meta(full_name, {
+        "zv_array": "cross_chunk_link_attribute",
+        "name": attr_name,
+        "dtype": str(attr_data.dtype),
+        "level_delta": int(delta),
+        "num_links": int(num_links),
+        "shape": list(attr_data.shape),
     })
 
 
@@ -656,8 +840,10 @@ def read_chunk_links(
     chunk_coords: ChunkCoords,
     dtype: np.dtype | str = np.int64,
     link_width: int | None = None,
+    *,
+    delta: int = 0,
 ) -> list[npt.NDArray[np.integer]]:
-    """Read all link groups from a spatial chunk.
+    """Read all link groups from a spatial chunk's ``links/<delta>/`` array.
 
     Args:
         level_group: Resolution level group.
@@ -665,23 +851,35 @@ def read_chunk_links(
         dtype: Integer dtype.
         link_width: Number of columns per link (L). If None, read from
             array metadata.
+        delta: Level delta; ``0`` is the intra-level array.
 
     Returns:
         List of arrays, each ``(M_k, L)``.
     """
     key = _chunk_key(chunk_coords)
     dtype = np.dtype(dtype)
+    full_name = links_path(delta)
 
     if link_width is None:
-        meta = level_group.read_array_meta(LINKS)
+        meta = level_group.read_array_meta(full_name)
         link_width = meta.get("link_width", 2)
 
     try:
-        raw = level_group.read_bytes(LINKS, key)
+        raw = level_group.read_bytes(full_name, key)
     except Exception as e:
-        raise ArrayError(f"Cannot read links chunk {key}: {e}") from e
+        raise ArrayError(
+            f"Cannot read links chunk {key} (delta={format_delta(delta)}): {e}"
+        ) from e
 
-    link_offsets = _read_link_offsets(level_group, chunk_coords)
+    # ``vertex_group_offsets`` only paths link offsets for delta=0;
+    # cross-level arrays write one link group per chunk, so the group
+    # offset table is trivially [0] (single group spanning the whole
+    # chunk blob).
+    if delta == 0:
+        link_offsets = _read_link_offsets(level_group, chunk_coords)
+    else:
+        link_offsets = np.array([0], dtype=np.int64)
+
     return decode_ragged_ints(raw, link_offsets, dtype, ncols=link_width)
 
 
@@ -1145,17 +1343,41 @@ def read_groupings_attributes(
 
 def read_cross_chunk_links(
     level_group: FsGroup,
+    *,
+    delta: int = 0,
 ) -> list[CrossChunkLink]:
-    """Read all cross-chunk links.
+    """Read all cross-chunk links from ``cross_chunk_links/<delta>/data``.
+
+    Endpoint A is at the owning resolution level; endpoint B is at
+    ``this_level + delta``.
+
+    Returns ``[]`` when the ``<delta>`` array does not exist or was
+    created without any links written to it (a placeholder meta block
+    with no ``num_links`` / ``sid_ndim`` / data blob).
 
     Returns:
         List of ``((chunk_A, vertex_A), (chunk_B, vertex_B))`` tuples.
     """
-    meta = level_group.read_array_meta(CROSS_CHUNK_LINKS)
+    full_name = cross_chunk_links_path(delta)
+    if not level_group.array_exists(full_name):
+        return []
+    try:
+        meta = level_group.read_array_meta(full_name)
+    except Exception:
+        return []
+    # The create_ helper writes a placeholder meta block (no num_links /
+    # sid_ndim) when the array is materialized empty.  Treat that as a
+    # zero-link read.
+    if "num_links" not in meta or "sid_ndim" not in meta:
+        return []
     num_links = meta["num_links"]
     sid_ndim = meta["sid_ndim"]
+    if num_links == 0:
+        return []
+    if not level_group.chunk_exists(full_name, "data"):
+        return []
 
-    raw = level_group.read_bytes(CROSS_CHUNK_LINKS, "data")
+    raw = level_group.read_bytes(full_name, "data")
     arr = np.frombuffer(raw, dtype=np.int64)
 
     entry_len = 2 * (sid_ndim + 1)
@@ -1170,6 +1392,29 @@ def read_cross_chunk_links(
         links.append(((chunk_a, vi_a), (chunk_b, vi_b)))
 
     return links
+
+
+def read_cross_chunk_link_attributes(
+    level_group: FsGroup,
+    attr_name: str,
+    dtype: np.dtype | str | None = None,
+    *,
+    delta: int = 0,
+) -> npt.NDArray:
+    """Read per-link attribute data parallel to ``cross_chunk_links/<delta>/data``.
+
+    Returns:
+        Array of shape ``(num_links,)`` or ``(num_links, C)``.
+    """
+    full_name = cross_chunk_link_attributes_path(attr_name, delta)
+    meta = level_group.read_array_meta(full_name)
+    if dtype is None:
+        dtype = np.dtype(meta["dtype"])
+    else:
+        dtype = np.dtype(dtype)
+    shape = tuple(meta.get("shape", [meta["num_links"]]))
+    raw = level_group.read_bytes(full_name, "data")
+    return np.frombuffer(raw, dtype=dtype).reshape(shape).copy()
 
 
 def read_metanode_children(
@@ -1233,6 +1478,116 @@ def list_chunk_keys(
         except ValueError:
             continue  # skip non-chunk files (e.g. .zattrs)
     return sorted(coords)
+
+
+def _list_deltas_under(level_group: FsGroup, group_path: str) -> list[int]:
+    """List signed level-delta segments present under a group path.
+
+    Returns the sorted list of integers parsed from immediate child
+    names that look like delta segments (``"0"``, ``"+N"``, ``"-N"``).
+    Returns an empty list when the parent group is absent.  Used by the
+    public ``list_link_deltas`` / ``list_cross_link_deltas`` helpers
+    (and indirectly by readers and validators that walk the multiscale
+    link layout).
+    """
+    if not level_group.array_exists(group_path):
+        return []
+    try:
+        sub = level_group[group_path]
+    except Exception:
+        return []
+    deltas: list[int] = []
+    for name in sub:
+        try:
+            deltas.append(parse_delta(name))
+        except ValueError:
+            continue
+    return sorted(deltas)
+
+
+def list_link_deltas(level_group: FsGroup) -> list[int]:
+    """Sorted list of ``<delta>`` values present under ``links/`` in a level."""
+    return _list_deltas_under(level_group, LINKS)
+
+
+def list_cross_link_deltas(level_group: FsGroup) -> list[int]:
+    """Sorted list of ``<delta>`` values present under ``cross_chunk_links/``."""
+    return _list_deltas_under(level_group, CROSS_CHUNK_LINKS)
+
+
+def list_link_attribute_deltas(level_group: FsGroup, name: str) -> list[int]:
+    """Sorted list of ``<delta>`` values present under ``link_attributes/<name>/``."""
+    return _list_deltas_under(level_group, f"{LINK_ATTRIBUTES}/{name}")
+
+
+def list_cross_chunk_link_attribute_deltas(
+    level_group: FsGroup, name: str,
+) -> list[int]:
+    """Sorted list of ``<delta>`` values under ``cross_chunk_link_attributes/<name>/``."""
+    return _list_deltas_under(level_group, f"{CROSS_CHUNK_LINK_ATTRIBUTES}/{name}")
+
+
+def resolve_chunk_keys(
+    level_group: FsGroup,
+    chunk_shape: tuple[float, ...],
+    *,
+    bbox: tuple[npt.NDArray, npt.NDArray] | None = None,
+    chunks: list[ChunkCoords] | None = None,
+    array_name: str = VERTICES,
+) -> list[ChunkCoords]:
+    """Resolve the chunk_keys present in a level, intersected with the
+    bbox-implied set and the explicit ``chunks`` whitelist.
+
+    Combination of filters is AND: a chunk must be physically present
+    *and* satisfy every supplied constraint.
+
+    Args:
+        level_group: Resolution level group.
+        chunk_shape: Physical chunk size per spatial dimension.
+        bbox: Optional ``(min_corner, max_corner)``. Intersected with the
+            stored keys via :func:`chunks_intersecting_bbox`.
+        chunks: Optional explicit whitelist of chunk coordinate tuples.
+            Pass ``[]`` for "no chunks" (yields an empty result). Pass
+            ``None`` (the default) for "no filter".
+        array_name: Array whose chunk keys to enumerate.
+
+    Returns:
+        Sorted list of chunk coordinate tuples.
+
+    Raises:
+        ValueError: If a tuple in ``chunks`` has the wrong arity for
+            this store.
+    """
+    from zarr_vectors.spatial.chunking import chunks_intersecting_bbox
+
+    present = list_chunk_keys(level_group, array_name=array_name)
+    keys: set[ChunkCoords] = set(present)
+
+    if bbox is not None:
+        target = set(chunks_intersecting_bbox(
+            np.asarray(bbox[0]), np.asarray(bbox[1]), tuple(chunk_shape),
+        ))
+        keys &= target
+
+    if chunks is not None:
+        expected_arity = len(chunk_shape)
+        normalised: set[ChunkCoords] = set()
+        for c in chunks:
+            t = tuple(int(x) for x in c)
+            if len(t) != expected_arity:
+                # Some stores (e.g. attribute-binned points / graphs) prefix
+                # spatial chunk coords with an extra binning axis, giving
+                # keys of length ``expected_arity + 1``. Accept those too.
+                if len(t) != expected_arity + 1:
+                    raise ValueError(
+                        f"chunks tuple {c!r} has arity {len(t)}; "
+                        f"expected {expected_arity} (or {expected_arity + 1} "
+                        f"for attribute-binned stores)"
+                    )
+            normalised.add(t)
+        keys &= normalised
+
+    return sorted(keys)
 
 
 def count_vertex_groups(

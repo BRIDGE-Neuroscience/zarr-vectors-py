@@ -39,6 +39,7 @@ from zarr_vectors.core.arrays import (
     create_object_index_array,
     create_vertices_array,
     list_chunk_keys,
+    resolve_chunk_keys,
     read_all_object_manifests,
     read_chunk_links,
     read_chunk_vertices,
@@ -73,7 +74,6 @@ from zarr_vectors.spatial.boundary import (
 from zarr_vectors.spatial.chunking import (
     assign_bins,
     assign_chunks,
-    chunks_intersecting_bbox,
     compute_bounds,
     group_bins_by_chunk,
 )
@@ -226,9 +226,9 @@ def write_graph(
 
     link_width = 2
     create_vertices_array(level_group, dtype=dtype)
-    create_links_array(level_group, link_width=link_width)
+    create_links_array(level_group, link_width=link_width, delta=0)
     create_object_index_array(level_group)
-    create_cross_chunk_links_array(level_group)
+    create_cross_chunk_links_array(level_group, delta=0)
 
     if node_attributes:
         for name, data in node_attributes.items():
@@ -236,7 +236,9 @@ def write_graph(
 
     if edge_attributes:
         for name, data in edge_attributes.items():
-            create_link_attributes_array(level_group, name, dtype=str(data.dtype))
+            create_link_attributes_array(
+                level_group, name, dtype=str(data.dtype), delta=0,
+            )
 
     # Assign nodes to chunks.  When attribute-chunked, prefix each
     # spatial chunk key with the per-node bin so a single spatial cell
@@ -270,6 +272,21 @@ def write_graph(
     intra_edges, cross_links = partition_edges(
         edges_to_store, vertex_chunks, vertex_local, chunk_list
     )
+
+    # Record which original edges (rows in edges_to_store) landed
+    # intra-chunk in each chunk, so per-edge attributes can be sliced
+    # in the same order partition_edges built `intra_edges`.
+    intra_edge_orig_indices: dict[ChunkCoords, npt.NDArray[np.int64]] = {}
+    if edge_attr_to_store and edge_attributes:
+        e_src_chunk = vertex_chunks[edges_to_store[:, 0]]
+        e_dst_chunk = vertex_chunks[edges_to_store[:, 1]]
+        intra_mask = e_src_chunk == e_dst_chunk
+        intra_orig_idx = np.where(intra_mask)[0]
+        intra_chunk_of = e_src_chunk[intra_mask]
+        for chunk_idx in np.unique(intra_chunk_of):
+            sel = intra_chunk_of == chunk_idx
+            coord = chunk_list[int(chunk_idx)]
+            intra_edge_orig_indices[coord] = intra_orig_idx[sel]
 
     # Also partition the full edge set to get cross-chunk links for ALL edges
     # (not just branch links for skeletons)
@@ -322,18 +339,25 @@ def write_graph(
         if chunk_coords in intra_edges:
             local_edges = intra_edges[chunk_coords]
             # One link group per chunk (all edges in one group)
-            write_chunk_links(level_group, chunk_coords, [local_edges])
+            write_chunk_links(level_group, chunk_coords, [local_edges], delta=0)
 
-            # Write edge attributes for intra-chunk edges
             if edge_attr_to_store and edge_attributes:
-                # We need to track which original edges ended up intra-chunk
-                # For simplicity, edge attributes for intra-chunk stored per chunk
-                pass  # Edge attribute tracking is complex; store for all edges
+                orig_idx = intra_edge_orig_indices.get(chunk_coords)
+                if orig_idx is not None and len(orig_idx) > 0:
+                    for name, data in edge_attr_to_store.items():
+                        write_chunk_link_attributes(
+                            level_group, name, chunk_coords,
+                            [np.asarray(data[orig_idx])],
+                            dtype=data.dtype,
+                            delta=0,
+                        )
 
     # Write cross-chunk links — widen sid_ndim when prefixed.
     idx_ndim = ndim + 1 if node_attr_bins is not None else ndim
     if all_cross_links:
-        write_cross_chunk_links(level_group, all_cross_links, sid_ndim=idx_ndim)
+        write_cross_chunk_links(
+            level_group, all_cross_links, sid_ndim=idx_ndim, delta=0,
+        )
 
     # Write object index
     write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
@@ -365,6 +389,7 @@ def read_graph(
     level: int = 0,
     object_ids: list[int] | None = None,
     bbox: BoundingBox | None = None,
+    chunks: list[ChunkCoords] | None = None,
     attribute_filter: dict[str, Any] | None = None,
     backend: str | None = None,
 ) -> dict[str, Any]:
@@ -375,6 +400,11 @@ def read_graph(
         level: Resolution level.
         object_ids: Optional object ID filter.
         bbox: Optional bounding box filter.
+        chunks: Optional whitelist of chunk coordinate tuples; only nodes
+            (and intra-chunk edges) in those chunks are returned. AND-ed
+            with ``bbox`` and ``object_ids``. Edges spanning a listed
+            chunk and an unlisted chunk are dropped. ``chunks=[]`` yields
+            an empty result; ``chunks=None`` (default) applies no filter.
 
     Returns:
         Dict with:
@@ -398,19 +428,16 @@ def read_graph(
     # Get link width
     link_width = 2
     try:
-        lmeta = level_group.read_array_meta("links")
+        lmeta = level_group.read_array_meta("links/0")
         link_width = lmeta.get("link_width", 2)
     except Exception:
         pass
 
-    # Determine chunks to read
-    chunk_keys = list_chunk_keys(level_group)
-    if bbox is not None:
-        target = set(chunks_intersecting_bbox(
-            np.asarray(bbox[0]), np.asarray(bbox[1]),
-            root_meta.chunk_shape,
-        ))
-        chunk_keys = [k for k in chunk_keys if k in target]
+    # Determine chunks to read (physical keys ∩ bbox-implied ∩ chunks
+    # whitelist).
+    chunk_keys = resolve_chunk_keys(
+        level_group, root_meta.chunk_shape, bbox=bbox, chunks=chunks,
+    )
 
     # attribute_filter: drop chunks whose leading coord doesn't match.
     if attribute_filter:
@@ -482,7 +509,7 @@ def read_graph(
 
         try:
             link_groups = read_chunk_links(
-                level_group, chunk_coords, link_width=link_width
+                level_group, chunk_coords, link_width=link_width, delta=0,
             )
         except ArrayError:
             link_groups = []
@@ -509,9 +536,10 @@ def read_graph(
 
         offset = chunk_offset + sum(len(g) for g in groups)
 
-    # Read cross-chunk edges
+    # Read cross-chunk edges (delta=0; cross-pyramid-level edges live
+    # under delta != 0 and are not part of a single-level read).
     try:
-        ccl = read_cross_chunk_links(level_group)
+        ccl = read_cross_chunk_links(level_group, delta=0)
         # Build chunk→offset map
         chunk_offsets: dict[ChunkCoords, int] = {}
         running = 0

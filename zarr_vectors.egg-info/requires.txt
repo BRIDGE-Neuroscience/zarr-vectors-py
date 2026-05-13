@@ -1,18 +1,27 @@
-zarr>=3.0
 numpy>=1.24
 numcodecs>=0.12
 
 [all]
-zarr-vectors[cloud,draco]
+zarr-vectors[draco,fsspec,obstore]
 
 [cloud]
-s3fs>=2024.0
-gcsfs>=2024.0
+zarr-vectors[obstore]
 
 [dev]
 pytest>=7.0
 ruff>=0.4
 mypy>=1.10
+linkml<2,>=1.7
+jsonschema<5,>=4.0
 
 [draco]
 DracoPy>=1.3
+
+[fsspec]
+fsspec>=2024.0
+s3fs>=2024.0
+gcsfs>=2024.0
+adlfs>=2024.0
+
+[obstore]
+obstore>=0.3

@@ -3,7 +3,7 @@
 Reference schema for the Zarr Vectors (ZV) on-disk metadata.  Covers the root-level ``.zattrs`` block (``zarr_vectors`` envelope), the per-resolution-level ``.zattrs`` block (``zarr_vectors_level`` envelope), and the per-array ``.zattrs`` shapes emitted by the writers in ``zarr_vectors/core/arrays.py`` (discriminator slot ``zv_array``).
 
 
-URI: https://w3id.org/zarr-vectors/schema/0.3
+URI: https://w3id.org/zarr-vectors/schema/0.4
 
 Name: zarr_vectors
 
@@ -17,6 +17,7 @@ Name: zarr_vectors
 | [Axis](Axis.md) | One axis of the spatial index |
 | [BoundingBox](BoundingBox.md) | Two parallel ``ndim``-length arrays representing the global ``(min_corner, ma... |
 | [CrossChunkFacesMeta](CrossChunkFacesMeta.md) | `` |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |
 | [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |
 | [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |
 | [GroupingsMeta](GroupingsMeta.md) | `` |
@@ -49,13 +50,17 @@ Name: zarr_vectors
 | [chunk_shape](chunk_shape.md) | Physical spatial chunk size per axis (all values > 0) |
 | [coarsening_method](coarsening_method.md) | How this level was generated (e |
 | [cross_chunk_strategy](cross_chunk_strategy.md) |  |
+| [cross_level_depth](cross_level_depth.md) | Maximum absolute level delta for which cross-pyramid-level link arrays are ma... |
+| [cross_level_storage](cross_level_storage.md) | Whether cross-level link arrays are written in both directions (``explicit``:... |
 | [crs](crs.md) | Optional coordinate reference system metadata (free-form dict matching whatev... |
 | [dtype](dtype.md) | Numpy dtype string of the array's value type (e |
 | [encoding](encoding.md) | How the chunk bytes are encoded |
 | [format_capabilities](format_capabilities.md) | Optional 0 |
 | [format_version](format_version.md) | Spec version this store was written against (e |
 | [geometry_types](geometry_types.md) | One or more geometry kinds present in the store |
+| [inherited_num_objects](inherited_num_objects.md) | OID-space size inherited from the parent level (= ``parent_level |
 | [level](level.md) | Resolution level index (0 = full resolution) |
+| [level_delta](level_delta.md) | Pyramid-level delta between the source side (the level that owns this array) ... |
 | [link_width](link_width.md) | Width of a links row (2 for edges, 3 or 4 for face rows) |
 | [links_convention](links_convention.md) |  |
 | [max_corner](max_corner.md) | Per-axis maxima |
@@ -69,9 +74,11 @@ Name: zarr_vectors
 | [object_index_convention](object_index_convention.md) |  |
 | [object_sparsity](object_sparsity.md) | Fraction of objects retained at this level |
 | [parent_level](parent_level.md) | Source level index (None for level 0) |
+| [preserves_object_ids](preserves_object_ids.md) | True for levels written by the per-object pyramid regime |
 | [record_size](record_size.md) | Per-face record width in ``cross_chunk_faces/data`` (sid_ndim + 2 int64s) |
 | [reduction_factor](reduction_factor.md) | Multi-resolution coarsening factor (≥ 2) |
 | [shape](shape.md) | Shape of a dense per-object/per-group array |
+| [shared_vertex_groups](shared_vertex_groups.md) | True when per-chunk vertex groups may be referenced by multiple objects' mani... |
 | [sid_ndim](sid_ndim.md) | Number of spatial-index dimensions encoded in chunk keys |
 | [spatial_index_dims](spatial_index_dims.md) | NGFF-style axis list — at least 2, with ≥2 of type "space" |
 | [type](type.md) | NGFF axis type — "space", "time", or "channel" |
@@ -85,6 +92,7 @@ Name: zarr_vectors
 | Enumeration | Description |
 | --- | --- |
 | [CrossChunkStrategy](CrossChunkStrategy.md) | How connectivity that crosses chunk boundaries is represented |
+| [CrossLevelStorage](CrossLevelStorage.md) | How cross-pyramid-level edges are stored in the multiscale links layout (``li... |
 | [Encoding](Encoding.md) | Per-array encoding of vertex data |
 | [FormatCapability](FormatCapability.md) | Optional 0 |
 | [GeometryType](GeometryType.md) | The kind of geometry a store (or one of its sub-types) holds |
@@ -138,7 +146,7 @@ _Names of arrays present in the level group._
 
 
 
-URI: [zv:arrays_present](https://w3id.org/zarr-vectors/schema/0.3/arrays_present)
+URI: [zv:arrays_present](https://w3id.org/zarr-vectors/schema/0.4/arrays_present)
 Alias: arrays_present
 
 <!-- no inheritance hierarchy -->
@@ -192,7 +200,7 @@ Alias: arrays_present
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -213,7 +221,7 @@ Alias: arrays_present
 ```yaml
 name: arrays_present
 description: Names of arrays present in the level group.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: arrays_present
 domain_of:
@@ -239,7 +247,7 @@ _``.zattrs`` for each ``attributes/<name>/`` array._
 
 
 
-URI: [zv:AttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/AttributeMeta)
+URI: [zv:AttributeMeta](https://w3id.org/zarr-vectors/schema/0.4/AttributeMeta)
 
 
 
@@ -306,7 +314,7 @@ URI: [zv:AttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/AttributeMeta)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -333,7 +341,7 @@ URI: [zv:AttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/AttributeMeta)
 ```yaml
 name: AttributeMeta
 description: '``.zattrs`` for each ``attributes/<name>/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
@@ -355,7 +363,7 @@ slot_usage:
 ```yaml
 name: AttributeMeta
 description: '``.zattrs`` for each ``attributes/<name>/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -370,7 +378,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: AttributeMeta
@@ -386,6 +394,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -393,7 +402,7 @@ attributes:
   name:
     name: name
     description: NGFF axis or attribute name (e.g. "x", "intensity").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     slot_uri: schema:name
     alias: name
@@ -404,12 +413,13 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
     required: true
   dtype:
     name: dtype
     description: Numpy dtype string of the array's value type (e.g. "float32").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: dtype
     owner: AttributeMeta
@@ -420,12 +430,13 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
     required: true
   channel_names:
     name: channel_names
     description: For multi-channel per-vertex attributes, the channel labels.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: channel_names
     owner: AttributeMeta
@@ -522,7 +533,7 @@ URI: [ngff:Axis](https://ngff.openmicroscopy.org/0.5/Axis)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -552,7 +563,7 @@ description: 'One axis of the spatial index.  Mirrors the OME-Zarr NGFF axis obj
   (RFC 4/5).
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - name
@@ -572,13 +583,13 @@ description: 'One axis of the spatial index.  Mirrors the OME-Zarr NGFF axis obj
   (RFC 4/5).
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 attributes:
   name:
     name: name
     description: NGFF axis or attribute name (e.g. "x", "intensity").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     slot_uri: schema:name
     alias: name
@@ -589,12 +600,13 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
     required: true
   type:
     name: type
     description: NGFF axis type — "space", "time", or "channel".
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: type
     owner: Axis
@@ -605,7 +617,7 @@ attributes:
   unit:
     name: unit
     description: NGFF unit string (e.g. "um", "nanometer", "second").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: unit
     owner: Axis
@@ -633,7 +645,7 @@ __
 
 
 
-URI: [zv:base_bin_shape](https://w3id.org/zarr-vectors/schema/0.3/base_bin_shape)
+URI: [zv:base_bin_shape](https://w3id.org/zarr-vectors/schema/0.4/base_bin_shape)
 Alias: base_bin_shape
 
 <!-- no inheritance hierarchy -->
@@ -686,7 +698,7 @@ Alias: base_bin_shape
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -711,7 +723,7 @@ description: 'Supervoxel bin edge lengths at level 0.  When set, every value mus
   runtime-side in ``RootMetadata.validate``).
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: base_bin_shape
 domain_of:
@@ -736,7 +748,7 @@ _Monotonic batch id for an ``object_index/pending/<batch>`` sidecar._
 
 
 
-URI: [zv:batch_id](https://w3id.org/zarr-vectors/schema/0.3/batch_id)
+URI: [zv:batch_id](https://w3id.org/zarr-vectors/schema/0.4/batch_id)
 Alias: batch_id
 
 <!-- no inheritance hierarchy -->
@@ -796,7 +808,7 @@ Alias: batch_id
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -817,7 +829,7 @@ Alias: batch_id
 ```yaml
 name: batch_id
 description: Monotonic batch id for an ``object_index/pending/<batch>`` sidecar.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: batch_id
 domain_of:
@@ -843,7 +855,7 @@ _Integer fold-change per axis relative to level 0._
 
 
 
-URI: [zv:bin_ratio](https://w3id.org/zarr-vectors/schema/0.3/bin_ratio)
+URI: [zv:bin_ratio](https://w3id.org/zarr-vectors/schema/0.4/bin_ratio)
 Alias: bin_ratio
 
 <!-- no inheritance hierarchy -->
@@ -896,7 +908,7 @@ Alias: bin_ratio
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -917,7 +929,7 @@ Alias: bin_ratio
 ```yaml
 name: bin_ratio
 description: Integer fold-change per axis relative to level 0.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: bin_ratio
 domain_of:
@@ -944,7 +956,7 @@ __
 
 
 
-URI: [zv:bin_shape](https://w3id.org/zarr-vectors/schema/0.3/bin_shape)
+URI: [zv:bin_shape](https://w3id.org/zarr-vectors/schema/0.4/bin_shape)
 Alias: bin_shape
 
 <!-- no inheritance hierarchy -->
@@ -997,7 +1009,7 @@ Alias: bin_shape
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -1021,7 +1033,7 @@ description: 'Per-axis supervoxel edge lengths at this level.  Must be ``None`` 
   level 0 (inherits ``base_bin_shape``); must be set for level > 0.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: bin_shape
 domain_of:
@@ -1074,7 +1086,7 @@ URI: [xsd:boolean](http://www.w3.org/2001/XMLSchema#boolean)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -1106,7 +1118,7 @@ __
 
 
 
-URI: [zv:BoundingBox](https://w3id.org/zarr-vectors/schema/0.3/BoundingBox)
+URI: [zv:BoundingBox](https://w3id.org/zarr-vectors/schema/0.4/BoundingBox)
 
 
 
@@ -1165,7 +1177,7 @@ URI: [zv:BoundingBox](https://w3id.org/zarr-vectors/schema/0.3/BoundingBox)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -1196,7 +1208,7 @@ description: 'Two parallel ``ndim``-length arrays representing the global ``(min
   modelled here as a class so cross-field rules can require matching dimensionality.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - min_corner
@@ -1215,13 +1227,13 @@ description: 'Two parallel ``ndim``-length arrays representing the global ``(min
   modelled here as a class so cross-field rules can require matching dimensionality.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 attributes:
   min_corner:
     name: min_corner
     description: Per-axis minima.  Length must equal ``len(spatial_index_dims)``.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: min_corner
     owner: BoundingBox
@@ -1233,7 +1245,7 @@ attributes:
   max_corner:
     name: max_corner
     description: Per-axis maxima.  Length must equal ``len(spatial_index_dims)``.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: max_corner
     owner: BoundingBox
@@ -1260,7 +1272,7 @@ _Global vertex bounding box._
 
 
 
-URI: [zv:bounds](https://w3id.org/zarr-vectors/schema/0.3/bounds)
+URI: [zv:bounds](https://w3id.org/zarr-vectors/schema/0.4/bounds)
 Alias: bounds
 
 <!-- no inheritance hierarchy -->
@@ -1313,7 +1325,7 @@ Alias: bounds
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -1334,7 +1346,7 @@ Alias: bounds
 ```yaml
 name: bounds
 description: Global vertex bounding box.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: bounds
 domain_of:
@@ -1359,7 +1371,7 @@ _For multi-channel per-vertex attributes, the channel labels._
 
 
 
-URI: [zv:channel_names](https://w3id.org/zarr-vectors/schema/0.3/channel_names)
+URI: [zv:channel_names](https://w3id.org/zarr-vectors/schema/0.4/channel_names)
 Alias: channel_names
 
 <!-- no inheritance hierarchy -->
@@ -1412,7 +1424,7 @@ Alias: channel_names
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -1433,7 +1445,7 @@ Alias: channel_names
 ```yaml
 name: channel_names
 description: For multi-channel per-vertex attributes, the channel labels.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: channel_names
 domain_of:
@@ -1458,7 +1470,7 @@ _Name of the per-vertex attribute used as the leading chunk axis._
 
 
 
-URI: [zv:chunk_attribute_name](https://w3id.org/zarr-vectors/schema/0.3/chunk_attribute_name)
+URI: [zv:chunk_attribute_name](https://w3id.org/zarr-vectors/schema/0.4/chunk_attribute_name)
 Alias: chunk_attribute_name
 
 <!-- no inheritance hierarchy -->
@@ -1510,7 +1522,7 @@ Alias: chunk_attribute_name
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -1531,7 +1543,7 @@ Alias: chunk_attribute_name
 ```yaml
 name: chunk_attribute_name
 description: Name of the per-vertex attribute used as the leading chunk axis.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: chunk_attribute_name
 domain_of:
@@ -1557,7 +1569,7 @@ __
 
 
 
-URI: [zv:chunk_attribute_values](https://w3id.org/zarr-vectors/schema/0.3/chunk_attribute_values)
+URI: [zv:chunk_attribute_values](https://w3id.org/zarr-vectors/schema/0.4/chunk_attribute_values)
 Alias: chunk_attribute_values
 
 <!-- no inheritance hierarchy -->
@@ -1610,7 +1622,7 @@ Alias: chunk_attribute_values
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -1635,7 +1647,7 @@ description: 'Ordered list mapping attribute-bin index to original attribute val
   absent).
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: chunk_attribute_values
 domain_of:
@@ -1662,7 +1674,7 @@ __
 
 
 
-URI: [zv:chunk_dims](https://w3id.org/zarr-vectors/schema/0.3/chunk_dims)
+URI: [zv:chunk_dims](https://w3id.org/zarr-vectors/schema/0.4/chunk_dims)
 Alias: chunk_dims
 
 <!-- no inheritance hierarchy -->
@@ -1715,7 +1727,7 @@ Alias: chunk_dims
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -1739,7 +1751,7 @@ description: 'Chunk-key axis names; the leading axis names appear first.  Set wh
   the level uses attribute chunking (e.g. ``["gene", "z", "y", "x"]``).
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: chunk_dims
 domain_of:
@@ -1764,7 +1776,7 @@ _Physical spatial chunk size per axis (all values > 0)._
 
 
 
-URI: [zv:chunk_shape](https://w3id.org/zarr-vectors/schema/0.3/chunk_shape)
+URI: [zv:chunk_shape](https://w3id.org/zarr-vectors/schema/0.4/chunk_shape)
 Alias: chunk_shape
 
 <!-- no inheritance hierarchy -->
@@ -1818,7 +1830,7 @@ Alias: chunk_shape
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -1839,7 +1851,7 @@ Alias: chunk_shape
 ```yaml
 name: chunk_shape
 description: Physical spatial chunk size per axis (all values > 0).
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: chunk_shape
 domain_of:
@@ -1865,7 +1877,7 @@ _How this level was generated (e.g. "grid_metanode")._
 
 
 
-URI: [zv:coarsening_method](https://w3id.org/zarr-vectors/schema/0.3/coarsening_method)
+URI: [zv:coarsening_method](https://w3id.org/zarr-vectors/schema/0.4/coarsening_method)
 Alias: coarsening_method
 
 <!-- no inheritance hierarchy -->
@@ -1917,7 +1929,7 @@ Alias: coarsening_method
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -1938,7 +1950,7 @@ Alias: coarsening_method
 ```yaml
 name: coarsening_method
 description: How this level was generated (e.g. "grid_metanode").
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: coarsening_method
 domain_of:
@@ -1957,7 +1969,7 @@ range: string
 
 
 
-URI: [zv:cross_chunk_strategy](https://w3id.org/zarr-vectors/schema/0.3/cross_chunk_strategy)
+URI: [zv:cross_chunk_strategy](https://w3id.org/zarr-vectors/schema/0.4/cross_chunk_strategy)
 Alias: cross_chunk_strategy
 
 <!-- no inheritance hierarchy -->
@@ -2009,7 +2021,7 @@ Alias: cross_chunk_strategy
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2029,12 +2041,227 @@ Alias: cross_chunk_strategy
 <details>
 ```yaml
 name: cross_chunk_strategy
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: cross_chunk_strategy
 domain_of:
 - RootMetadata
 range: CrossChunkStrategy
+
+```
+</details>
+
+
+---
+
+
+
+# Slot: cross_level_depth 
+
+
+_Maximum absolute level delta for which cross-pyramid-level link arrays are materialized.  ``0`` = none (no ``+N`` or ``-N`` arrays), ``N`` = generate up to ``±N`` (or ``+N`` only when ``cross_level_storage="implicit"``), ``-1`` = all available pyramid levels.  Default ``1``._
+
+__
+
+
+
+
+
+URI: [zv:cross_level_depth](https://w3id.org/zarr-vectors/schema/0.4/cross_level_depth)
+Alias: cross_level_depth
+
+<!-- no inheritance hierarchy -->
+
+
+
+
+
+## Applicable Classes
+
+| Name | Description | Modifies Slot |
+| --- | --- | --- |
+| [RootMetadata](RootMetadata.md) | Root-level `` |  no  |
+
+
+
+
+
+
+## Properties
+
+### Type and Range
+
+| Property | Value |
+| --- | --- |
+| Range | [Integer](Integer.md) |
+| Domain Of | [RootMetadata](RootMetadata.md) |
+
+### Cardinality and Requirements
+
+| Property | Value |
+| --- | --- |
+### Value Constraints
+
+| Property | Value |
+| --- | --- |
+| Minimum Value | -1 |
+
+
+
+
+
+
+
+
+
+
+
+
+## Identifier and Mapping Information
+
+
+
+
+
+### Schema Source
+
+
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
+
+
+
+
+## Mappings
+
+| Mapping Type | Mapped Value |
+| ---  | ---  |
+| self | zv:cross_level_depth |
+| native | zv:cross_level_depth |
+
+
+
+
+## LinkML Source
+
+<details>
+```yaml
+name: cross_level_depth
+description: 'Maximum absolute level delta for which cross-pyramid-level link arrays
+  are materialized.  ``0`` = none (no ``+N`` or ``-N`` arrays), ``N`` = generate up
+  to ``±N`` (or ``+N`` only when ``cross_level_storage="implicit"``), ``-1`` = all
+  available pyramid levels.  Default ``1``.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
+rank: 1000
+alias: cross_level_depth
+domain_of:
+- RootMetadata
+range: integer
+minimum_value: -1
+
+```
+</details>
+
+
+---
+
+
+
+# Slot: cross_level_storage 
+
+
+_Whether cross-level link arrays are written in both directions (``explicit``: ``+N`` at the finer level AND ``-N`` at the coarser level) or only positive deltas (``implicit``: only ``+N``, with ``-N`` reconstructed on read).  Default ``explicit``._
+
+__
+
+
+
+
+
+URI: [zv:cross_level_storage](https://w3id.org/zarr-vectors/schema/0.4/cross_level_storage)
+Alias: cross_level_storage
+
+<!-- no inheritance hierarchy -->
+
+
+
+
+
+## Applicable Classes
+
+| Name | Description | Modifies Slot |
+| --- | --- | --- |
+| [RootMetadata](RootMetadata.md) | Root-level `` |  no  |
+
+
+
+
+
+
+## Properties
+
+### Type and Range
+
+| Property | Value |
+| --- | --- |
+| Range | [CrossLevelStorage](CrossLevelStorage.md) |
+| Domain Of | [RootMetadata](RootMetadata.md) |
+
+### Cardinality and Requirements
+
+| Property | Value |
+| --- | --- |
+
+
+
+
+
+
+
+
+
+
+## Identifier and Mapping Information
+
+
+
+
+
+### Schema Source
+
+
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
+
+
+
+
+## Mappings
+
+| Mapping Type | Mapped Value |
+| ---  | ---  |
+| self | zv:cross_level_storage |
+| native | zv:cross_level_storage |
+
+
+
+
+## LinkML Source
+
+<details>
+```yaml
+name: cross_level_storage
+description: 'Whether cross-level link arrays are written in both directions (``explicit``:
+  ``+N`` at the finer level AND ``-N`` at the coarser level) or only positive deltas
+  (``implicit``: only ``+N``, with ``-N`` reconstructed on read).  Default ``explicit``.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
+rank: 1000
+alias: cross_level_storage
+domain_of:
+- RootMetadata
+range: CrossLevelStorage
 
 ```
 </details>
@@ -2053,7 +2280,7 @@ _``.zattrs`` for ``cross_chunk_faces/`` (0.3 capability ``cross_chunk_faces``)._
 
 
 
-URI: [zv:CrossChunkFacesMeta](https://w3id.org/zarr-vectors/schema/0.3/CrossChunkFacesMeta)
+URI: [zv:CrossChunkFacesMeta](https://w3id.org/zarr-vectors/schema/0.4/CrossChunkFacesMeta)
 
 
 
@@ -2120,7 +2347,7 @@ URI: [zv:CrossChunkFacesMeta](https://w3id.org/zarr-vectors/schema/0.3/CrossChun
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2147,7 +2374,7 @@ URI: [zv:CrossChunkFacesMeta](https://w3id.org/zarr-vectors/schema/0.3/CrossChun
 ```yaml
 name: CrossChunkFacesMeta
 description: '``.zattrs`` for ``cross_chunk_faces/`` (0.3 capability ``cross_chunk_faces``).'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
@@ -2169,7 +2396,7 @@ slot_usage:
 ```yaml
 name: CrossChunkFacesMeta
 description: '``.zattrs`` for ``cross_chunk_faces/`` (0.3 capability ``cross_chunk_faces``).'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -2184,7 +2411,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: CrossChunkFacesMeta
@@ -2200,6 +2427,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -2207,7 +2435,7 @@ attributes:
   num_faces:
     name: num_faces
     description: Total cross-chunk face count.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: num_faces
     owner: CrossChunkFacesMeta
@@ -2219,7 +2447,7 @@ attributes:
   sid_ndim:
     name: sid_ndim
     description: Number of spatial-index dimensions encoded in chunk keys.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: sid_ndim
     owner: CrossChunkFacesMeta
@@ -2238,7 +2466,7 @@ attributes:
       2 int64s).
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: record_size
     owner: CrossChunkFacesMeta
@@ -2256,16 +2484,268 @@ attributes:
 
 
 
+# Class: CrossChunkLinkAttributeMeta 
+
+
+_``.zattrs`` for each ``cross_chunk_link_attributes/<name>/<delta>/`` array.  Stored as a flat blob parallel to the ``data`` blob of the matching ``cross_chunk_links/<delta>/`` array; ``num_links`` MUST equal the parallel CCL array's ``num_links``._
+
+__
+
+
+
+
+
+URI: [zv:CrossChunkLinkAttributeMeta](https://w3id.org/zarr-vectors/schema/0.4/CrossChunkLinkAttributeMeta)
+
+
+
+
+
+```mermaid
+ classDiagram
+    class CrossChunkLinkAttributeMeta
+    click CrossChunkLinkAttributeMeta href "../CrossChunkLinkAttributeMeta/"
+      CrossChunkLinkAttributeMeta : dtype
+        
+      CrossChunkLinkAttributeMeta : level_delta
+        
+      CrossChunkLinkAttributeMeta : name
+        
+      CrossChunkLinkAttributeMeta : num_links
+        
+      CrossChunkLinkAttributeMeta : zv_array
+        
+          
+    
+        
+        
+        CrossChunkLinkAttributeMeta --> "1" ZvArrayTag : zv_array
+        click ZvArrayTag href "../ZvArrayTag/"
+    
+
+        
+      
+```
+
+
+
+
+<!-- no inheritance hierarchy -->
+
+## Slots
+
+| Name | Cardinality and Range | Description | Inheritance |
+| ---  | --- | --- | --- |
+| [zv_array](zv_array.md) | 1 <br/> [ZvArrayTag](ZvArrayTag.md) | Discriminator slot identifying the kind of per-array `` | direct |
+| [name](name.md) | 1 <br/> [String](String.md) | NGFF axis or attribute name (e | direct |
+| [dtype](dtype.md) | 1 <br/> [String](String.md) | Numpy dtype string of the array's value type (e | direct |
+| [level_delta](level_delta.md) | 1 <br/> [Integer](Integer.md) | Pyramid-level delta between the source side (the level that owns this array) ... | direct |
+| [num_links](num_links.md) | 1 <br/> [Integer](Integer.md) | Total cross-chunk link count | direct |
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Identifier and Mapping Information
+
+
+
+
+
+### Schema Source
+
+
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
+
+
+
+
+## Mappings
+
+| Mapping Type | Mapped Value |
+| ---  | ---  |
+| self | zv:CrossChunkLinkAttributeMeta |
+| native | zv:CrossChunkLinkAttributeMeta |
+
+
+
+
+
+
+## LinkML Source
+
+<!-- TODO: investigate https://stackoverflow.com/questions/37606292/how-to-create-tabbed-code-blocks-in-mkdocs-or-sphinx -->
+
+### Direct
+
+<details>
+```yaml
+name: CrossChunkLinkAttributeMeta
+description: '``.zattrs`` for each ``cross_chunk_link_attributes/<name>/<delta>/``
+  array.  Stored as a flat blob parallel to the ``data`` blob of the matching ``cross_chunk_links/<delta>/``
+  array; ``num_links`` MUST equal the parallel CCL array''s ``num_links``.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
+rank: 1000
+slots:
+- zv_array
+- name
+- dtype
+- level_delta
+- num_links
+slot_usage:
+  zv_array:
+    name: zv_array
+    required: true
+    equals_string: cross_chunk_link_attribute
+
+```
+</details>
+
+### Induced
+
+<details>
+```yaml
+name: CrossChunkLinkAttributeMeta
+description: '``.zattrs`` for each ``cross_chunk_link_attributes/<name>/<delta>/``
+  array.  Stored as a flat blob parallel to the ``data`` blob of the matching ``cross_chunk_links/<delta>/``
+  array; ``num_links`` MUST equal the parallel CCL array''s ``num_links``.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
+rank: 1000
+slot_usage:
+  zv_array:
+    name: zv_array
+    required: true
+    equals_string: cross_chunk_link_attribute
+attributes:
+  zv_array:
+    name: zv_array
+    description: 'Discriminator slot identifying the kind of per-array ``.zattrs``
+      block.  Each writer in ``core/arrays.py`` stamps the corresponding token from
+      :class:`ZvArrayTag`.
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: zv_array
+    owner: CrossChunkLinkAttributeMeta
+    domain_of:
+    - VerticesMeta
+    - LinksMeta
+    - AttributeMeta
+    - ObjectIndexMeta
+    - ObjectIndexPendingMeta
+    - ObjectAttributeMeta
+    - GroupingsMeta
+    - GroupingsAttributeMeta
+    - CrossChunkLinksMeta
+    - CrossChunkFacesMeta
+    - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
+    - MetanodeChildrenMeta
+    range: ZvArrayTag
+    required: true
+    equals_string: cross_chunk_link_attribute
+  name:
+    name: name
+    description: NGFF axis or attribute name (e.g. "x", "intensity").
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    slot_uri: schema:name
+    alias: name
+    owner: CrossChunkLinkAttributeMeta
+    domain_of:
+    - Axis
+    - AttributeMeta
+    - ObjectAttributeMeta
+    - GroupingsAttributeMeta
+    - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
+    range: string
+    required: true
+  dtype:
+    name: dtype
+    description: Numpy dtype string of the array's value type (e.g. "float32").
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: dtype
+    owner: CrossChunkLinkAttributeMeta
+    domain_of:
+    - VerticesMeta
+    - LinksMeta
+    - AttributeMeta
+    - ObjectAttributeMeta
+    - GroupingsAttributeMeta
+    - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
+    range: string
+    required: true
+  level_delta:
+    name: level_delta
+    description: 'Pyramid-level delta between the source side (the level that owns
+      this array) and the target side of the edges.  ``0`` for intra-level arrays
+      (the only kind written pre-0.4), ``+N`` for edges from this level to ``this_level
+      + N`` (coarser), ``-N`` for edges to ``this_level - N`` (finer).
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: level_delta
+    owner: CrossChunkLinkAttributeMeta
+    domain_of:
+    - LinksMeta
+    - CrossChunkLinksMeta
+    - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
+    range: integer
+    required: true
+  num_links:
+    name: num_links
+    description: Total cross-chunk link count.
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: num_links
+    owner: CrossChunkLinkAttributeMeta
+    domain_of:
+    - CrossChunkLinksMeta
+    - CrossChunkLinkAttributeMeta
+    range: integer
+    required: true
+    minimum_value: 0
+
+```
+</details>
+
+
+---
+
+
+
 # Class: CrossChunkLinksMeta 
 
 
-_``.zattrs`` for ``cross_chunk_links/``._
+_``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Under the 0.4 multiscale layout, each delta segment carries its own meta block; ``level_delta=0`` is the intra-level array.  Source-side endpoints live at the array's own resolution level; target-side endpoints live at ``this_level + level_delta``._
+
+__
 
 
 
 
 
-URI: [zv:CrossChunkLinksMeta](https://w3id.org/zarr-vectors/schema/0.3/CrossChunkLinksMeta)
+URI: [zv:CrossChunkLinksMeta](https://w3id.org/zarr-vectors/schema/0.4/CrossChunkLinksMeta)
 
 
 
@@ -2275,6 +2755,8 @@ URI: [zv:CrossChunkLinksMeta](https://w3id.org/zarr-vectors/schema/0.3/CrossChun
  classDiagram
     class CrossChunkLinksMeta
     click CrossChunkLinksMeta href "../CrossChunkLinksMeta/"
+      CrossChunkLinksMeta : level_delta
+        
       CrossChunkLinksMeta : num_links
         
       CrossChunkLinksMeta : sid_ndim
@@ -2305,6 +2787,7 @@ URI: [zv:CrossChunkLinksMeta](https://w3id.org/zarr-vectors/schema/0.3/CrossChun
 | [zv_array](zv_array.md) | 1 <br/> [ZvArrayTag](ZvArrayTag.md) | Discriminator slot identifying the kind of per-array `` | direct |
 | [num_links](num_links.md) | 1 <br/> [Integer](Integer.md) | Total cross-chunk link count | direct |
 | [sid_ndim](sid_ndim.md) | 1 <br/> [Integer](Integer.md) | Number of spatial-index dimensions encoded in chunk keys | direct |
+| [level_delta](level_delta.md) | 1 <br/> [Integer](Integer.md) | Pyramid-level delta between the source side (the level that owns this array) ... | direct |
 
 
 
@@ -2329,7 +2812,7 @@ URI: [zv:CrossChunkLinksMeta](https://w3id.org/zarr-vectors/schema/0.3/CrossChun
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2355,13 +2838,19 @@ URI: [zv:CrossChunkLinksMeta](https://w3id.org/zarr-vectors/schema/0.3/CrossChun
 <details>
 ```yaml
 name: CrossChunkLinksMeta
-description: '``.zattrs`` for ``cross_chunk_links/``.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+description: '``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Under the 0.4
+  multiscale layout, each delta segment carries its own meta block; ``level_delta=0``
+  is the intra-level array.  Source-side endpoints live at the array''s own resolution
+  level; target-side endpoints live at ``this_level + level_delta``.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
 - num_links
 - sid_ndim
+- level_delta
 slot_usage:
   zv_array:
     name: zv_array
@@ -2376,8 +2865,13 @@ slot_usage:
 <details>
 ```yaml
 name: CrossChunkLinksMeta
-description: '``.zattrs`` for ``cross_chunk_links/``.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+description: '``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Under the 0.4
+  multiscale layout, each delta segment carries its own meta block; ``level_delta=0``
+  is the intra-level array.  Source-side endpoints live at the array''s own resolution
+  level; target-side endpoints live at ``this_level + level_delta``.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -2392,7 +2886,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: CrossChunkLinksMeta
@@ -2408,6 +2902,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -2415,19 +2910,20 @@ attributes:
   num_links:
     name: num_links
     description: Total cross-chunk link count.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: num_links
     owner: CrossChunkLinksMeta
     domain_of:
     - CrossChunkLinksMeta
+    - CrossChunkLinkAttributeMeta
     range: integer
     required: true
     minimum_value: 0
   sid_ndim:
     name: sid_ndim
     description: Number of spatial-index dimensions encoded in chunk keys.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: sid_ndim
     owner: CrossChunkLinksMeta
@@ -2440,6 +2936,25 @@ attributes:
     range: integer
     required: true
     minimum_value: 1
+  level_delta:
+    name: level_delta
+    description: 'Pyramid-level delta between the source side (the level that owns
+      this array) and the target side of the edges.  ``0`` for intra-level arrays
+      (the only kind written pre-0.4), ``+N`` for edges from this level to ``this_level
+      + N`` (coarser), ``-N`` for edges to ``this_level - N`` (finer).
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: level_delta
+    owner: CrossChunkLinksMeta
+    domain_of:
+    - LinksMeta
+    - CrossChunkLinksMeta
+    - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
+    range: integer
+    required: true
 
 ```
 </details>
@@ -2456,7 +2971,7 @@ _How connectivity that crosses chunk boundaries is represented._
 
 
 
-URI: [zv:CrossChunkStrategy](https://w3id.org/zarr-vectors/schema/0.3/CrossChunkStrategy)
+URI: [zv:CrossChunkStrategy](https://w3id.org/zarr-vectors/schema/0.4/CrossChunkStrategy)
 
 ## Permissible Values
 | Value | Meaning | Description |
@@ -2492,7 +3007,7 @@ URI: [zv:CrossChunkStrategy](https://w3id.org/zarr-vectors/schema/0.3/CrossChunk
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2505,7 +3020,7 @@ URI: [zv:CrossChunkStrategy](https://w3id.org/zarr-vectors/schema/0.3/CrossChunk
 ```yaml
 name: CrossChunkStrategy
 description: How connectivity that crosses chunk boundaries is represented.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 permissible_values:
   boundary_deduplication:
@@ -2517,6 +3032,95 @@ permissible_values:
   both:
     text: both
     description: Both boundary duplication and explicit links are present.
+
+```
+</details>
+
+
+---
+
+# Enum: CrossLevelStorage 
+
+
+
+
+_How cross-pyramid-level edges are stored in the multiscale links layout (``links/<delta>/`` and ``cross_chunk_links/<delta>/``)._
+
+__
+
+
+
+URI: [zv:CrossLevelStorage](https://w3id.org/zarr-vectors/schema/0.4/CrossLevelStorage)
+
+## Permissible Values
+| Value | Meaning | Description |
+| --- | --- | --- |
+| none | None | No cross-level link arrays are emitted (``cross_level_depth=0``) |
+| implicit | None | Only positive deltas (``+1``, ``+2``,  |
+| explicit | None | Both positive and negative deltas are materialized |
+
+
+
+
+## Slots
+
+| Name | Description |
+| ---  | --- |
+| [cross_level_storage](cross_level_storage.md) | Whether cross-level link arrays are written in both directions (``explicit``:... |
+
+
+
+
+
+
+
+
+
+
+## Identifier and Mapping Information
+
+
+
+
+
+### Schema Source
+
+
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
+
+
+
+
+
+
+## LinkML Source
+
+<details>
+```yaml
+name: CrossLevelStorage
+description: 'How cross-pyramid-level edges are stored in the multiscale links layout
+  (``links/<delta>/`` and ``cross_chunk_links/<delta>/``).
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
+rank: 1000
+permissible_values:
+  none:
+    text: none
+    description: No cross-level link arrays are emitted (``cross_level_depth=0``).
+  implicit:
+    text: implicit
+    description: 'Only positive deltas (``+1``, ``+2``, ...) are materialized at the
+      finer level.  Negative-delta edges are reconstructed on read by flipping the
+      matching positive-delta array at the coarser level.
+
+      '
+  explicit:
+    text: explicit
+    description: 'Both positive and negative deltas are materialized.  Writes ``+N``
+      at the finer level and ``-N`` at the coarser level.
+
+      '
 
 ```
 </details>
@@ -2590,7 +3194,7 @@ Alias: crs
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2614,7 +3218,7 @@ description: 'Optional coordinate reference system metadata (free-form dict matc
   whatever CRS vocabulary the store uses).
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_uri: schema:coordinateReferenceSystem
 alias: crs
@@ -2672,7 +3276,7 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2730,7 +3334,7 @@ URI: [xsd:date](http://www.w3.org/2001/XMLSchema#date)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2788,7 +3392,7 @@ URI: [linkml:DateOrDatetime](https://w3id.org/linkml/DateOrDatetime)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2845,7 +3449,7 @@ URI: [xsd:dateTime](http://www.w3.org/2001/XMLSchema#dateTime)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2902,7 +3506,7 @@ URI: [xsd:decimal](http://www.w3.org/2001/XMLSchema#decimal)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2959,7 +3563,7 @@ URI: [xsd:double](http://www.w3.org/2001/XMLSchema#double)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -2989,7 +3593,7 @@ _Numpy dtype string of the array's value type (e.g. "float32")._
 
 
 
-URI: [zv:dtype](https://w3id.org/zarr-vectors/schema/0.3/dtype)
+URI: [zv:dtype](https://w3id.org/zarr-vectors/schema/0.4/dtype)
 Alias: dtype
 
 <!-- no inheritance hierarchy -->
@@ -3002,12 +3606,13 @@ Alias: dtype
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [AttributeMeta](AttributeMeta.md) | `` |  no  |
-| [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
-| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
 | [VerticesMeta](VerticesMeta.md) | `` |  no  |
 | [LinksMeta](LinksMeta.md) | `` |  no  |
 | [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
+| [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
+| [AttributeMeta](AttributeMeta.md) | `` |  no  |
+| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
 
 
 
@@ -3021,7 +3626,7 @@ Alias: dtype
 | Property | Value |
 | --- | --- |
 | Range | [String](String.md) |
-| Domain Of | [VerticesMeta](VerticesMeta.md), [LinksMeta](LinksMeta.md), [AttributeMeta](AttributeMeta.md), [ObjectAttributeMeta](ObjectAttributeMeta.md), [GroupingsAttributeMeta](GroupingsAttributeMeta.md), [LinkAttributeMeta](LinkAttributeMeta.md) |
+| Domain Of | [VerticesMeta](VerticesMeta.md), [LinksMeta](LinksMeta.md), [AttributeMeta](AttributeMeta.md), [ObjectAttributeMeta](ObjectAttributeMeta.md), [GroupingsAttributeMeta](GroupingsAttributeMeta.md), [LinkAttributeMeta](LinkAttributeMeta.md), [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) |
 
 ### Cardinality and Requirements
 
@@ -3047,7 +3652,7 @@ Alias: dtype
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -3068,7 +3673,7 @@ Alias: dtype
 ```yaml
 name: dtype
 description: Numpy dtype string of the array's value type (e.g. "float32").
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: dtype
 domain_of:
@@ -3078,6 +3683,7 @@ domain_of:
 - ObjectAttributeMeta
 - GroupingsAttributeMeta
 - LinkAttributeMeta
+- CrossChunkLinkAttributeMeta
 range: string
 required: true
 
@@ -3096,7 +3702,7 @@ _Per-array encoding of vertex data._
 
 
 
-URI: [zv:Encoding](https://w3id.org/zarr-vectors/schema/0.3/Encoding)
+URI: [zv:Encoding](https://w3id.org/zarr-vectors/schema/0.4/Encoding)
 
 ## Permissible Values
 | Value | Meaning | Description |
@@ -3131,7 +3737,7 @@ URI: [zv:Encoding](https://w3id.org/zarr-vectors/schema/0.3/Encoding)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -3144,7 +3750,7 @@ URI: [zv:Encoding](https://w3id.org/zarr-vectors/schema/0.3/Encoding)
 ```yaml
 name: Encoding
 description: Per-array encoding of vertex data.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 permissible_values:
   raw:
@@ -3198,7 +3804,7 @@ URI: [xsd:float](http://www.w3.org/2001/XMLSchema#float)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -3228,7 +3834,7 @@ _Optional 0.3+ feature tokens advertised by this store._
 
 
 
-URI: [zv:format_capabilities](https://w3id.org/zarr-vectors/schema/0.3/format_capabilities)
+URI: [zv:format_capabilities](https://w3id.org/zarr-vectors/schema/0.4/format_capabilities)
 Alias: format_capabilities
 
 <!-- no inheritance hierarchy -->
@@ -3281,7 +3887,7 @@ Alias: format_capabilities
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -3302,7 +3908,7 @@ Alias: format_capabilities
 ```yaml
 name: format_capabilities
 description: Optional 0.3+ feature tokens advertised by this store.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: format_capabilities
 domain_of:
@@ -3388,7 +3994,7 @@ Alias: format_version
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -3409,7 +4015,7 @@ Alias: format_version
 ```yaml
 name: format_version
 description: Spec version this store was written against (e.g. "0.3").
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_uri: schema:version
 alias: format_version
@@ -3436,7 +4042,7 @@ __
 
 
 
-URI: [zv:FormatCapability](https://w3id.org/zarr-vectors/schema/0.3/FormatCapability)
+URI: [zv:FormatCapability](https://w3id.org/zarr-vectors/schema/0.4/FormatCapability)
 
 ## Permissible Values
 | Value | Meaning | Description |
@@ -3444,6 +4050,9 @@ URI: [zv:FormatCapability](https://w3id.org/zarr-vectors/schema/0.3/FormatCapabi
 | cross_chunk_faces | None | Store has the ``cross_chunk_faces`` array for boundary faces |
 | vertex_count_cache | None | Per-chunk ``vertex_counts/<chunk_key>`` sidecars are present |
 | object_index_pending | None | One or more uncompacted ``object_index/pending/<batch>`` sidecars exist |
+| preserved_object_ids | None | At least one level was written with ID-preserving sparsification (``LevelMeta... |
+| shared_vertex_groups | None | At least one level stores per-chunk vertex groups that may be referenced by m... |
+| multiscale_links | None | Store uses the 0 |
 
 
 
@@ -3472,7 +4081,7 @@ URI: [zv:FormatCapability](https://w3id.org/zarr-vectors/schema/0.3/FormatCapabi
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -3489,7 +4098,7 @@ description: 'Optional 0.3+ feature tokens a store advertises in :attr:`RootMeta
   values.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 permissible_values:
   cross_chunk_faces:
@@ -3502,6 +4111,27 @@ permissible_values:
     text: object_index_pending
     description: One or more uncompacted ``object_index/pending/<batch>`` sidecars
       exist.
+  preserved_object_ids:
+    text: preserved_object_ids
+    description: 'At least one level was written with ID-preserving sparsification
+      (``LevelMetadata.preserves_object_ids=True``).  Dropped objects appear as empty
+      manifest slots; ``parent_level`` carries semantic weight on those levels.
+
+      '
+  shared_vertex_groups:
+    text: shared_vertex_groups
+    description: 'At least one level stores per-chunk vertex groups that may be referenced
+      by multiple objects'' manifests (shared metavertices in the per-object pyramid
+      regime).
+
+      '
+  multiscale_links:
+    text: multiscale_links
+    description: 'Store uses the 0.4 multiscale links layout (``links/<delta>/``,
+      ``cross_chunk_links/<delta>/``, ``link_attributes/<name>/<delta>/`` and ``cross_chunk_link_attributes/<name>/<delta>/``)
+      and may contain cross-pyramid-level edges (``delta != 0``).
+
+      '
 
 ```
 </details>
@@ -3520,7 +4150,7 @@ _One or more geometry kinds present in the store._
 
 
 
-URI: [zv:geometry_types](https://w3id.org/zarr-vectors/schema/0.3/geometry_types)
+URI: [zv:geometry_types](https://w3id.org/zarr-vectors/schema/0.4/geometry_types)
 Alias: geometry_types
 
 <!-- no inheritance hierarchy -->
@@ -3575,7 +4205,7 @@ Alias: geometry_types
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -3596,7 +4226,7 @@ Alias: geometry_types
 ```yaml
 name: geometry_types
 description: One or more geometry kinds present in the store.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: geometry_types
 domain_of:
@@ -3621,7 +4251,7 @@ _The kind of geometry a store (or one of its sub-types) holds._
 
 
 
-URI: [zv:GeometryType](https://w3id.org/zarr-vectors/schema/0.3/GeometryType)
+URI: [zv:GeometryType](https://w3id.org/zarr-vectors/schema/0.4/GeometryType)
 
 ## Permissible Values
 | Value | Meaning | Description |
@@ -3661,7 +4291,7 @@ URI: [zv:GeometryType](https://w3id.org/zarr-vectors/schema/0.3/GeometryType)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -3674,7 +4304,7 @@ URI: [zv:GeometryType](https://w3id.org/zarr-vectors/schema/0.3/GeometryType)
 ```yaml
 name: GeometryType
 description: The kind of geometry a store (or one of its sub-types) holds.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 permissible_values:
   point_cloud:
@@ -3709,7 +4339,7 @@ _``.zattrs`` for each ``groupings_attributes/<name>/`` array._
 
 
 
-URI: [zv:GroupingsAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/GroupingsAttributeMeta)
+URI: [zv:GroupingsAttributeMeta](https://w3id.org/zarr-vectors/schema/0.4/GroupingsAttributeMeta)
 
 
 
@@ -3776,7 +4406,7 @@ URI: [zv:GroupingsAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/Groupi
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -3803,7 +4433,7 @@ URI: [zv:GroupingsAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/Groupi
 ```yaml
 name: GroupingsAttributeMeta
 description: '``.zattrs`` for each ``groupings_attributes/<name>/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
@@ -3825,7 +4455,7 @@ slot_usage:
 ```yaml
 name: GroupingsAttributeMeta
 description: '``.zattrs`` for each ``groupings_attributes/<name>/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -3840,7 +4470,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: GroupingsAttributeMeta
@@ -3856,6 +4486,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -3863,7 +4494,7 @@ attributes:
   name:
     name: name
     description: NGFF axis or attribute name (e.g. "x", "intensity").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     slot_uri: schema:name
     alias: name
@@ -3874,12 +4505,13 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
     required: true
   dtype:
     name: dtype
     description: Numpy dtype string of the array's value type (e.g. "float32").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: dtype
     owner: GroupingsAttributeMeta
@@ -3890,12 +4522,13 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
     required: true
   shape:
     name: shape
     description: Shape of a dense per-object/per-group array.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: shape
     owner: GroupingsAttributeMeta
@@ -3923,7 +4556,7 @@ _``.zattrs`` for ``groupings/``._
 
 
 
-URI: [zv:GroupingsMeta](https://w3id.org/zarr-vectors/schema/0.3/GroupingsMeta)
+URI: [zv:GroupingsMeta](https://w3id.org/zarr-vectors/schema/0.4/GroupingsMeta)
 
 
 
@@ -3984,7 +4617,7 @@ URI: [zv:GroupingsMeta](https://w3id.org/zarr-vectors/schema/0.3/GroupingsMeta)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -4011,7 +4644,7 @@ URI: [zv:GroupingsMeta](https://w3id.org/zarr-vectors/schema/0.3/GroupingsMeta)
 ```yaml
 name: GroupingsMeta
 description: '``.zattrs`` for ``groupings/``.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
@@ -4031,7 +4664,7 @@ slot_usage:
 ```yaml
 name: GroupingsMeta
 description: '``.zattrs`` for ``groupings/``.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -4046,7 +4679,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: GroupingsMeta
@@ -4062,6 +4695,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -4069,7 +4703,7 @@ attributes:
   num_groups:
     name: num_groups
     description: Total grouping count.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: num_groups
     owner: GroupingsMeta
@@ -4078,6 +4712,116 @@ attributes:
     range: integer
     required: true
     minimum_value: 0
+
+```
+</details>
+
+
+---
+
+
+
+# Slot: inherited_num_objects 
+
+
+_OID-space size inherited from the parent level (= ``parent_level.num_objects``).  Required when ``preserves_object_ids`` is true; absent on standalone levels._
+
+__
+
+
+
+
+
+URI: [zv:inherited_num_objects](https://w3id.org/zarr-vectors/schema/0.4/inherited_num_objects)
+Alias: inherited_num_objects
+
+<!-- no inheritance hierarchy -->
+
+
+
+
+
+## Applicable Classes
+
+| Name | Description | Modifies Slot |
+| --- | --- | --- |
+| [LevelMetadata](LevelMetadata.md) | Per-resolution-level `` |  no  |
+
+
+
+
+
+
+## Properties
+
+### Type and Range
+
+| Property | Value |
+| --- | --- |
+| Range | [Integer](Integer.md) |
+| Domain Of | [LevelMetadata](LevelMetadata.md) |
+
+### Cardinality and Requirements
+
+| Property | Value |
+| --- | --- |
+### Value Constraints
+
+| Property | Value |
+| --- | --- |
+| Minimum Value | 0 |
+
+
+
+
+
+
+
+
+
+
+
+
+## Identifier and Mapping Information
+
+
+
+
+
+### Schema Source
+
+
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
+
+
+
+
+## Mappings
+
+| Mapping Type | Mapped Value |
+| ---  | ---  |
+| self | zv:inherited_num_objects |
+| native | zv:inherited_num_objects |
+
+
+
+
+## LinkML Source
+
+<details>
+```yaml
+name: inherited_num_objects
+description: 'OID-space size inherited from the parent level (= ``parent_level.num_objects``).  Required
+  when ``preserves_object_ids`` is true; absent on standalone levels.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
+rank: 1000
+alias: inherited_num_objects
+domain_of:
+- LevelMetadata
+range: integer
+minimum_value: 0
 
 ```
 </details>
@@ -4123,7 +4867,7 @@ URI: [xsd:integer](http://www.w3.org/2001/XMLSchema#integer)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -4181,7 +4925,7 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -4238,7 +4982,7 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -4267,7 +5011,7 @@ _Resolution level index (0 = full resolution)._
 
 
 
-URI: [zv:level](https://w3id.org/zarr-vectors/schema/0.3/level)
+URI: [zv:level](https://w3id.org/zarr-vectors/schema/0.4/level)
 Alias: level
 
 <!-- no inheritance hierarchy -->
@@ -4327,7 +5071,7 @@ Alias: level
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -4348,7 +5092,7 @@ Alias: level
 ```yaml
 name: level
 description: Resolution level index (0 = full resolution).
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: level
 domain_of:
@@ -4356,6 +5100,118 @@ domain_of:
 range: integer
 required: true
 minimum_value: 0
+
+```
+</details>
+
+
+---
+
+
+
+# Slot: level_delta 
+
+
+_Pyramid-level delta between the source side (the level that owns this array) and the target side of the edges.  ``0`` for intra-level arrays (the only kind written pre-0.4), ``+N`` for edges from this level to ``this_level + N`` (coarser), ``-N`` for edges to ``this_level - N`` (finer)._
+
+__
+
+
+
+
+
+URI: [zv:level_delta](https://w3id.org/zarr-vectors/schema/0.4/level_delta)
+Alias: level_delta
+
+<!-- no inheritance hierarchy -->
+
+
+
+
+
+## Applicable Classes
+
+| Name | Description | Modifies Slot |
+| --- | --- | --- |
+| [LinksMeta](LinksMeta.md) | `` |  no  |
+| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
+| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
+
+
+
+
+
+
+## Properties
+
+### Type and Range
+
+| Property | Value |
+| --- | --- |
+| Range | [Integer](Integer.md) |
+| Domain Of | [LinksMeta](LinksMeta.md), [CrossChunkLinksMeta](CrossChunkLinksMeta.md), [LinkAttributeMeta](LinkAttributeMeta.md), [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) |
+
+### Cardinality and Requirements
+
+| Property | Value |
+| --- | --- |
+| Required | Yes |
+
+
+
+
+
+
+
+
+
+
+## Identifier and Mapping Information
+
+
+
+
+
+### Schema Source
+
+
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
+
+
+
+
+## Mappings
+
+| Mapping Type | Mapped Value |
+| ---  | ---  |
+| self | zv:level_delta |
+| native | zv:level_delta |
+
+
+
+
+## LinkML Source
+
+<details>
+```yaml
+name: level_delta
+description: 'Pyramid-level delta between the source side (the level that owns this
+  array) and the target side of the edges.  ``0`` for intra-level arrays (the only
+  kind written pre-0.4), ``+N`` for edges from this level to ``this_level + N`` (coarser),
+  ``-N`` for edges to ``this_level - N`` (finer).
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
+rank: 1000
+alias: level_delta
+domain_of:
+- LinksMeta
+- CrossChunkLinksMeta
+- LinkAttributeMeta
+- CrossChunkLinkAttributeMeta
+range: integer
+required: true
 
 ```
 </details>
@@ -4376,7 +5232,7 @@ __
 
 
 
-URI: [zv:LevelMetadata](https://w3id.org/zarr-vectors/schema/0.3/LevelMetadata)
+URI: [zv:LevelMetadata](https://w3id.org/zarr-vectors/schema/0.4/LevelMetadata)
 
 
 
@@ -4400,11 +5256,17 @@ URI: [zv:LevelMetadata](https://w3id.org/zarr-vectors/schema/0.3/LevelMetadata)
         
       LevelMetadata : coarsening_method
         
+      LevelMetadata : inherited_num_objects
+        
       LevelMetadata : level
         
       LevelMetadata : object_sparsity
         
       LevelMetadata : parent_level
+        
+      LevelMetadata : preserves_object_ids
+        
+      LevelMetadata : shared_vertex_groups
         
       LevelMetadata : vertex_count
         
@@ -4431,6 +5293,9 @@ URI: [zv:LevelMetadata](https://w3id.org/zarr-vectors/schema/0.3/LevelMetadata)
 | [chunk_dims](chunk_dims.md) | * <br/> [String](String.md) | Chunk-key axis names; the leading axis names appear first | direct |
 | [chunk_attribute_name](chunk_attribute_name.md) | 0..1 <br/> [String](String.md) | Name of the per-vertex attribute used as the leading chunk axis | direct |
 | [chunk_attribute_values](chunk_attribute_values.md) | * <br/> [String](String.md) | Ordered list mapping attribute-bin index to original attribute value | direct |
+| [preserves_object_ids](preserves_object_ids.md) | 0..1 <br/> [Boolean](Boolean.md) | True for levels written by the per-object pyramid regime | direct |
+| [inherited_num_objects](inherited_num_objects.md) | 0..1 <br/> [Integer](Integer.md) | OID-space size inherited from the parent level (= ``parent_level | direct |
+| [shared_vertex_groups](shared_vertex_groups.md) | 0..1 <br/> [Boolean](Boolean.md) | True when per-chunk vertex groups may be referenced by multiple objects' mani... | direct |
 
 
 
@@ -4455,7 +5320,7 @@ URI: [zv:LevelMetadata](https://w3id.org/zarr-vectors/schema/0.3/LevelMetadata)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -4485,7 +5350,7 @@ description: 'Per-resolution-level ``.zattrs`` payload, persisted under the key 
   the runtime :class:`zarr_vectors.core.metadata.LevelMetadata` dataclass.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - level
@@ -4499,6 +5364,9 @@ slots:
 - chunk_dims
 - chunk_attribute_name
 - chunk_attribute_values
+- preserves_object_ids
+- inherited_num_objects
+- shared_vertex_groups
 
 ```
 </details>
@@ -4512,13 +5380,13 @@ description: 'Per-resolution-level ``.zattrs`` payload, persisted under the key 
   the runtime :class:`zarr_vectors.core.metadata.LevelMetadata` dataclass.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 attributes:
   level:
     name: level
     description: Resolution level index (0 = full resolution).
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: level
     owner: LevelMetadata
@@ -4530,7 +5398,7 @@ attributes:
   vertex_count:
     name: vertex_count
     description: Total number of vertices at this level.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: vertex_count
     owner: LevelMetadata
@@ -4542,7 +5410,7 @@ attributes:
   arrays_present:
     name: arrays_present
     description: Names of arrays present in the level group.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: arrays_present
     owner: LevelMetadata
@@ -4557,7 +5425,7 @@ attributes:
       for level 0 (inherits ``base_bin_shape``); must be set for level > 0.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: bin_shape
     owner: LevelMetadata
@@ -4568,7 +5436,7 @@ attributes:
   bin_ratio:
     name: bin_ratio
     description: Integer fold-change per axis relative to level 0.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: bin_ratio
     owner: LevelMetadata
@@ -4579,7 +5447,7 @@ attributes:
   object_sparsity:
     name: object_sparsity
     description: Fraction of objects retained at this level.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: object_sparsity
     owner: LevelMetadata
@@ -4591,7 +5459,7 @@ attributes:
   coarsening_method:
     name: coarsening_method
     description: How this level was generated (e.g. "grid_metanode").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: coarsening_method
     owner: LevelMetadata
@@ -4601,7 +5469,7 @@ attributes:
   parent_level:
     name: parent_level
     description: Source level index (None for level 0).
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: parent_level
     owner: LevelMetadata
@@ -4615,7 +5483,7 @@ attributes:
       when the level uses attribute chunking (e.g. ``["gene", "z", "y", "x"]``).
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: chunk_dims
     owner: LevelMetadata
@@ -4626,7 +5494,7 @@ attributes:
   chunk_attribute_name:
     name: chunk_attribute_name
     description: Name of the per-vertex attribute used as the leading chunk axis.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: chunk_attribute_name
     owner: LevelMetadata
@@ -4640,7 +5508,7 @@ attributes:
       or both absent).
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: chunk_attribute_values
     owner: LevelMetadata
@@ -4648,6 +5516,49 @@ attributes:
     - LevelMetadata
     range: string
     multivalued: true
+  preserves_object_ids:
+    name: preserves_object_ids
+    description: 'True for levels written by the per-object pyramid regime.  When
+      set, ``num_objects`` and ``object_attributes`` row count inherit from the parent
+      level''s OID space; dropped objects leave empty manifest slots and zero ``present_mask``
+      bytes.  ``parent_level`` is load-bearing under this flag.
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: preserves_object_ids
+    owner: LevelMetadata
+    domain_of:
+    - LevelMetadata
+    range: boolean
+  inherited_num_objects:
+    name: inherited_num_objects
+    description: 'OID-space size inherited from the parent level (= ``parent_level.num_objects``).  Required
+      when ``preserves_object_ids`` is true; absent on standalone levels.
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: inherited_num_objects
+    owner: LevelMetadata
+    domain_of:
+    - LevelMetadata
+    range: integer
+    minimum_value: 0
+  shared_vertex_groups:
+    name: shared_vertex_groups
+    description: 'True when per-chunk vertex groups may be referenced by multiple
+      objects'' manifests (shared metavertices in the per-object pyramid regime).  Readers
+      MAY use this to short-circuit dedup work.
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: shared_vertex_groups
+    owner: LevelMetadata
+    domain_of:
+    - LevelMetadata
+    range: boolean
 
 ```
 </details>
@@ -4666,7 +5577,7 @@ _Width of a links row (2 for edges, 3 or 4 for face rows)._
 
 
 
-URI: [zv:link_width](https://w3id.org/zarr-vectors/schema/0.3/link_width)
+URI: [zv:link_width](https://w3id.org/zarr-vectors/schema/0.4/link_width)
 Alias: link_width
 
 <!-- no inheritance hierarchy -->
@@ -4726,7 +5637,7 @@ Alias: link_width
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -4747,7 +5658,7 @@ Alias: link_width
 ```yaml
 name: link_width
 description: Width of a links row (2 for edges, 3 or 4 for face rows).
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: link_width
 domain_of:
@@ -4767,13 +5678,15 @@ minimum_value: 2
 # Class: LinkAttributeMeta 
 
 
-_``.zattrs`` for each ``link_attributes/<name>/`` array._
+_``.zattrs`` for each ``link_attributes/<name>/<delta>/`` array. Parallel to the ``links/<delta>/`` array of the same ``<delta>``._
+
+__
 
 
 
 
 
-URI: [zv:LinkAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/LinkAttributeMeta)
+URI: [zv:LinkAttributeMeta](https://w3id.org/zarr-vectors/schema/0.4/LinkAttributeMeta)
 
 
 
@@ -4784,6 +5697,8 @@ URI: [zv:LinkAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/LinkAttribu
     class LinkAttributeMeta
     click LinkAttributeMeta href "../LinkAttributeMeta/"
       LinkAttributeMeta : dtype
+        
+      LinkAttributeMeta : level_delta
         
       LinkAttributeMeta : name
         
@@ -4813,6 +5728,7 @@ URI: [zv:LinkAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/LinkAttribu
 | [zv_array](zv_array.md) | 1 <br/> [ZvArrayTag](ZvArrayTag.md) | Discriminator slot identifying the kind of per-array `` | direct |
 | [name](name.md) | 1 <br/> [String](String.md) | NGFF axis or attribute name (e | direct |
 | [dtype](dtype.md) | 1 <br/> [String](String.md) | Numpy dtype string of the array's value type (e | direct |
+| [level_delta](level_delta.md) | 1 <br/> [Integer](Integer.md) | Pyramid-level delta between the source side (the level that owns this array) ... | direct |
 
 
 
@@ -4837,7 +5753,7 @@ URI: [zv:LinkAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/LinkAttribu
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -4863,13 +5779,17 @@ URI: [zv:LinkAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/LinkAttribu
 <details>
 ```yaml
 name: LinkAttributeMeta
-description: '``.zattrs`` for each ``link_attributes/<name>/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+description: '``.zattrs`` for each ``link_attributes/<name>/<delta>/`` array. Parallel
+  to the ``links/<delta>/`` array of the same ``<delta>``.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
 - name
 - dtype
+- level_delta
 slot_usage:
   zv_array:
     name: zv_array
@@ -4884,8 +5804,11 @@ slot_usage:
 <details>
 ```yaml
 name: LinkAttributeMeta
-description: '``.zattrs`` for each ``link_attributes/<name>/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+description: '``.zattrs`` for each ``link_attributes/<name>/<delta>/`` array. Parallel
+  to the ``links/<delta>/`` array of the same ``<delta>``.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -4900,7 +5823,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: LinkAttributeMeta
@@ -4916,6 +5839,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -4923,7 +5847,7 @@ attributes:
   name:
     name: name
     description: NGFF axis or attribute name (e.g. "x", "intensity").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     slot_uri: schema:name
     alias: name
@@ -4934,12 +5858,13 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
     required: true
   dtype:
     name: dtype
     description: Numpy dtype string of the array's value type (e.g. "float32").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: dtype
     owner: LinkAttributeMeta
@@ -4950,7 +5875,27 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
+    required: true
+  level_delta:
+    name: level_delta
+    description: 'Pyramid-level delta between the source side (the level that owns
+      this array) and the target side of the edges.  ``0`` for intra-level arrays
+      (the only kind written pre-0.4), ``+N`` for edges from this level to ``this_level
+      + N`` (coarser), ``-N`` for edges to ``this_level - N`` (finer).
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: level_delta
+    owner: LinkAttributeMeta
+    domain_of:
+    - LinksMeta
+    - CrossChunkLinksMeta
+    - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
+    range: integer
     required: true
 
 ```
@@ -4965,7 +5910,7 @@ attributes:
 
 
 
-URI: [zv:links_convention](https://w3id.org/zarr-vectors/schema/0.3/links_convention)
+URI: [zv:links_convention](https://w3id.org/zarr-vectors/schema/0.4/links_convention)
 Alias: links_convention
 
 <!-- no inheritance hierarchy -->
@@ -5017,7 +5962,7 @@ Alias: links_convention
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -5037,7 +5982,7 @@ Alias: links_convention
 <details>
 ```yaml
 name: links_convention
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: links_convention
 domain_of:
@@ -5061,7 +6006,7 @@ __
 
 
 
-URI: [zv:LinksConvention](https://w3id.org/zarr-vectors/schema/0.3/LinksConvention)
+URI: [zv:LinksConvention](https://w3id.org/zarr-vectors/schema/0.4/LinksConvention)
 
 ## Permissible Values
 | Value | Meaning | Description |
@@ -5097,7 +6042,7 @@ URI: [zv:LinksConvention](https://w3id.org/zarr-vectors/schema/0.3/LinksConventi
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -5112,7 +6057,7 @@ name: LinksConvention
 description: 'How intra-chunk links are represented for a polyline/graph/mesh.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 permissible_values:
   explicit:
@@ -5136,13 +6081,15 @@ permissible_values:
 # Class: LinksMeta 
 
 
-_``.zattrs`` for the ``links/`` array._
+_``.zattrs`` for a ``links/<delta>/`` array.  Under the 0.4 multiscale layout, each delta segment carries its own meta block; ``level_delta=0`` is the intra-level array (the only one written pre-0.4)._
+
+__
 
 
 
 
 
-URI: [zv:LinksMeta](https://w3id.org/zarr-vectors/schema/0.3/LinksMeta)
+URI: [zv:LinksMeta](https://w3id.org/zarr-vectors/schema/0.4/LinksMeta)
 
 
 
@@ -5153,6 +6100,8 @@ URI: [zv:LinksMeta](https://w3id.org/zarr-vectors/schema/0.3/LinksMeta)
     class LinksMeta
     click LinksMeta href "../LinksMeta/"
       LinksMeta : dtype
+        
+      LinksMeta : level_delta
         
       LinksMeta : link_width
         
@@ -5182,6 +6131,7 @@ URI: [zv:LinksMeta](https://w3id.org/zarr-vectors/schema/0.3/LinksMeta)
 | [zv_array](zv_array.md) | 1 <br/> [ZvArrayTag](ZvArrayTag.md) | Discriminator slot identifying the kind of per-array `` | direct |
 | [dtype](dtype.md) | 1 <br/> [String](String.md) | Numpy dtype string of the array's value type (e | direct |
 | [link_width](link_width.md) | 1 <br/> [Integer](Integer.md) | Width of a links row (2 for edges, 3 or 4 for face rows) | direct |
+| [level_delta](level_delta.md) | 1 <br/> [Integer](Integer.md) | Pyramid-level delta between the source side (the level that owns this array) ... | direct |
 
 
 
@@ -5206,7 +6156,7 @@ URI: [zv:LinksMeta](https://w3id.org/zarr-vectors/schema/0.3/LinksMeta)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -5232,13 +6182,18 @@ URI: [zv:LinksMeta](https://w3id.org/zarr-vectors/schema/0.3/LinksMeta)
 <details>
 ```yaml
 name: LinksMeta
-description: '``.zattrs`` for the ``links/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+description: '``.zattrs`` for a ``links/<delta>/`` array.  Under the 0.4 multiscale
+  layout, each delta segment carries its own meta block; ``level_delta=0`` is the
+  intra-level array (the only one written pre-0.4).
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
 - dtype
 - link_width
+- level_delta
 slot_usage:
   zv_array:
     name: zv_array
@@ -5253,8 +6208,12 @@ slot_usage:
 <details>
 ```yaml
 name: LinksMeta
-description: '``.zattrs`` for the ``links/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+description: '``.zattrs`` for a ``links/<delta>/`` array.  Under the 0.4 multiscale
+  layout, each delta segment carries its own meta block; ``level_delta=0`` is the
+  intra-level array (the only one written pre-0.4).
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -5269,7 +6228,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: LinksMeta
@@ -5285,6 +6244,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -5292,7 +6252,7 @@ attributes:
   dtype:
     name: dtype
     description: Numpy dtype string of the array's value type (e.g. "float32").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: dtype
     owner: LinksMeta
@@ -5303,12 +6263,13 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
     required: true
   link_width:
     name: link_width
     description: Width of a links row (2 for edges, 3 or 4 for face rows).
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: link_width
     owner: LinksMeta
@@ -5317,6 +6278,25 @@ attributes:
     range: integer
     required: true
     minimum_value: 2
+  level_delta:
+    name: level_delta
+    description: 'Pyramid-level delta between the source side (the level that owns
+      this array) and the target side of the edges.  ``0`` for intra-level arrays
+      (the only kind written pre-0.4), ``+N`` for edges from this level to ``this_level
+      + N`` (coarser), ``-N`` for edges to ``this_level - N`` (finer).
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: level_delta
+    owner: LinksMeta
+    domain_of:
+    - LinksMeta
+    - CrossChunkLinksMeta
+    - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
+    range: integer
+    required: true
 
 ```
 </details>
@@ -5335,7 +6315,7 @@ _Per-axis maxima.  Length must equal ``len(spatial_index_dims)``._
 
 
 
-URI: [zv:max_corner](https://w3id.org/zarr-vectors/schema/0.3/max_corner)
+URI: [zv:max_corner](https://w3id.org/zarr-vectors/schema/0.4/max_corner)
 Alias: max_corner
 
 <!-- no inheritance hierarchy -->
@@ -5389,7 +6369,7 @@ Alias: max_corner
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -5410,7 +6390,7 @@ Alias: max_corner
 ```yaml
 name: max_corner
 description: Per-axis maxima.  Length must equal ``len(spatial_index_dims)``.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: max_corner
 domain_of:
@@ -5436,7 +6416,7 @@ _``.zattrs`` for the ``metanode_children/`` coarsening sidecar._
 
 
 
-URI: [zv:MetanodeChildrenMeta](https://w3id.org/zarr-vectors/schema/0.3/MetanodeChildrenMeta)
+URI: [zv:MetanodeChildrenMeta](https://w3id.org/zarr-vectors/schema/0.4/MetanodeChildrenMeta)
 
 
 
@@ -5500,7 +6480,7 @@ URI: [zv:MetanodeChildrenMeta](https://w3id.org/zarr-vectors/schema/0.3/Metanode
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -5527,7 +6507,7 @@ URI: [zv:MetanodeChildrenMeta](https://w3id.org/zarr-vectors/schema/0.3/Metanode
 ```yaml
 name: MetanodeChildrenMeta
 description: '``.zattrs`` for the ``metanode_children/`` coarsening sidecar.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
@@ -5548,7 +6528,7 @@ slot_usage:
 ```yaml
 name: MetanodeChildrenMeta
 description: '``.zattrs`` for the ``metanode_children/`` coarsening sidecar.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -5563,7 +6543,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: MetanodeChildrenMeta
@@ -5579,6 +6559,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -5586,7 +6567,7 @@ attributes:
   num_metanodes:
     name: num_metanodes
     description: Total metanode count in a coarsening sidecar.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: num_metanodes
     owner: MetanodeChildrenMeta
@@ -5598,7 +6579,7 @@ attributes:
   sid_ndim:
     name: sid_ndim
     description: Number of spatial-index dimensions encoded in chunk keys.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: sid_ndim
     owner: MetanodeChildrenMeta
@@ -5629,7 +6610,7 @@ _Per-axis minima.  Length must equal ``len(spatial_index_dims)``._
 
 
 
-URI: [zv:min_corner](https://w3id.org/zarr-vectors/schema/0.3/min_corner)
+URI: [zv:min_corner](https://w3id.org/zarr-vectors/schema/0.4/min_corner)
 Alias: min_corner
 
 <!-- no inheritance hierarchy -->
@@ -5683,7 +6664,7 @@ Alias: min_corner
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -5704,7 +6685,7 @@ Alias: min_corner
 ```yaml
 name: min_corner
 description: Per-axis minima.  Length must equal ``len(spatial_index_dims)``.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: min_corner
 domain_of:
@@ -5743,11 +6724,12 @@ Alias: name
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [AttributeMeta](AttributeMeta.md) | `` |  no  |
-| [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
-| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
 | [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 | [Axis](Axis.md) | One axis of the spatial index |  no  |
+| [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
+| [AttributeMeta](AttributeMeta.md) | `` |  no  |
+| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
 
 
 
@@ -5761,7 +6743,7 @@ Alias: name
 | Property | Value |
 | --- | --- |
 | Range | [String](String.md) |
-| Domain Of | [Axis](Axis.md), [AttributeMeta](AttributeMeta.md), [ObjectAttributeMeta](ObjectAttributeMeta.md), [GroupingsAttributeMeta](GroupingsAttributeMeta.md), [LinkAttributeMeta](LinkAttributeMeta.md) |
+| Domain Of | [Axis](Axis.md), [AttributeMeta](AttributeMeta.md), [ObjectAttributeMeta](ObjectAttributeMeta.md), [GroupingsAttributeMeta](GroupingsAttributeMeta.md), [LinkAttributeMeta](LinkAttributeMeta.md), [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) |
 | Slot URI | [schema:name](http://schema.org/name) |
 
 ### Cardinality and Requirements
@@ -5788,7 +6770,7 @@ Alias: name
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -5809,7 +6791,7 @@ Alias: name
 ```yaml
 name: name
 description: NGFF axis or attribute name (e.g. "x", "intensity").
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_uri: schema:name
 alias: name
@@ -5819,6 +6801,7 @@ domain_of:
 - ObjectAttributeMeta
 - GroupingsAttributeMeta
 - LinkAttributeMeta
+- CrossChunkLinkAttributeMeta
 range: string
 required: true
 
@@ -5867,7 +6850,7 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -5924,7 +6907,7 @@ URI: [shex:nonLiteral](http://www.w3.org/ns/shex#nonLiteral)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -5953,7 +6936,7 @@ _Total cross-chunk face count._
 
 
 
-URI: [zv:num_faces](https://w3id.org/zarr-vectors/schema/0.3/num_faces)
+URI: [zv:num_faces](https://w3id.org/zarr-vectors/schema/0.4/num_faces)
 Alias: num_faces
 
 <!-- no inheritance hierarchy -->
@@ -6013,7 +6996,7 @@ Alias: num_faces
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -6034,7 +7017,7 @@ Alias: num_faces
 ```yaml
 name: num_faces
 description: Total cross-chunk face count.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: num_faces
 domain_of:
@@ -6060,7 +7043,7 @@ _Total grouping count._
 
 
 
-URI: [zv:num_groups](https://w3id.org/zarr-vectors/schema/0.3/num_groups)
+URI: [zv:num_groups](https://w3id.org/zarr-vectors/schema/0.4/num_groups)
 Alias: num_groups
 
 <!-- no inheritance hierarchy -->
@@ -6120,7 +7103,7 @@ Alias: num_groups
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -6141,7 +7124,7 @@ Alias: num_groups
 ```yaml
 name: num_groups
 description: Total grouping count.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: num_groups
 domain_of:
@@ -6167,7 +7150,7 @@ _Total cross-chunk link count._
 
 
 
-URI: [zv:num_links](https://w3id.org/zarr-vectors/schema/0.3/num_links)
+URI: [zv:num_links](https://w3id.org/zarr-vectors/schema/0.4/num_links)
 Alias: num_links
 
 <!-- no inheritance hierarchy -->
@@ -6181,6 +7164,7 @@ Alias: num_links
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
 | [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 
 
 
@@ -6194,7 +7178,7 @@ Alias: num_links
 | Property | Value |
 | --- | --- |
 | Range | [Integer](Integer.md) |
-| Domain Of | [CrossChunkLinksMeta](CrossChunkLinksMeta.md) |
+| Domain Of | [CrossChunkLinksMeta](CrossChunkLinksMeta.md), [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) |
 
 ### Cardinality and Requirements
 
@@ -6227,7 +7211,7 @@ Alias: num_links
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -6248,11 +7232,12 @@ Alias: num_links
 ```yaml
 name: num_links
 description: Total cross-chunk link count.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: num_links
 domain_of:
 - CrossChunkLinksMeta
+- CrossChunkLinkAttributeMeta
 range: integer
 required: true
 minimum_value: 0
@@ -6274,7 +7259,7 @@ _Total metanode count in a coarsening sidecar._
 
 
 
-URI: [zv:num_metanodes](https://w3id.org/zarr-vectors/schema/0.3/num_metanodes)
+URI: [zv:num_metanodes](https://w3id.org/zarr-vectors/schema/0.4/num_metanodes)
 Alias: num_metanodes
 
 <!-- no inheritance hierarchy -->
@@ -6334,7 +7319,7 @@ Alias: num_metanodes
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -6355,7 +7340,7 @@ Alias: num_metanodes
 ```yaml
 name: num_metanodes
 description: Total metanode count in a coarsening sidecar.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: num_metanodes
 domain_of:
@@ -6381,7 +7366,7 @@ _Total object count this array carries._
 
 
 
-URI: [zv:num_objects](https://w3id.org/zarr-vectors/schema/0.3/num_objects)
+URI: [zv:num_objects](https://w3id.org/zarr-vectors/schema/0.4/num_objects)
 Alias: num_objects
 
 <!-- no inheritance hierarchy -->
@@ -6394,8 +7379,8 @@ Alias: num_objects
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |  no  |
 | [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  no  |
+| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |  no  |
 
 
 
@@ -6442,7 +7427,7 @@ Alias: num_objects
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -6463,7 +7448,7 @@ Alias: num_objects
 ```yaml
 name: num_objects
 description: Total object count this array carries.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: num_objects
 domain_of:
@@ -6485,7 +7470,7 @@ minimum_value: 0
 
 
 
-URI: [zv:object_index_convention](https://w3id.org/zarr-vectors/schema/0.3/object_index_convention)
+URI: [zv:object_index_convention](https://w3id.org/zarr-vectors/schema/0.4/object_index_convention)
 Alias: object_index_convention
 
 <!-- no inheritance hierarchy -->
@@ -6537,7 +7522,7 @@ Alias: object_index_convention
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -6557,7 +7542,7 @@ Alias: object_index_convention
 <details>
 ```yaml
 name: object_index_convention
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: object_index_convention
 domain_of:
@@ -6581,7 +7566,7 @@ _Fraction of objects retained at this level._
 
 
 
-URI: [zv:object_sparsity](https://w3id.org/zarr-vectors/schema/0.3/object_sparsity)
+URI: [zv:object_sparsity](https://w3id.org/zarr-vectors/schema/0.4/object_sparsity)
 Alias: object_sparsity
 
 <!-- no inheritance hierarchy -->
@@ -6641,7 +7626,7 @@ Alias: object_sparsity
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -6662,7 +7647,7 @@ Alias: object_sparsity
 ```yaml
 name: object_sparsity
 description: Fraction of objects retained at this level.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: object_sparsity
 domain_of:
@@ -6688,7 +7673,7 @@ _``.zattrs`` for each ``object_attributes/<name>/`` array._
 
 
 
-URI: [zv:ObjectAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/ObjectAttributeMeta)
+URI: [zv:ObjectAttributeMeta](https://w3id.org/zarr-vectors/schema/0.4/ObjectAttributeMeta)
 
 
 
@@ -6755,7 +7740,7 @@ URI: [zv:ObjectAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/ObjectAtt
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -6782,7 +7767,7 @@ URI: [zv:ObjectAttributeMeta](https://w3id.org/zarr-vectors/schema/0.3/ObjectAtt
 ```yaml
 name: ObjectAttributeMeta
 description: '``.zattrs`` for each ``object_attributes/<name>/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
@@ -6804,7 +7789,7 @@ slot_usage:
 ```yaml
 name: ObjectAttributeMeta
 description: '``.zattrs`` for each ``object_attributes/<name>/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -6819,7 +7804,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: ObjectAttributeMeta
@@ -6835,6 +7820,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -6842,7 +7828,7 @@ attributes:
   name:
     name: name
     description: NGFF axis or attribute name (e.g. "x", "intensity").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     slot_uri: schema:name
     alias: name
@@ -6853,12 +7839,13 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
     required: true
   dtype:
     name: dtype
     description: Numpy dtype string of the array's value type (e.g. "float32").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: dtype
     owner: ObjectAttributeMeta
@@ -6869,12 +7856,13 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
     required: true
   shape:
     name: shape
     description: Shape of a dense per-object/per-group array.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: shape
     owner: ObjectAttributeMeta
@@ -6934,7 +7922,7 @@ URI: [shex:iri](http://www.w3.org/ns/shex#iri)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -6961,7 +7949,7 @@ _How the object_id → vertex-group mapping is encoded._
 
 
 
-URI: [zv:ObjectIndexConvention](https://w3id.org/zarr-vectors/schema/0.3/ObjectIndexConvention)
+URI: [zv:ObjectIndexConvention](https://w3id.org/zarr-vectors/schema/0.4/ObjectIndexConvention)
 
 ## Permissible Values
 | Value | Meaning | Description |
@@ -6996,7 +7984,7 @@ URI: [zv:ObjectIndexConvention](https://w3id.org/zarr-vectors/schema/0.3/ObjectI
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -7009,7 +7997,7 @@ URI: [zv:ObjectIndexConvention](https://w3id.org/zarr-vectors/schema/0.3/ObjectI
 ```yaml
 name: ObjectIndexConvention
 description: How the object_id → vertex-group mapping is encoded.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 permissible_values:
   standard:
@@ -7039,7 +8027,7 @@ _``.zattrs`` for ``object_index/``._
 
 
 
-URI: [zv:ObjectIndexMeta](https://w3id.org/zarr-vectors/schema/0.3/ObjectIndexMeta)
+URI: [zv:ObjectIndexMeta](https://w3id.org/zarr-vectors/schema/0.4/ObjectIndexMeta)
 
 
 
@@ -7103,7 +8091,7 @@ URI: [zv:ObjectIndexMeta](https://w3id.org/zarr-vectors/schema/0.3/ObjectIndexMe
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -7130,7 +8118,7 @@ URI: [zv:ObjectIndexMeta](https://w3id.org/zarr-vectors/schema/0.3/ObjectIndexMe
 ```yaml
 name: ObjectIndexMeta
 description: '``.zattrs`` for ``object_index/``.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
@@ -7151,7 +8139,7 @@ slot_usage:
 ```yaml
 name: ObjectIndexMeta
 description: '``.zattrs`` for ``object_index/``.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -7166,7 +8154,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: ObjectIndexMeta
@@ -7182,6 +8170,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -7189,7 +8178,7 @@ attributes:
   num_objects:
     name: num_objects
     description: Total object count this array carries.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: num_objects
     owner: ObjectIndexMeta
@@ -7202,7 +8191,7 @@ attributes:
   sid_ndim:
     name: sid_ndim
     description: Number of spatial-index dimensions encoded in chunk keys.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: sid_ndim
     owner: ObjectIndexMeta
@@ -7233,7 +8222,7 @@ _``.zattrs`` for ``object_index/pending/<batch_id>/``._
 
 
 
-URI: [zv:ObjectIndexPendingMeta](https://w3id.org/zarr-vectors/schema/0.3/ObjectIndexPendingMeta)
+URI: [zv:ObjectIndexPendingMeta](https://w3id.org/zarr-vectors/schema/0.4/ObjectIndexPendingMeta)
 
 
 
@@ -7300,7 +8289,7 @@ URI: [zv:ObjectIndexPendingMeta](https://w3id.org/zarr-vectors/schema/0.3/Object
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -7327,7 +8316,7 @@ URI: [zv:ObjectIndexPendingMeta](https://w3id.org/zarr-vectors/schema/0.3/Object
 ```yaml
 name: ObjectIndexPendingMeta
 description: '``.zattrs`` for ``object_index/pending/<batch_id>/``.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
@@ -7349,7 +8338,7 @@ slot_usage:
 ```yaml
 name: ObjectIndexPendingMeta
 description: '``.zattrs`` for ``object_index/pending/<batch_id>/``.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -7364,7 +8353,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: ObjectIndexPendingMeta
@@ -7380,6 +8369,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -7387,7 +8377,7 @@ attributes:
   batch_id:
     name: batch_id
     description: Monotonic batch id for an ``object_index/pending/<batch>`` sidecar.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: batch_id
     owner: ObjectIndexPendingMeta
@@ -7399,7 +8389,7 @@ attributes:
   num_objects:
     name: num_objects
     description: Total object count this array carries.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: num_objects
     owner: ObjectIndexPendingMeta
@@ -7412,7 +8402,7 @@ attributes:
   sid_ndim:
     name: sid_ndim
     description: Number of spatial-index dimensions encoded in chunk keys.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: sid_ndim
     owner: ObjectIndexPendingMeta
@@ -7443,7 +8433,7 @@ _Source level index (None for level 0)._
 
 
 
-URI: [zv:parent_level](https://w3id.org/zarr-vectors/schema/0.3/parent_level)
+URI: [zv:parent_level](https://w3id.org/zarr-vectors/schema/0.4/parent_level)
 Alias: parent_level
 
 <!-- no inheritance hierarchy -->
@@ -7502,7 +8492,7 @@ Alias: parent_level
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -7523,13 +8513,117 @@ Alias: parent_level
 ```yaml
 name: parent_level
 description: Source level index (None for level 0).
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: parent_level
 domain_of:
 - LevelMetadata
 range: integer
 minimum_value: 0
+
+```
+</details>
+
+
+---
+
+
+
+# Slot: preserves_object_ids 
+
+
+_True for levels written by the per-object pyramid regime.  When set, ``num_objects`` and ``object_attributes`` row count inherit from the parent level's OID space; dropped objects leave empty manifest slots and zero ``present_mask`` bytes.  ``parent_level`` is load-bearing under this flag._
+
+__
+
+
+
+
+
+URI: [zv:preserves_object_ids](https://w3id.org/zarr-vectors/schema/0.4/preserves_object_ids)
+Alias: preserves_object_ids
+
+<!-- no inheritance hierarchy -->
+
+
+
+
+
+## Applicable Classes
+
+| Name | Description | Modifies Slot |
+| --- | --- | --- |
+| [LevelMetadata](LevelMetadata.md) | Per-resolution-level `` |  no  |
+
+
+
+
+
+
+## Properties
+
+### Type and Range
+
+| Property | Value |
+| --- | --- |
+| Range | [Boolean](Boolean.md) |
+| Domain Of | [LevelMetadata](LevelMetadata.md) |
+
+### Cardinality and Requirements
+
+| Property | Value |
+| --- | --- |
+
+
+
+
+
+
+
+
+
+
+## Identifier and Mapping Information
+
+
+
+
+
+### Schema Source
+
+
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
+
+
+
+
+## Mappings
+
+| Mapping Type | Mapped Value |
+| ---  | ---  |
+| self | zv:preserves_object_ids |
+| native | zv:preserves_object_ids |
+
+
+
+
+## LinkML Source
+
+<details>
+```yaml
+name: preserves_object_ids
+description: 'True for levels written by the per-object pyramid regime.  When set,
+  ``num_objects`` and ``object_attributes`` row count inherit from the parent level''s
+  OID space; dropped objects leave empty manifest slots and zero ``present_mask``
+  bytes.  ``parent_level`` is load-bearing under this flag.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
+rank: 1000
+alias: preserves_object_ids
+domain_of:
+- LevelMetadata
+range: boolean
 
 ```
 </details>
@@ -7550,7 +8644,7 @@ __
 
 
 
-URI: [zv:record_size](https://w3id.org/zarr-vectors/schema/0.3/record_size)
+URI: [zv:record_size](https://w3id.org/zarr-vectors/schema/0.4/record_size)
 Alias: record_size
 
 <!-- no inheritance hierarchy -->
@@ -7610,7 +8704,7 @@ Alias: record_size
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -7633,7 +8727,7 @@ name: record_size
 description: 'Per-face record width in ``cross_chunk_faces/data`` (sid_ndim + 2 int64s).
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: record_size
 domain_of:
@@ -7659,7 +8753,7 @@ _Multi-resolution coarsening factor (≥ 2)._
 
 
 
-URI: [zv:reduction_factor](https://w3id.org/zarr-vectors/schema/0.3/reduction_factor)
+URI: [zv:reduction_factor](https://w3id.org/zarr-vectors/schema/0.4/reduction_factor)
 Alias: reduction_factor
 
 <!-- no inheritance hierarchy -->
@@ -7718,7 +8812,7 @@ Alias: reduction_factor
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -7739,7 +8833,7 @@ Alias: reduction_factor
 ```yaml
 name: reduction_factor
 description: Multi-resolution coarsening factor (≥ 2).
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: reduction_factor
 domain_of:
@@ -7766,7 +8860,7 @@ __
 
 
 
-URI: [zv:RootMetadata](https://w3id.org/zarr-vectors/schema/0.3/RootMetadata)
+URI: [zv:RootMetadata](https://w3id.org/zarr-vectors/schema/0.4/RootMetadata)
 
 
 
@@ -7799,6 +8893,19 @@ URI: [zv:RootMetadata](https://w3id.org/zarr-vectors/schema/0.3/RootMetadata)
         
         RootMetadata --> "0..1" CrossChunkStrategy : cross_chunk_strategy
         click CrossChunkStrategy href "../CrossChunkStrategy/"
+    
+
+        
+      RootMetadata : cross_level_depth
+        
+      RootMetadata : cross_level_storage
+        
+          
+    
+        
+        
+        RootMetadata --> "0..1" CrossLevelStorage : cross_level_storage
+        click CrossLevelStorage href "../CrossLevelStorage/"
     
 
         
@@ -7884,6 +8991,8 @@ URI: [zv:RootMetadata](https://w3id.org/zarr-vectors/schema/0.3/RootMetadata)
 | [links_convention](links_convention.md) | 0..1 <br/> [LinksConvention](LinksConvention.md) |  | direct |
 | [object_index_convention](object_index_convention.md) | 0..1 <br/> [ObjectIndexConvention](ObjectIndexConvention.md) |  | direct |
 | [cross_chunk_strategy](cross_chunk_strategy.md) | 0..1 <br/> [CrossChunkStrategy](CrossChunkStrategy.md) |  | direct |
+| [cross_level_depth](cross_level_depth.md) | 0..1 <br/> [Integer](Integer.md) | Maximum absolute level delta for which cross-pyramid-level link arrays are ma... | direct |
+| [cross_level_storage](cross_level_storage.md) | 0..1 <br/> [CrossLevelStorage](CrossLevelStorage.md) | Whether cross-level link arrays are written in both directions (``explicit``:... | direct |
 | [reduction_factor](reduction_factor.md) | 0..1 <br/> [Integer](Integer.md) | Multi-resolution coarsening factor (≥ 2) | direct |
 | [base_bin_shape](base_bin_shape.md) | * <br/> [Float](Float.md) | Supervoxel bin edge lengths at level 0 | direct |
 | [format_capabilities](format_capabilities.md) | * <br/> [FormatCapability](FormatCapability.md) | Optional 0 | direct |
@@ -7911,7 +9020,7 @@ URI: [zv:RootMetadata](https://w3id.org/zarr-vectors/schema/0.3/RootMetadata)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -7941,7 +9050,7 @@ description: 'Root-level ``.zattrs`` payload, persisted under the key ``zarr_vec
   the runtime :class:`zarr_vectors.core.metadata.RootMetadata` dataclass.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - format_version
@@ -7953,6 +9062,8 @@ slots:
 - links_convention
 - object_index_convention
 - cross_chunk_strategy
+- cross_level_depth
+- cross_level_storage
 - reduction_factor
 - base_bin_shape
 - format_capabilities
@@ -7969,13 +9080,13 @@ description: 'Root-level ``.zattrs`` payload, persisted under the key ``zarr_vec
   the runtime :class:`zarr_vectors.core.metadata.RootMetadata` dataclass.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 attributes:
   format_version:
     name: format_version
     description: Spec version this store was written against (e.g. "0.3").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     slot_uri: schema:version
     alias: format_version
@@ -7988,7 +9099,7 @@ attributes:
   spatial_index_dims:
     name: spatial_index_dims
     description: NGFF-style axis list — at least 2, with ≥2 of type "space".
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: spatial_index_dims
     owner: RootMetadata
@@ -8001,7 +9112,7 @@ attributes:
   chunk_shape:
     name: chunk_shape
     description: Physical spatial chunk size per axis (all values > 0).
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: chunk_shape
     owner: RootMetadata
@@ -8013,7 +9124,7 @@ attributes:
   bounds:
     name: bounds
     description: Global vertex bounding box.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: bounds
     owner: RootMetadata
@@ -8024,7 +9135,7 @@ attributes:
   geometry_types:
     name: geometry_types
     description: One or more geometry kinds present in the store.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: geometry_types
     owner: RootMetadata
@@ -8040,7 +9151,7 @@ attributes:
       whatever CRS vocabulary the store uses).
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     slot_uri: schema:coordinateReferenceSystem
     alias: crs
@@ -8050,7 +9161,7 @@ attributes:
     range: string
   links_convention:
     name: links_convention
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: links_convention
     owner: RootMetadata
@@ -8059,7 +9170,7 @@ attributes:
     range: LinksConvention
   object_index_convention:
     name: object_index_convention
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: object_index_convention
     owner: RootMetadata
@@ -8068,17 +9179,48 @@ attributes:
     range: ObjectIndexConvention
   cross_chunk_strategy:
     name: cross_chunk_strategy
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: cross_chunk_strategy
     owner: RootMetadata
     domain_of:
     - RootMetadata
     range: CrossChunkStrategy
+  cross_level_depth:
+    name: cross_level_depth
+    description: 'Maximum absolute level delta for which cross-pyramid-level link
+      arrays are materialized.  ``0`` = none (no ``+N`` or ``-N`` arrays), ``N`` =
+      generate up to ``±N`` (or ``+N`` only when ``cross_level_storage="implicit"``),
+      ``-1`` = all available pyramid levels.  Default ``1``.
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: cross_level_depth
+    owner: RootMetadata
+    domain_of:
+    - RootMetadata
+    range: integer
+    minimum_value: -1
+  cross_level_storage:
+    name: cross_level_storage
+    description: 'Whether cross-level link arrays are written in both directions (``explicit``:
+      ``+N`` at the finer level AND ``-N`` at the coarser level) or only positive
+      deltas (``implicit``: only ``+N``, with ``-N`` reconstructed on read).  Default
+      ``explicit``.
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
+    rank: 1000
+    alias: cross_level_storage
+    owner: RootMetadata
+    domain_of:
+    - RootMetadata
+    range: CrossLevelStorage
   reduction_factor:
     name: reduction_factor
     description: Multi-resolution coarsening factor (≥ 2).
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: reduction_factor
     owner: RootMetadata
@@ -8093,7 +9235,7 @@ attributes:
       runtime-side in ``RootMetadata.validate``).
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: base_bin_shape
     owner: RootMetadata
@@ -8104,7 +9246,7 @@ attributes:
   format_capabilities:
     name: format_capabilities
     description: Optional 0.3+ feature tokens advertised by this store.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: format_capabilities
     owner: RootMetadata
@@ -8130,7 +9272,7 @@ _Shape of a dense per-object/per-group array._
 
 
 
-URI: [zv:shape](https://w3id.org/zarr-vectors/schema/0.3/shape)
+URI: [zv:shape](https://w3id.org/zarr-vectors/schema/0.4/shape)
 Alias: shape
 
 <!-- no inheritance hierarchy -->
@@ -8185,7 +9327,7 @@ Alias: shape
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -8206,7 +9348,7 @@ Alias: shape
 ```yaml
 name: shape
 description: Shape of a dense per-object/per-group array.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: shape
 domain_of:
@@ -8215,6 +9357,109 @@ domain_of:
 range: integer
 required: true
 multivalued: true
+
+```
+</details>
+
+
+---
+
+
+
+# Slot: shared_vertex_groups 
+
+
+_True when per-chunk vertex groups may be referenced by multiple objects' manifests (shared metavertices in the per-object pyramid regime).  Readers MAY use this to short-circuit dedup work._
+
+__
+
+
+
+
+
+URI: [zv:shared_vertex_groups](https://w3id.org/zarr-vectors/schema/0.4/shared_vertex_groups)
+Alias: shared_vertex_groups
+
+<!-- no inheritance hierarchy -->
+
+
+
+
+
+## Applicable Classes
+
+| Name | Description | Modifies Slot |
+| --- | --- | --- |
+| [LevelMetadata](LevelMetadata.md) | Per-resolution-level `` |  no  |
+
+
+
+
+
+
+## Properties
+
+### Type and Range
+
+| Property | Value |
+| --- | --- |
+| Range | [Boolean](Boolean.md) |
+| Domain Of | [LevelMetadata](LevelMetadata.md) |
+
+### Cardinality and Requirements
+
+| Property | Value |
+| --- | --- |
+
+
+
+
+
+
+
+
+
+
+## Identifier and Mapping Information
+
+
+
+
+
+### Schema Source
+
+
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
+
+
+
+
+## Mappings
+
+| Mapping Type | Mapped Value |
+| ---  | ---  |
+| self | zv:shared_vertex_groups |
+| native | zv:shared_vertex_groups |
+
+
+
+
+## LinkML Source
+
+<details>
+```yaml
+name: shared_vertex_groups
+description: 'True when per-chunk vertex groups may be referenced by multiple objects''
+  manifests (shared metavertices in the per-object pyramid regime).  Readers MAY use
+  this to short-circuit dedup work.
+
+  '
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
+rank: 1000
+alias: shared_vertex_groups
+domain_of:
+- LevelMetadata
+range: boolean
 
 ```
 </details>
@@ -8233,7 +9478,7 @@ _Number of spatial-index dimensions encoded in chunk keys._
 
 
 
-URI: [zv:sid_ndim](https://w3id.org/zarr-vectors/schema/0.3/sid_ndim)
+URI: [zv:sid_ndim](https://w3id.org/zarr-vectors/schema/0.4/sid_ndim)
 Alias: sid_ndim
 
 <!-- no inheritance hierarchy -->
@@ -8248,9 +9493,9 @@ Alias: sid_ndim
 | --- | --- | --- |
 | [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  no  |
 | [CrossChunkFacesMeta](CrossChunkFacesMeta.md) | `` |  no  |
-| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |  no  |
-| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
 | [MetanodeChildrenMeta](MetanodeChildrenMeta.md) | `` |  no  |
+| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
+| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |  no  |
 
 
 
@@ -8297,7 +9542,7 @@ Alias: sid_ndim
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -8318,7 +9563,7 @@ Alias: sid_ndim
 ```yaml
 name: sid_ndim
 description: Number of spatial-index dimensions encoded in chunk keys.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: sid_ndim
 domain_of:
@@ -8376,7 +9621,7 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -8405,7 +9650,7 @@ _NGFF-style axis list — at least 2, with ≥2 of type "space"._
 
 
 
-URI: [zv:spatial_index_dims](https://w3id.org/zarr-vectors/schema/0.3/spatial_index_dims)
+URI: [zv:spatial_index_dims](https://w3id.org/zarr-vectors/schema/0.4/spatial_index_dims)
 Alias: spatial_index_dims
 
 <!-- no inheritance hierarchy -->
@@ -8460,7 +9705,7 @@ Alias: spatial_index_dims
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -8481,7 +9726,7 @@ Alias: spatial_index_dims
 ```yaml
 name: spatial_index_dims
 description: NGFF-style axis list — at least 2, with ≥2 of type "space".
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: spatial_index_dims
 domain_of:
@@ -8535,7 +9780,7 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -8594,7 +9839,7 @@ URI: [xsd:time](http://www.w3.org/2001/XMLSchema#time)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -8624,7 +9869,7 @@ _NGFF axis type — "space", "time", or "channel"._
 
 
 
-URI: [zv:type](https://w3id.org/zarr-vectors/schema/0.3/type)
+URI: [zv:type](https://w3id.org/zarr-vectors/schema/0.4/type)
 Alias: type
 
 <!-- no inheritance hierarchy -->
@@ -8677,7 +9922,7 @@ Alias: type
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -8698,7 +9943,7 @@ Alias: type
 ```yaml
 name: type
 description: NGFF axis type — "space", "time", or "channel".
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: type
 domain_of:
@@ -8723,7 +9968,7 @@ _NGFF unit string (e.g. "um", "nanometer", "second")._
 
 
 
-URI: [zv:unit](https://w3id.org/zarr-vectors/schema/0.3/unit)
+URI: [zv:unit](https://w3id.org/zarr-vectors/schema/0.4/unit)
 Alias: unit
 
 <!-- no inheritance hierarchy -->
@@ -8775,7 +10020,7 @@ Alias: unit
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -8796,7 +10041,7 @@ Alias: unit
 ```yaml
 name: unit
 description: NGFF unit string (e.g. "um", "nanometer", "second").
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: unit
 domain_of:
@@ -8852,7 +10097,7 @@ URI: [xsd:anyURI](http://www.w3.org/2001/XMLSchema#anyURI)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -8910,7 +10155,7 @@ URI: [xsd:anyURI](http://www.w3.org/2001/XMLSchema#anyURI)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -8939,7 +10184,7 @@ _Total number of vertices at this level._
 
 
 
-URI: [zv:vertex_count](https://w3id.org/zarr-vectors/schema/0.3/vertex_count)
+URI: [zv:vertex_count](https://w3id.org/zarr-vectors/schema/0.4/vertex_count)
 Alias: vertex_count
 
 <!-- no inheritance hierarchy -->
@@ -8999,7 +10244,7 @@ Alias: vertex_count
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -9020,7 +10265,7 @@ Alias: vertex_count
 ```yaml
 name: vertex_count
 description: Total number of vertices at this level.
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: vertex_count
 domain_of:
@@ -9046,7 +10291,7 @@ _``.zattrs`` for the ``vertices/`` array._
 
 
 
-URI: [zv:VerticesMeta](https://w3id.org/zarr-vectors/schema/0.3/VerticesMeta)
+URI: [zv:VerticesMeta](https://w3id.org/zarr-vectors/schema/0.4/VerticesMeta)
 
 
 
@@ -9119,7 +10364,7 @@ URI: [zv:VerticesMeta](https://w3id.org/zarr-vectors/schema/0.3/VerticesMeta)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -9146,7 +10391,7 @@ URI: [zv:VerticesMeta](https://w3id.org/zarr-vectors/schema/0.3/VerticesMeta)
 ```yaml
 name: VerticesMeta
 description: '``.zattrs`` for the ``vertices/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slots:
 - zv_array
@@ -9167,7 +10412,7 @@ slot_usage:
 ```yaml
 name: VerticesMeta
 description: '``.zattrs`` for the ``vertices/`` array.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 slot_usage:
   zv_array:
@@ -9182,7 +10427,7 @@ attributes:
       :class:`ZvArrayTag`.
 
       '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: zv_array
     owner: VerticesMeta
@@ -9198,6 +10443,7 @@ attributes:
     - CrossChunkLinksMeta
     - CrossChunkFacesMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
@@ -9205,7 +10451,7 @@ attributes:
   dtype:
     name: dtype
     description: Numpy dtype string of the array's value type (e.g. "float32").
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: dtype
     owner: VerticesMeta
@@ -9216,12 +10462,13 @@ attributes:
     - ObjectAttributeMeta
     - GroupingsAttributeMeta
     - LinkAttributeMeta
+    - CrossChunkLinkAttributeMeta
     range: string
     required: true
   encoding:
     name: encoding
     description: How the chunk bytes are encoded.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.3
+    from_schema: https://w3id.org/zarr-vectors/schema/0.4
     rank: 1000
     alias: encoding
     owner: VerticesMeta
@@ -9240,7 +10487,7 @@ attributes:
 Reference schema for the Zarr Vectors (ZV) on-disk metadata.  Covers the root-level ``.zattrs`` block (``zarr_vectors`` envelope), the per-resolution-level ``.zattrs`` block (``zarr_vectors_level`` envelope), and the per-array ``.zattrs`` shapes emitted by the writers in ``zarr_vectors/core/arrays.py`` (discriminator slot ``zv_array``).
 
 
-URI: https://w3id.org/zarr-vectors/schema/0.3
+URI: https://w3id.org/zarr-vectors/schema/0.4
 
 
 ---
@@ -9258,7 +10505,7 @@ __
 
 
 
-URI: [zv:zv_array](https://w3id.org/zarr-vectors/schema/0.3/zv_array)
+URI: [zv:zv_array](https://w3id.org/zarr-vectors/schema/0.4/zv_array)
 Alias: zv_array
 
 <!-- no inheritance hierarchy -->
@@ -9271,18 +10518,19 @@ Alias: zv_array
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [AttributeMeta](AttributeMeta.md) | `` |  yes  |
-| [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  yes  |
-| [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  yes  |
-| [GroupingsMeta](GroupingsMeta.md) | `` |  yes  |
-| [CrossChunkFacesMeta](CrossChunkFacesMeta.md) | `` |  yes  |
-| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  yes  |
-| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |  yes  |
 | [VerticesMeta](VerticesMeta.md) | `` |  yes  |
 | [LinksMeta](LinksMeta.md) | `` |  yes  |
+| [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  yes  |
+| [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  yes  |
 | [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  yes  |
-| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  yes  |
+| [CrossChunkFacesMeta](CrossChunkFacesMeta.md) | `` |  yes  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  yes  |
 | [MetanodeChildrenMeta](MetanodeChildrenMeta.md) | `` |  yes  |
+| [AttributeMeta](AttributeMeta.md) | `` |  yes  |
+| [GroupingsMeta](GroupingsMeta.md) | `` |  yes  |
+| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  yes  |
+| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |  yes  |
+| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  yes  |
 
 
 
@@ -9296,7 +10544,7 @@ Alias: zv_array
 | Property | Value |
 | --- | --- |
 | Range | [ZvArrayTag](ZvArrayTag.md) |
-| Domain Of | [VerticesMeta](VerticesMeta.md), [LinksMeta](LinksMeta.md), [AttributeMeta](AttributeMeta.md), [ObjectIndexMeta](ObjectIndexMeta.md), [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md), [ObjectAttributeMeta](ObjectAttributeMeta.md), [GroupingsMeta](GroupingsMeta.md), [GroupingsAttributeMeta](GroupingsAttributeMeta.md), [CrossChunkLinksMeta](CrossChunkLinksMeta.md), [CrossChunkFacesMeta](CrossChunkFacesMeta.md), [LinkAttributeMeta](LinkAttributeMeta.md), [MetanodeChildrenMeta](MetanodeChildrenMeta.md) |
+| Domain Of | [VerticesMeta](VerticesMeta.md), [LinksMeta](LinksMeta.md), [AttributeMeta](AttributeMeta.md), [ObjectIndexMeta](ObjectIndexMeta.md), [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md), [ObjectAttributeMeta](ObjectAttributeMeta.md), [GroupingsMeta](GroupingsMeta.md), [GroupingsAttributeMeta](GroupingsAttributeMeta.md), [CrossChunkLinksMeta](CrossChunkLinksMeta.md), [CrossChunkFacesMeta](CrossChunkFacesMeta.md), [LinkAttributeMeta](LinkAttributeMeta.md), [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md), [MetanodeChildrenMeta](MetanodeChildrenMeta.md) |
 
 ### Cardinality and Requirements
 
@@ -9322,7 +10570,7 @@ Alias: zv_array
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -9346,7 +10594,7 @@ description: 'Discriminator slot identifying the kind of per-array ``.zattrs`` b
   writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 alias: zv_array
 domain_of:
@@ -9361,6 +10609,7 @@ domain_of:
 - CrossChunkLinksMeta
 - CrossChunkFacesMeta
 - LinkAttributeMeta
+- CrossChunkLinkAttributeMeta
 - MetanodeChildrenMeta
 range: ZvArrayTag
 required: true
@@ -9382,7 +10631,7 @@ __
 
 
 
-URI: [zv:ZvArrayTag](https://w3id.org/zarr-vectors/schema/0.3/ZvArrayTag)
+URI: [zv:ZvArrayTag](https://w3id.org/zarr-vectors/schema/0.4/ZvArrayTag)
 
 ## Permissible Values
 | Value | Meaning | Description |
@@ -9398,6 +10647,7 @@ URI: [zv:ZvArrayTag](https://w3id.org/zarr-vectors/schema/0.3/ZvArrayTag)
 | cross_chunk_links | None |  |
 | cross_chunk_faces | None |  |
 | link_attribute | None |  |
+| cross_chunk_link_attribute | None |  |
 | metanode_children | None |  |
 
 
@@ -9427,7 +10677,7 @@ URI: [zv:ZvArrayTag](https://w3id.org/zarr-vectors/schema/0.3/ZvArrayTag)
 ### Schema Source
 
 
-* from schema: https://w3id.org/zarr-vectors/schema/0.3
+* from schema: https://w3id.org/zarr-vectors/schema/0.4
 
 
 
@@ -9443,7 +10693,7 @@ description: 'Discriminator value for per-array ``.zattrs`` blocks (slot ``zv_ar
   writer in ``zarr_vectors/core/arrays.py`` stamps the corresponding tag.
 
   '
-from_schema: https://w3id.org/zarr-vectors/schema/0.3
+from_schema: https://w3id.org/zarr-vectors/schema/0.4
 rank: 1000
 permissible_values:
   vertices:
@@ -9468,6 +10718,8 @@ permissible_values:
     text: cross_chunk_faces
   link_attribute:
     text: link_attribute
+  cross_chunk_link_attribute:
+    text: cross_chunk_link_attribute
   metanode_children:
     text: metanode_children
 

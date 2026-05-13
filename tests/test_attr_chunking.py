@@ -86,9 +86,8 @@ def test_points_attr_chunking_round_trip(tmp_path):
     assert lm.chunk_attribute_values == ["A", "B"]
 
     # Chunk keys all start with a bin index 0 or 1
-    chunk_dir = store / "resolution_0" / "vertices"
-    keys = [p.name for p in chunk_dir.iterdir() if p.is_file() and not p.name.startswith(".")]
-    assert keys, "no chunk files written"
+    keys = root["resolution_0"].list_chunks("vertices")
+    assert keys, "no chunks written"
     for k in keys:
         parts = k.split(".")
         assert len(parts) == 4, f"expected 4D chunk key, got {k}"
@@ -248,8 +247,8 @@ def test_polylines_attr_chunking_chunk_keys_are_4d(tmp_path):
         vertex_attributes={"bundle": labels},
         chunk_by_attribute="bundle",
     )
-    chunk_dir = pathlib.Path(store) / "resolution_0" / "vertices"
-    files = [p.name for p in chunk_dir.iterdir() if p.is_file() and not p.name.startswith(".")]
+    root = open_store(str(store))
+    files = root["resolution_0"].list_chunks("vertices")
     assert files, "no chunks written"
     for f in files:
         assert f.count(".") == 3, f"expected 4-arity key, got {f}"

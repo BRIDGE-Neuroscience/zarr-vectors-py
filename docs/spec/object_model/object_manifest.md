@@ -130,7 +130,7 @@ def read_object_vertices(store, level, object_id):
 
 For polylines and streamlines, the concatenated vertices are in traversal
 order. For graphs and skeletons, the order is determined by the VG list;
-use `links/edges/` and `cross_chunk_links/` to reconstruct the topology.
+use `links/<delta>/` and `cross_chunk_links/` to reconstruct the topology.
 
 ### Object count and density
 

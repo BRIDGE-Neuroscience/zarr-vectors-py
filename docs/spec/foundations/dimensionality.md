@@ -79,8 +79,8 @@ explicitly. The table below shows how shapes vary with `D`:
 |-------|-------|-------|
 | `vertices/` (per chunk) | `(N, D)` | N varies per chunk |
 | `vertex_group_offsets/` (per chunk) | `(B_total, 2)` | B_total = total bins in chunk; independent of D |
-| `links/edges` (per chunk) | `(E, 2)` | E varies; independent of D |
-| `links/faces` (per chunk, mesh) | `(F, 3)` | F varies; independent of D |
+| `links/<delta>` (per chunk) | `(E, 2)` | E varies; independent of D |
+| `links/<delta>` (per chunk, mesh) | `(F, 3)` | F varies; independent of D |
 | `object_index/` | `(n_objects, 2)` | independent of D |
 | `cross_chunk_links/` | `(L, 2)` | independent of D |
 

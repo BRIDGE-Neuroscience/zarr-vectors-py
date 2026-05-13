@@ -1,0 +1,61 @@
+# Benchmarks
+
+Three small notebooks that exercise the `zarr-vectors-py` write/read
+path along one scaling axis each:
+
+| Notebook | Axis | Fixed | Swept |
+|----------|------|-------|-------|
+| [`01_size_scaling.ipynb`](01_size_scaling.ipynb) | size (N) | point cloud, local backend | `N ∈ {1e3, 1e4, 1e5, 1e6}` |
+| [`02_data_types.ipynb`](02_data_types.ipynb)     | geometry type | `N = 50_000`, local backend | all 6 types |
+| [`03_backends.ipynb`](03_backends.ipynb)         | backend | point cloud, `N = 100_000` | `local` always; `obstore`/`fsspec` if `ZV_BENCH_S3_URL` is set |
+
+Each notebook follows the same shape: **setup → sweep → table →
+plot**. ~10 cells, ~1 plot, no surprises.
+
+## Running
+
+```bash
+pip install zarr-vectors pandas matplotlib
+jupyter lab examples/benchmarks/
+```
+
+Then open one and run all cells. Expected runtime on a laptop:
+
+- `01_size_scaling`: a few minutes (the 1M case dominates)
+- `02_data_types`: ~30 s
+- `03_backends`: ~10 s without cloud, longer with
+
+## Optional cloud backend benchmarking
+
+Notebook 03 benchmarks the `obstore` and `fsspec` cloud backends
+**only when** the `ZV_BENCH_S3_URL` env var is set:
+
+```bash
+export ZV_BENCH_S3_URL="s3://my-bucket/zv-bench/"
+jupyter lab examples/benchmarks/03_backends.ipynb
+```
+
+Both `obstore` and `fsspec` are optional installs:
+
+```bash
+pip install "zarr-vectors[obstore]"   # preferred
+# OR
+pip install "zarr-vectors[cloud]"     # fsspec fallback
+```
+
+When the env var is unset, the notebook prints a skip note for the
+cloud rows and reports a one-row local-only result.
+
+## Caveats
+
+These numbers are machine-dependent and **not benchmarks of
+underlying algorithms** — different geometry types do genuinely
+different work. Treat them as "what to expect on my machine" sanity
+plots, not as cross-format comparisons.
+
+No CI gating, no pytest-benchmark integration, no memory profiling
+(disk bytes only). To regenerate the notebooks from source:
+
+```bash
+python examples/benchmarks/_build.py
+```

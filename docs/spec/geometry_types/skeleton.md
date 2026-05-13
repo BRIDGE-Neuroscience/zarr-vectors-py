@@ -59,7 +59,7 @@ Identical to `graph` with `is_tree = true`.
 |-----------|----------|-------------|
 | `vertices/` | Yes | Node positions (x, y, z) |
 | `vertex_group_offsets/` | Yes | VG index |
-| `links/edges/` | Yes | Parent–child pairs `[child, parent]`; parent = `-1` for root |
+| `links/<delta>/` | Yes | Parent–child pairs `[child, parent]`; parent = `-1` for root |
 | `object_index/` | Yes | One entry per skeleton (one component = one object) |
 | `cross_chunk_links/` | Yes* | Edges crossing chunk boundaries |
 | `attributes/swc_type/` | Recommended | int32 per vertex: SWC compartment type |
@@ -82,7 +82,7 @@ Identical to `graph` with `is_tree = true`.
 | `is_tree` | `bool` | Must be `true` for skeleton type. |
 | `swc_compatible` | `bool` | When `true`, `swc_type` and `radius` attributes use standard SWC conventions and the store can be exported to SWC without loss. |
 
-### `links/edges/` encoding for skeletons
+### `links/<delta>/` encoding for skeletons
 
 Each row is `[child_local_idx, parent_local_idx]` where both indices are
 local to the chunk. For the root vertex, `parent_local_idx = -1`.

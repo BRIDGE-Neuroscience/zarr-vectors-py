@@ -1,4 +1,4 @@
-id: https://w3id.org/zarr-vectors/schema/0.3
+id: https://w3id.org/zarr-vectors/schema/0.4
 name: zarr_vectors
 title: Zarr Vectors (ZV) format
 description: >
@@ -11,7 +11,7 @@ license: BSD-3-Clause
 
 prefixes:
   linkml: https://w3id.org/linkml/
-  zv: https://w3id.org/zarr-vectors/schema/0.3/
+  zv: https://w3id.org/zarr-vectors/schema/0.4/
   ngff: https://ngff.openmicroscopy.org/0.5/
   schema: http://schema.org/
 
@@ -57,6 +57,23 @@ enums:
       both:
         description: Both boundary duplication and explicit links are present.
 
+  CrossLevelStorage:
+    description: >
+      How cross-pyramid-level edges are stored in the multiscale links
+      layout (``links/<delta>/`` and ``cross_chunk_links/<delta>/``).
+    permissible_values:
+      none:
+        description: No cross-level link arrays are emitted (``cross_level_depth=0``).
+      implicit:
+        description: >
+          Only positive deltas (``+1``, ``+2``, ...) are materialized at the
+          finer level.  Negative-delta edges are reconstructed on read by
+          flipping the matching positive-delta array at the coarser level.
+      explicit:
+        description: >
+          Both positive and negative deltas are materialized.  Writes
+          ``+N`` at the finer level and ``-N`` at the coarser level.
+
   GeometryType:
     description: The kind of geometry a store (or one of its sub-types) holds.
     permissible_values:
@@ -89,6 +106,24 @@ enums:
         description: Per-chunk ``vertex_counts/<chunk_key>`` sidecars are present.
       object_index_pending:
         description: One or more uncompacted ``object_index/pending/<batch>`` sidecars exist.
+      preserved_object_ids:
+        description: >
+          At least one level was written with ID-preserving sparsification
+          (``LevelMetadata.preserves_object_ids=True``).  Dropped objects
+          appear as empty manifest slots; ``parent_level`` carries
+          semantic weight on those levels.
+      shared_vertex_groups:
+        description: >
+          At least one level stores per-chunk vertex groups that may be
+          referenced by multiple objects' manifests (shared metavertices
+          in the per-object pyramid regime).
+      multiscale_links:
+        description: >
+          Store uses the 0.4 multiscale links layout
+          (``links/<delta>/``, ``cross_chunk_links/<delta>/``,
+          ``link_attributes/<name>/<delta>/`` and
+          ``cross_chunk_link_attributes/<name>/<delta>/``) and
+          may contain cross-pyramid-level edges (``delta != 0``).
 
   ZvArrayTag:
     description: >
@@ -107,6 +142,7 @@ enums:
       cross_chunk_links:
       cross_chunk_faces:
       link_attribute:
+      cross_chunk_link_attribute:
       metanode_children:
 
 # ===================================================================
@@ -154,6 +190,8 @@ classes:
       - links_convention
       - object_index_convention
       - cross_chunk_strategy
+      - cross_level_depth
+      - cross_level_storage
       - reduction_factor
       - base_bin_shape
       - format_capabilities
@@ -175,6 +213,9 @@ classes:
       - chunk_dims
       - chunk_attribute_name
       - chunk_attribute_values
+      - preserves_object_ids
+      - inherited_num_objects
+      - shared_vertex_groups
 
   # ----- per-array .zattrs shapes (zv_array discriminator) --------------
 
@@ -187,8 +228,12 @@ classes:
         required: true
 
   LinksMeta:
-    description: "``.zattrs`` for the ``links/`` array."
-    slots: [zv_array, dtype, link_width]
+    description: >
+      ``.zattrs`` for a ``links/<delta>/`` array.  Under the 0.4
+      multiscale layout, each delta segment carries its own meta block;
+      ``level_delta=0`` is the intra-level array (the only one written
+      pre-0.4).
+    slots: [zv_array, dtype, link_width, level_delta]
     slot_usage:
       zv_array:
         equals_string: links
@@ -243,8 +288,13 @@ classes:
         required: true
 
   CrossChunkLinksMeta:
-    description: "``.zattrs`` for ``cross_chunk_links/``."
-    slots: [zv_array, num_links, sid_ndim]
+    description: >
+      ``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Under the
+      0.4 multiscale layout, each delta segment carries its own meta
+      block; ``level_delta=0`` is the intra-level array.  Source-side
+      endpoints live at the array's own resolution level; target-side
+      endpoints live at ``this_level + level_delta``.
+    slots: [zv_array, num_links, sid_ndim, level_delta]
     slot_usage:
       zv_array:
         equals_string: cross_chunk_links
@@ -259,11 +309,25 @@ classes:
         required: true
 
   LinkAttributeMeta:
-    description: "``.zattrs`` for each ``link_attributes/<name>/`` array."
-    slots: [zv_array, name, dtype]
+    description: >
+      ``.zattrs`` for each ``link_attributes/<name>/<delta>/`` array.
+      Parallel to the ``links/<delta>/`` array of the same ``<delta>``.
+    slots: [zv_array, name, dtype, level_delta]
     slot_usage:
       zv_array:
         equals_string: link_attribute
+        required: true
+
+  CrossChunkLinkAttributeMeta:
+    description: >
+      ``.zattrs`` for each ``cross_chunk_link_attributes/<name>/<delta>/``
+      array.  Stored as a flat blob parallel to the ``data`` blob of the
+      matching ``cross_chunk_links/<delta>/`` array; ``num_links`` MUST
+      equal the parallel CCL array's ``num_links``.
+    slots: [zv_array, name, dtype, level_delta, num_links]
+    slot_usage:
+      zv_array:
+        equals_string: cross_chunk_link_attribute
         required: true
 
   MetanodeChildrenMeta:
@@ -349,6 +413,23 @@ slots:
     range: ObjectIndexConvention
   cross_chunk_strategy:
     range: CrossChunkStrategy
+  cross_level_depth:
+    description: >
+      Maximum absolute level delta for which cross-pyramid-level link
+      arrays are materialized.  ``0`` = none (no ``+N`` or ``-N``
+      arrays), ``N`` = generate up to ``±N`` (or ``+N`` only when
+      ``cross_level_storage="implicit"``), ``-1`` = all available
+      pyramid levels.  Default ``1``.
+    range: integer
+    minimum_value: -1
+  cross_level_storage:
+    description: >
+      Whether cross-level link arrays are written in both directions
+      (``explicit``: ``+N`` at the finer level AND ``-N`` at the
+      coarser level) or only positive deltas (``implicit``: only
+      ``+N``, with ``-N`` reconstructed on read).  Default
+      ``explicit``.
+    range: CrossLevelStorage
   reduction_factor:
     description: Multi-resolution coarsening factor (≥ 2).
     range: integer
@@ -422,6 +503,27 @@ slots:
       ``chunk_attribute_name`` (both set or both absent).
     range: string
     multivalued: true
+  preserves_object_ids:
+    description: >
+      True for levels written by the per-object pyramid regime.  When
+      set, ``num_objects`` and ``object_attributes`` row count inherit
+      from the parent level's OID space; dropped objects leave empty
+      manifest slots and zero ``present_mask`` bytes.  ``parent_level``
+      is load-bearing under this flag.
+    range: boolean
+  inherited_num_objects:
+    description: >
+      OID-space size inherited from the parent level
+      (= ``parent_level.num_objects``).  Required when
+      ``preserves_object_ids`` is true; absent on standalone levels.
+    range: integer
+    minimum_value: 0
+  shared_vertex_groups:
+    description: >
+      True when per-chunk vertex groups may be referenced by multiple
+      objects' manifests (shared metavertices in the per-object pyramid
+      regime).  Readers MAY use this to short-circuit dedup work.
+    range: boolean
 
   # -- per-array .zattrs ------------------------------------------------
 
@@ -447,6 +549,15 @@ slots:
     description: Width of a links row (2 for edges, 3 or 4 for face rows).
     range: integer
     minimum_value: 2
+    required: true
+  level_delta:
+    description: >
+      Pyramid-level delta between the source side (the level that owns
+      this array) and the target side of the edges.  ``0`` for
+      intra-level arrays (the only kind written pre-0.4), ``+N`` for
+      edges from this level to ``this_level + N`` (coarser), ``-N``
+      for edges to ``this_level - N`` (finer).
+    range: integer
     required: true
   num_objects:
     description: Total object count this array carries.

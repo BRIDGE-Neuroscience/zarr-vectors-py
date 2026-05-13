@@ -215,6 +215,14 @@ class ZVRWriter:
 
         ndim = self._level._root_meta.sid_ndim
 
+        # Pre-create the parent attribute group so that the parallel
+        # per-chunk writes below don't race on creating it
+        # concurrently (Windows file-rename collision on
+        # ``attributes/<name>/zarr.json``).
+        await asyncio.to_thread(
+            self._group.require_group, f"{subpath}/{name}"
+        )
+
         # Schedule one per-chunk write in parallel.  Each task reads the
         # chunk's vertex groups to discover per-group sizes, slices the
         # values array, and emits the attribute bytes.
@@ -279,8 +287,11 @@ class ZVRWriter:
         # Phase 1: gather per-chunk face counts.
         async def _count(cc: ChunkCoords) -> int:
             try:
+                # delta=0: face counts come from intra-level links only.
                 groups = await asyncio.to_thread(
-                    read_chunk_links, self._group, cc, np.int64,
+                    lambda: read_chunk_links(
+                        self._group, cc, np.int64, delta=0,
+                    ),
                 )
             except Exception:
                 return 0
@@ -305,6 +316,12 @@ class ZVRWriter:
                 continue
             slices.append((cc, arr[cursor:cursor + count]))
             cursor += count
+
+        # Pre-create the parent face_attributes/<name> group to avoid
+        # concurrent require_group races during parallel writes.
+        await asyncio.to_thread(
+            self._group.require_group, f"face_attributes/{name}"
+        )
 
         async def _write_one(cc: ChunkCoords, sub: npt.NDArray) -> None:
             # One face attribute group per chunk; faces live in a single
@@ -559,28 +576,9 @@ class ZVRWriter:
     # ---------------- root-metadata mutators ----------------------------
 
     def _stamp_capability(self, cap: str) -> None:
-        attrs = self._level._root._backend if False else None  # type: ignore[unreachable]
         # The level group is a sub-group; capabilities live on root.
-        root_group = self._group._backend  # type: ignore[attr-defined]
-        # Walk up via the lazy store: ZVRLevel doesn't have a backref
-        # but the underlying Group exposes prefix navigation.
-        from zarr_vectors.core.store import (
-            open_store, read_root_metadata,
-        )
-        # Round-trip through root_metadata to keep the field set sane.
-        # We open the store via the same backend the level group uses,
-        # at the root prefix.
-        root_url = self._group._backend.url
-        # Strip the level prefix if present
-        if self._group._prefix:
-            depth = self._group._prefix.count("/") + 1
-            # Walk URL up; simplest is to use the Group's backend
-            # directly with empty prefix.
-            from zarr_vectors.core.group import Group
-            root_handle = Group._from_backend(self._group._backend, "")
-        else:
-            from zarr_vectors.core.group import Group
-            root_handle = Group._from_backend(self._group._backend, "")
+        from zarr_vectors.core.group import Group
+        root_handle = Group._from_backend(self._group._backend, "")
         root_attrs = root_handle.attrs.to_dict()
         zv = root_attrs.get("zarr_vectors", {})
         caps = list(zv.get("format_capabilities", []))

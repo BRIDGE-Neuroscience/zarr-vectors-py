@@ -24,6 +24,8 @@ import numpy as np
 
 from zarr_vectors.constants import (
     DEFAULT_COARSENING_METHOD,
+    DEFAULT_CROSS_LEVEL_DEPTH,
+    DEFAULT_CROSS_LEVEL_STORAGE,
     DEFAULT_REDUCTION_FACTOR,
     FORMAT_VERSION,
     LINKS_IMPLICIT_SEQUENTIAL,
@@ -33,6 +35,7 @@ from zarr_vectors.constants import (
     VALID_GEOMETRY_TYPES,
     VALID_LINKS_CONVENTIONS,
     VALID_OBJIDX_CONVENTIONS,
+    VALID_XLEVEL_STORAGE,
     VALID_ENCODINGS,
     ENCODING_RAW,
 )
@@ -206,6 +209,12 @@ class RootMetadata:
     base_bin_shape: tuple[float, ...] | None = None
     """Supervoxel bin edge lengths at level 0. When None, defaults to
     chunk_shape (one bin per chunk — backward compatible)."""
+    cross_level_depth: int = DEFAULT_CROSS_LEVEL_DEPTH
+    """0.4 multiscale links: max absolute level delta materialized by
+    ``build_pyramid``.  ``0`` = none, ``N`` = up to ``±N`` (or ``+N``
+    only when ``cross_level_storage='implicit'``), ``-1`` = all."""
+    cross_level_storage: str = DEFAULT_CROSS_LEVEL_STORAGE
+    """0.4 multiscale links: ``"none"`` / ``"implicit"`` / ``"explicit"``."""
     format_capabilities: list[str] = field(default_factory=list)
     """Optional 0.3+ capability tokens this store uses (e.g.
     ``"cross_chunk_faces"``, ``"vertex_count_cache"``).  Old 0.2 stores
@@ -222,6 +231,33 @@ class RootMetadata:
         """
         if not self.format_version:
             raise MetadataError("format_version is required")
+
+        # Hard cut at the 0.4 break: pre-0.4 stores used a different
+        # link/CCL layout (no ``<delta>`` segment) and are unreadable
+        # by this build.  See ``schema/zarr_vectors.linkml.yaml`` and
+        # the multiscale-links plan for details.
+        try:
+            major, minor = (int(x) for x in self.format_version.split(".")[:2])
+        except (ValueError, AttributeError) as exc:
+            raise MetadataError(
+                f"format_version {self.format_version!r} is not a valid X.Y[.Z] string"
+            ) from exc
+        if (major, minor) < (0, 4):
+            raise MetadataError(
+                f"store format_version is {self.format_version}; this build "
+                f"requires {FORMAT_VERSION} (0.4) — no backwards-compat shim. "
+                f"Re-write the store with a 0.4 writer."
+            )
+
+        if self.cross_level_storage not in VALID_XLEVEL_STORAGE:
+            raise MetadataError(
+                f"cross_level_storage={self.cross_level_storage!r} not in "
+                f"{sorted(VALID_XLEVEL_STORAGE)}"
+            )
+        if self.cross_level_depth < -1:
+            raise MetadataError(
+                f"cross_level_depth must be ≥ -1 (got {self.cross_level_depth})"
+            )
 
         validate_axes(self.spatial_index_dims)
 
@@ -306,6 +342,8 @@ class RootMetadata:
                 "links_convention": self.links_convention,
                 "object_index_convention": self.object_index_convention,
                 "cross_chunk_strategy": self.cross_chunk_strategy,
+                "cross_level_depth": self.cross_level_depth,
+                "cross_level_storage": self.cross_level_storage,
                 "reduction_factor": self.reduction_factor,
             }
         }
@@ -349,6 +387,8 @@ class RootMetadata:
             links_convention=zv.get("links_convention", LINKS_IMPLICIT_SEQUENTIAL),
             object_index_convention=zv.get("object_index_convention", OBJIDX_STANDARD),
             cross_chunk_strategy=zv.get("cross_chunk_strategy", CROSS_CHUNK_EXPLICIT),
+            cross_level_depth=zv.get("cross_level_depth", DEFAULT_CROSS_LEVEL_DEPTH),
+            cross_level_storage=zv.get("cross_level_storage", DEFAULT_CROSS_LEVEL_STORAGE),
             reduction_factor=zv.get("reduction_factor", DEFAULT_REDUCTION_FACTOR),
             base_bin_shape=tuple(bbs) if bbs else None,
             format_capabilities=list(caps),
@@ -404,6 +444,21 @@ class LevelMetadata:
     chunk_dims: list[str] | None = None
     chunk_attribute_name: str | None = None
     chunk_attribute_values: list[Any] | None = None
+    preserves_object_ids: bool = False
+    """True for levels written by the per-object pyramid regime.
+
+    Causes ``num_objects`` and ``object_attributes`` row count to
+    inherit from the parent OID space; dropped objects leave empty
+    manifest slots and ``present_mask`` byte = 0.  ``parent_level`` is
+    load-bearing under this flag."""
+    inherited_num_objects: int | None = None
+    """OID-space size inherited from the parent level
+    (= ``parent_level.num_objects``).  Lets readers allocate lookup
+    arrays without traversing parent metadata."""
+    shared_vertex_groups: bool = False
+    """True when per-chunk vertex groups represent metavertices that
+    may be referenced by multiple objects' manifests (the shared-
+    metavertex case)."""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-compatible dict."""
@@ -426,6 +481,12 @@ class LevelMetadata:
             d["chunk_attribute_values"] = [
                 _to_python_scalar(v) for v in self.chunk_attribute_values
             ]
+        if self.preserves_object_ids:
+            d["preserves_object_ids"] = True
+        if self.inherited_num_objects is not None:
+            d["inherited_num_objects"] = int(self.inherited_num_objects)
+        if self.shared_vertex_groups:
+            d["shared_vertex_groups"] = True
         return {"zarr_vectors_level": d}
 
     @classmethod
@@ -466,6 +527,9 @@ class LevelMetadata:
             chunk_dims=list(cd) if cd else None,
             chunk_attribute_name=lv.get("chunk_attribute_name"),
             chunk_attribute_values=list(cav) if cav is not None else None,
+            preserves_object_ids=bool(lv.get("preserves_object_ids", False)),
+            inherited_num_objects=lv.get("inherited_num_objects"),
+            shared_vertex_groups=bool(lv.get("shared_vertex_groups", False)),
         )
 
     def validate(self) -> None:
@@ -524,6 +588,29 @@ class LevelMetadata:
             and len(self.chunk_attribute_values) == 0
         ):
             raise MetadataError("chunk_attribute_values must not be empty")
+
+        # ID-preserving levels must point at a parent and declare the
+        # inherited OID-space size.  Level 0 cannot preserve IDs (it
+        # *defines* the OID space).
+        if self.preserves_object_ids:
+            if self.level == 0:
+                raise MetadataError(
+                    "Level 0 cannot have preserves_object_ids=True "
+                    "(it defines the OID space)"
+                )
+            if self.parent_level is None:
+                raise MetadataError(
+                    "preserves_object_ids=True requires parent_level"
+                )
+            if self.inherited_num_objects is None:
+                raise MetadataError(
+                    "preserves_object_ids=True requires inherited_num_objects"
+                )
+            if self.inherited_num_objects < 0:
+                raise MetadataError(
+                    f"inherited_num_objects must be >= 0, got "
+                    f"{self.inherited_num_objects}"
+                )
 
 
 def _to_python_scalar(v: Any) -> Any:

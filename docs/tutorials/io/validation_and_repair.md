@@ -204,7 +204,7 @@ ERROR [L3] ccl_different_chunks  2 cross-chunk links found where
 ```
 
 Cross-chunk links where both endpoints are in the same chunk — these
-should be intra-chunk edges in `links/edges/`. Caused by incorrect link
+should be intra-chunk edges in `links/<delta>/`. Caused by incorrect link
 generation logic that triggers on bin boundaries instead of chunk
 boundaries.
 

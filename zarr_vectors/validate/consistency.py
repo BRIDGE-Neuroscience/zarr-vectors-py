@@ -168,15 +168,28 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
         except Exception:
             pass
 
-        try:
-            ccl = read_cross_chunk_links(lg)
+        # Walk every cross_chunk_links/<delta>/ array.  For delta=0
+        # both endpoints must live in this level's chunk grid; for
+        # delta != 0 only the source side (endpoint A) is constrained
+        # here (endpoint B lives at this_level + delta and is validated
+        # when that level is reached).
+        from zarr_vectors.core.arrays import list_cross_link_deltas
+        for d in list_cross_link_deltas(lg):
+            try:
+                ccl = read_cross_chunk_links(lg, delta=d)
+            except Exception:
+                continue
             for (ca, _), (cb, _) in ccl:
                 if ca not in chunk_vg_counts:
-                    result.add_error(f"{prefix}: ccl refs non-existent chunk {ca}")
-                if cb not in chunk_vg_counts:
-                    result.add_error(f"{prefix}: ccl refs non-existent chunk {cb}")
-            result.add_pass(f"{prefix}: ccl validated ({len(ccl)} links)")
-        except Exception:
-            pass
+                    result.add_error(
+                        f"{prefix}: ccl[delta={d}] refs non-existent chunk {ca}"
+                    )
+                if d == 0 and cb not in chunk_vg_counts:
+                    result.add_error(
+                        f"{prefix}: ccl[delta=0] refs non-existent chunk {cb}"
+                    )
+            result.add_pass(
+                f"{prefix}: ccl[delta={d}] validated ({len(ccl)} links)"
+            )
 
     return result

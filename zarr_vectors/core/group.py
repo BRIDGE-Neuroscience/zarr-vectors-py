@@ -1,259 +1,249 @@
-"""Backend-agnostic group abstraction.
+"""Backend-agnostic group abstraction wrapping a :class:`zarr.Group`.
 
-A :class:`Group` is a backend reference plus a key prefix.  All ZV
-conventions (``.zattrs`` JSON files, chunk-key-as-filename, sub-group as
-prefix) live in this class — backends know only about bytes and keys.
+This is the format seam: all ZV array I/O routes through this class.
+The underlying Zarr store can be any :class:`zarr.abc.store.Store` —
+``LocalStore``, ``MemoryStore``, ``FsspecStore``, ``ObjectStore``,
+``IcechunkStore``.
 
-Public surface is identical to the legacy ``FsGroup``:
+Per-chunk byte blobs are stored as tiny single-chunk 1D ``uint8`` Zarr
+arrays under a per-array Zarr group (Option G in the design doc):
 
-* ``attrs`` — dict-like access to ``.zattrs`` JSON
+    level/vertices/0.1.2          → Zarr 1D uint8 array, shape=(N,), chunks=(N,)
+    level/vertex_group_offsets/0.1.2  → likewise
+    level/object_index/data       → likewise (one blob per slot)
+
+Per-array metadata (the ``zv_array`` discriminator and friends) lives on
+the *group* node (``vertices/.attrs`` in v3 maps to ``zarr.json``
+``attributes``).
+
+Public surface mirrors the legacy :class:`FsGroup` for back-compat:
+
+* ``attrs`` — dict-like access to this group's attributes
 * ``create_group`` / ``require_group`` / ``__getitem__`` / ``__contains__``
-  / ``__iter__`` — hierarchy navigation
+  / ``__iter__`` — hierarchy navigation (sub-groups only)
 * ``write_bytes`` / ``read_bytes`` / ``chunk_exists`` / ``list_chunks`` —
-  chunk-file I/O within arrays
+  per-chunk byte I/O
 * ``write_array_meta`` / ``read_array_meta`` / ``array_exists`` —
   per-array metadata
-* ``path`` — :class:`pathlib.Path` when the backend is local, raises
-  otherwise (use ``url`` instead)
+* ``path`` — :class:`pathlib.Path` when the backing store is a Zarr
+  ``LocalStore``, raises otherwise (use ``url`` instead)
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Iterator
 
+import numpy as np
+import zarr
+from zarr.storage import LocalStore
+
 from zarr_vectors.exceptions import StoreError
-
-from zarr_vectors.core.backends.base import StorageBackend
-from zarr_vectors.core.backends.local import LocalBackend
-
-
-_ZATTRS = ".zattrs"
 
 
 class Group:
-    """A ZV group rooted at ``prefix`` within ``backend``.
+    """A ZV group wrapping an underlying :class:`zarr.Group`."""
 
-    Args:
-        backend: A :class:`StorageBackend` instance.
-        prefix: Forward-slash-separated key prefix within the backend.
-            Empty string means the root.
-    """
-
-    def __init__(self, backend: StorageBackend, prefix: str = "") -> None:
-        self._backend = backend
-        self._prefix = prefix.strip("/")
+    def __init__(self, zarr_group: zarr.Group) -> None:
+        self._zarr = zarr_group
 
     @classmethod
-    def _from_backend(cls, backend: StorageBackend, prefix: str = "") -> Group:
-        """Build an instance of ``cls`` from an existing backend reference.
-
-        Bypasses subclass ``__init__`` so child-group accessors can return
-        the same concrete type as ``self`` without re-validating paths.
-        """
+    def _from_zarr(cls, zarr_group: zarr.Group) -> Group:
         instance = cls.__new__(cls)
-        instance._backend = backend
-        instance._prefix = prefix.strip("/")
+        instance._zarr = zarr_group
         return instance
 
-    # ---------------- internal helpers ----------------
+    @classmethod
+    def _from_backend(cls, store_or_shim: Any, prefix: str = "") -> Group:
+        """Build a Group from a Zarr store (or a legacy ``_BackendShim``).
 
-    def _join(self, *parts: str) -> str:
-        """Join ``self._prefix`` with one or more sub-parts."""
-        bits = [self._prefix] if self._prefix else []
-        for p in parts:
-            p = p.strip("/")
-            if p:
-                bits.append(p)
-        return "/".join(bits)
-
-    def _is_container(self, key: str) -> bool:
-        """Return True if ``key`` looks like a ZV group container."""
-        if self._backend.exists(self._zattrs_key(key)):
-            return True
-        for _ in self._backend.list_prefix(key, recursive=False):
-            return True
-        # Empty directory on local fs (no .zattrs yet, no children).
-        return self._backend.exists(key)
-
-    @staticmethod
-    def _zattrs_key(prefix: str) -> str:
-        return f"{prefix}/{_ZATTRS}" if prefix else _ZATTRS
+        Kept for back-compat with callers in :mod:`zarr_vectors.lazy`
+        that resurrect a root-level Group from a stored backend handle.
+        Always returns a write-capable handle — a read-only store
+        reference (left over from an ``open_store(mode='r')`` flow) is
+        unwrapped via ``store.with_read_only(False)``.
+        """
+        store = store_or_shim._store if isinstance(store_or_shim, _BackendShim) else store_or_shim
+        if getattr(store, "read_only", False) and hasattr(store, "with_read_only"):
+            store = store.with_read_only(False)
+        path = "/" + prefix.strip("/") if prefix else "/"
+        zg = zarr.open_group(store, path=path, mode="r+")
+        return cls._from_zarr(zg)
 
     # ---------------- attributes ----------------
 
     @property
     def attrs(self) -> _Attrs:
-        """Dict-like access to this group's ``.zattrs`` JSON."""
-        return _Attrs(self._backend, self._zattrs_key(self._prefix))
+        return _Attrs(self._zarr.attrs)
 
     # ---------------- sub-groups ----------------
 
     def create_group(self, name: str, **_kwargs: Any) -> Group:
-        """Create a sub-group, or return an existing one with the same name.
-
-        On filesystem backends this creates an empty directory.  On flat
-        object stores it is a no-op until the first byte is written.
-        """
-        child = self._join(name)
-        self._backend.ensure_prefix(child)
-        return type(self)._from_backend(self._backend, child)
+        zg = self._zarr.require_group(name)
+        return type(self)._from_zarr(zg)
 
     def require_group(self, name: str) -> Group:
-        """Get or create a sub-group.  Always succeeds."""
-        return self.create_group(name)
+        zg = self._zarr.require_group(name)
+        return type(self)._from_zarr(zg)
 
     def __getitem__(self, key: str) -> Group:
-        """Navigate to a sub-group by name.  Slash-separated paths supported.
-
-        Raises:
-            StoreError: If the target sub-group does not exist.
-        """
-        target = self._join(key)
-        if not self._is_container(target):
-            raise StoreError(
-                f"Group {key!r} not found under {self._prefix or '<root>'} "
-                f"at {self._backend.url}"
-            )
-        return type(self)._from_backend(self._backend, target)
-
-    def __contains__(self, key: str) -> bool:
-        """Return True if ``key`` (file or sub-group) exists under this group."""
-        full = self._join(key)
-        if self._backend.exists(full):
-            return True
-        for _ in self._backend.list_prefix(full, recursive=False):
-            return True
-        return False
-
-    def __iter__(self) -> Iterator[str]:
-        """Yield names of immediate sub-group / array children (sorted).
-
-        Hidden entries (``.zattrs`` and other dotfiles) are skipped.  Only
-        container entries are yielded — leaf files are excluded.
-        """
-        seen: set[str] = set()
-        for entry in self._backend.list_prefix(self._prefix, recursive=False):
-            if not entry.endswith("/"):
-                continue
-            rel = entry[len(self._prefix) + 1:] if self._prefix else entry
-            name = rel.rstrip("/").split("/", 1)[0]
-            if not name or name.startswith(".") or name in seen:
-                continue
-            seen.add(name)
-            yield name
-
-    # ---------------- chunk I/O ----------------
-
-    def write_bytes(self, array_name: str, chunk_key: str, data: bytes) -> None:
-        """Write raw bytes to a chunk file under ``array_name/chunk_key``."""
-        self._backend.put_bytes(self._join(array_name, chunk_key), data)
-
-    def read_bytes(self, array_name: str, chunk_key: str) -> bytes:
-        """Read raw bytes from ``array_name/chunk_key``.
-
-        Raises:
-            StoreError: If the chunk does not exist.
-        """
-        key = self._join(array_name, chunk_key)
         try:
-            return self._backend.get_bytes(key)
+            node = self._zarr[key]
         except KeyError:
             raise StoreError(
-                f"Chunk {array_name!r}/{chunk_key!r} not found at "
-                f"{self._backend.url}/{key}"
+                f"Group {key!r} not found under {self._zarr.path or '<root>'}"
             ) from None
+        if not isinstance(node, zarr.Group):
+            raise StoreError(
+                f"{key!r} under {self._zarr.path or '<root>'} is a "
+                f"{type(node).__name__}, not a Group"
+            )
+        return type(self)._from_zarr(node)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._zarr
+
+    def __iter__(self) -> Iterator[str]:
+        yield from sorted(self._zarr.group_keys())
+
+    # ---------------- chunk I/O (Option G: 1 tiny array per chunk) ----------------
+
+    def write_bytes(self, array_name: str, chunk_key: str, data: bytes) -> None:
+        arr_group = self._zarr.require_group(array_name)
+        if chunk_key in arr_group:
+            del arr_group[chunk_key]
+        n = len(data)
+        if n == 0:
+            arr_group.create_array(
+                chunk_key, shape=(0,), chunks=(1,), dtype="uint8",
+            )
+            return
+        a = arr_group.create_array(
+            chunk_key, shape=(n,), chunks=(n,), dtype="uint8",
+        )
+        a[:] = np.frombuffer(data, dtype="uint8")
+
+    def read_bytes(self, array_name: str, chunk_key: str) -> bytes:
+        path = f"{array_name}/{chunk_key}"
+        try:
+            arr = self._zarr[path]
+        except KeyError:
+            shard_bytes = _read_from_shard(self._zarr, array_name, chunk_key)
+            if shard_bytes is not None:
+                return shard_bytes
+            raise StoreError(
+                f"Chunk {array_name!r}/{chunk_key!r} not found in "
+                f"{self._zarr.path or '<root>'}"
+            ) from None
+        if not isinstance(arr, zarr.Array):
+            raise StoreError(
+                f"{path!r} is a {type(arr).__name__}, not an Array"
+            )
+        if arr.shape[0] == 0:
+            return b""
+        return bytes(np.asarray(arr[:]).tobytes())
 
     def chunk_exists(self, array_name: str, chunk_key: str) -> bool:
-        """Return True if a chunk file exists."""
-        return self._backend.exists(self._join(array_name, chunk_key))
+        if f"{array_name}/{chunk_key}" in self._zarr:
+            return True
+        return _shard_index_contains(self._zarr, array_name, chunk_key)
 
     def list_chunks(self, array_name: str) -> list[str]:
-        """Return sorted chunk keys for ``array_name``.
-
-        Excludes ``.zattrs`` and any sub-directories.
-        """
-        arr_prefix = self._join(array_name)
-        chunks: list[str] = []
-        for entry in self._backend.list_prefix(arr_prefix, recursive=False):
-            if entry.endswith("/"):
-                continue
-            name = entry.rsplit("/", 1)[-1]
-            if not name or name.startswith("."):
-                continue
-            chunks.append(name)
-        return sorted(chunks)
+        if array_name not in self._zarr:
+            return []
+        try:
+            node = self._zarr[array_name]
+        except KeyError:
+            return []
+        if not isinstance(node, zarr.Group):
+            return []
+        keys: set[str] = set()
+        for k in node.array_keys():
+            if k.startswith("__shard_"):
+                shard_arr = node[k]
+                index = shard_arr.attrs.get("shard_index", None)
+                if index:
+                    keys.update(index.keys())
+            else:
+                keys.add(k)
+        return sorted(keys)
 
     # ---------------- array metadata ----------------
 
     def write_array_meta(self, array_name: str, meta: dict[str, Any]) -> None:
-        """Write array metadata to ``<array>/.zattrs``."""
-        self._backend.ensure_prefix(self._join(array_name))
-        self._backend.put_bytes(
-            self._join(array_name, _ZATTRS),
-            _dump_json(meta),
-        )
+        arr_group = self._zarr.require_group(array_name)
+        arr_group.attrs.update(_json_safe(meta))
 
     def read_array_meta(self, array_name: str) -> dict[str, Any]:
-        """Read array metadata from ``<array>/.zattrs``.  Returns ``{}`` if absent."""
+        if array_name not in self._zarr:
+            return {}
         try:
-            data = self._backend.get_bytes(self._join(array_name, _ZATTRS))
+            node = self._zarr[array_name]
         except KeyError:
             return {}
-        return json.loads(data)
+        if not isinstance(node, zarr.Group):
+            return {}
+        return dict(node.attrs)
 
     def array_exists(self, array_name: str) -> bool:
-        """Return True if an array container exists."""
-        full = self._join(array_name)
-        return self._is_container(full)
+        if array_name not in self._zarr:
+            return False
+        try:
+            node = self._zarr[array_name]
+        except KeyError:
+            return False
+        return isinstance(node, zarr.Group)
+
+    # ---------------- delete ----------------
+
+    def delete_subtree(self, name: str) -> None:
+        if name in self._zarr:
+            del self._zarr[name]
 
     # ---------------- path / url ----------------
 
     @property
     def path(self) -> Path:
-        """Filesystem :class:`Path` of this group.
-
-        Only available for backends backed by a local filesystem.  Use
-        :attr:`url` for a portable identifier.
-
-        Raises:
-            StoreError: If the active backend is not a local filesystem.
-        """
-        if not isinstance(self._backend, LocalBackend):
+        store = self._zarr.store
+        if not isinstance(store, LocalStore):
             raise StoreError(
-                f"Group.path is only available for LocalBackend; got "
-                f"{type(self._backend).__name__}.  Use Group.url instead."
+                f"Group.path is only available for LocalStore; got "
+                f"{type(store).__name__}. Use Group.url instead."
             )
-        if self._prefix:
-            return self._backend.root.joinpath(*self._prefix.split("/"))
-        return self._backend.root
+        root = _local_root(store)
+        if self._zarr.path:
+            return root.joinpath(*self._zarr.path.strip("/").split("/"))
+        return root
 
     @property
     def url(self) -> str:
-        """Canonical URL of this group's location.
-
-        Equal to ``backend.url`` for the root group; appended with a
-        slash-path for sub-groups.
-        """
-        base = self._backend.url.rstrip("/")
-        return base if not self._prefix else f"{base}/{self._prefix}"
-
-    @property
-    def backend(self) -> StorageBackend:
-        """The underlying :class:`StorageBackend`."""
-        return self._backend
+        store = self._zarr.store
+        if isinstance(store, LocalStore):
+            base = _local_root(store).absolute().as_uri()
+        else:
+            base = repr(store)
+        if self._zarr.path:
+            return f"{base.rstrip('/')}/{self._zarr.path.strip('/')}"
+        return base
 
     @property
     def prefix(self) -> str:
-        """The key prefix within the backend."""
-        return self._prefix
+        return self._zarr.path
 
-    # ---------------- delete ----------------
+    # ---------------- back-compat shims (used by lazy/) ----------------
 
-    def delete_subtree(self, name: str) -> None:
-        """Remove a sub-group / array and all its contents."""
-        self._backend.delete_prefix(self._join(name))
+    @property
+    def backend(self) -> _BackendShim:
+        return _BackendShim(self._zarr.store)
+
+    @property
+    def _backend(self) -> _BackendShim:  # noqa: D401  (legacy callers)
+        return _BackendShim(self._zarr.store)
+
+    @property
+    def zarr_group(self) -> zarr.Group:
+        """The underlying :class:`zarr.Group`."""
+        return self._zarr
 
     # ---------------- repr ----------------
 
@@ -262,73 +252,149 @@ class Group:
 
 
 # ===================================================================
-# .zattrs dict-like wrapper
+# .attrs dict-like wrapper
 # ===================================================================
 
 
 class _Attrs:
-    """Dict-like wrapper around a backend-stored ``.zattrs`` JSON document."""
+    """Dict-like wrapper around :attr:`zarr.Group.attrs`.
 
-    def __init__(self, backend: StorageBackend, key: str) -> None:
-        self._backend = backend
-        self._key = key
+    The wrapper exists for API parity with the legacy on-disk-JSON
+    ``_Attrs`` — callers use ``attrs.to_dict()``, ``attrs.update(d)``,
+    ``attrs[k]``, ``attrs.get(k, default)``, ``k in attrs``.
+    """
 
-    def _load(self) -> dict[str, Any]:
-        try:
-            data = self._backend.get_bytes(self._key)
-        except KeyError:
-            return {}
-        return json.loads(data)
-
-    def _save(self, d: dict[str, Any]) -> None:
-        self._backend.put_bytes(self._key, _dump_json(d))
+    def __init__(self, zarr_attrs: Any) -> None:
+        self._attrs = zarr_attrs
 
     def __getitem__(self, key: str) -> Any:
-        d = self._load()
-        if key not in d:
-            raise KeyError(key)
-        return d[key]
+        return self._attrs[key]
 
     def __setitem__(self, key: str, value: Any) -> None:
-        d = self._load()
-        d[key] = value
-        self._save(d)
+        self._attrs[key] = _json_safe_value(value)
 
     def __contains__(self, key: str) -> bool:
-        return key in self._load()
+        return key in self._attrs
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self._load().get(key, default)
+        try:
+            return self._attrs[key]
+        except KeyError:
+            return default
 
     def update(self, other: dict[str, Any]) -> None:
-        d = self._load()
-        d.update(other)
-        self._save(d)
+        self._attrs.update(_json_safe(other))
 
     def to_dict(self) -> dict[str, Any]:
-        return self._load()
+        return dict(self._attrs)
 
     def __repr__(self) -> str:
-        return f"_Attrs({self._key!r})"
+        return f"_Attrs({dict(self._attrs)!r})"
 
 
 # ===================================================================
-# JSON serialisation
+# Back-compat shim for `group._backend.url` / `Group._from_backend`
 # ===================================================================
 
 
-def _json_default(obj: Any) -> Any:
-    """JSON serialiser for numpy scalar / array types."""
-    import numpy as np
+class _BackendShim:
+    """Minimal compat shim for callers that reach for ``group._backend``.
 
-    if isinstance(obj, np.integer):
-        return int(obj)
-    if isinstance(obj, np.floating):
-        return float(obj)
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+    Provides the ``url`` accessor and identity needed by
+    :class:`Group._from_backend`.  Anything else raises ``AttributeError``
+    so we notice if some caller depends on the deeper legacy surface.
+    """
+
+    def __init__(self, store: Any) -> None:
+        self._store = store
+
+    @property
+    def url(self) -> str:
+        if isinstance(self._store, LocalStore):
+            return _local_root(self._store).absolute().as_uri()
+        return repr(self._store)
+
+    def close(self) -> None:
+        try:
+            close = getattr(self._store, "close", None)
+            if close is not None:
+                close()
+        except Exception:  # pragma: no cover  (defensive)
+            pass
 
 
-def _dump_json(d: dict[str, Any]) -> bytes:
-    return json.dumps(d, indent=2, default=_json_default).encode("utf-8")
+# ===================================================================
+# Helpers
+# ===================================================================
+
+
+def _local_root(store: LocalStore) -> Path:
+    raw = store.root
+    return raw if isinstance(raw, Path) else Path(raw)
+
+
+# ---------------- shard fallback (transparent read of packed chunks) ----------
+
+def _read_from_shard(
+    zarr_group: zarr.Group, array_name: str, chunk_key: str,
+) -> bytes | None:
+    """Locate ``chunk_key`` inside any ``__shard_<id>`` array under
+    ``array_name`` and return its bytes.  Returns ``None`` when no
+    shard contains the key.
+    """
+    if array_name not in zarr_group:
+        return None
+    try:
+        arr_group = zarr_group[array_name]
+    except KeyError:
+        return None
+    if not isinstance(arr_group, zarr.Group):
+        return None
+    for name in arr_group.array_keys():
+        if not name.startswith("__shard_"):
+            continue
+        shard_arr = arr_group[name]
+        index = shard_arr.attrs.get("shard_index", None)
+        if not index or chunk_key not in index:
+            continue
+        offset, nbytes = index[chunk_key]
+        packed = np.asarray(shard_arr[offset:offset + nbytes])
+        return bytes(packed.tobytes())
+    return None
+
+
+def _shard_index_contains(
+    zarr_group: zarr.Group, array_name: str, chunk_key: str,
+) -> bool:
+    if array_name not in zarr_group:
+        return False
+    try:
+        arr_group = zarr_group[array_name]
+    except KeyError:
+        return False
+    if not isinstance(arr_group, zarr.Group):
+        return False
+    for name in arr_group.array_keys():
+        if not name.startswith("__shard_"):
+            continue
+        index = arr_group[name].attrs.get("shard_index", None)
+        if index and chunk_key in index:
+            return True
+    return False
+
+
+def _json_safe(d: dict[str, Any]) -> dict[str, Any]:
+    return {k: _json_safe_value(v) for k, v in d.items()}
+
+
+def _json_safe_value(v: Any) -> Any:
+    """Coerce numpy scalars / arrays to JSON-native types for zarr attrs."""
+    if isinstance(v, np.generic):
+        return v.item()
+    if isinstance(v, np.ndarray):
+        return v.tolist()
+    if isinstance(v, (list, tuple)):
+        return [_json_safe_value(x) for x in v]
+    if isinstance(v, dict):
+        return _json_safe(v)
+    return v

@@ -172,6 +172,26 @@ class ZVRStore:
         rebind(self._root, backend, **backend_kwargs)
         self._levels_cache.clear()
 
+    def object_levels(self, oid: int) -> list[int]:
+        """Monotonically-increasing list of levels at which ``oid`` is
+        present.
+
+        For an ID-preserving pyramid, this is the set of LODs a viewer
+        can pick for the object — the object's OID is stable across
+        levels and the object is present at level $L$ iff its manifest
+        at level $L$ is non-empty.
+
+        Returns ``[]`` if the object is absent from every level.
+        """
+        out: list[int] = []
+        for L in self.levels:
+            try:
+                if self[L].has_object(oid):
+                    out.append(L)
+            except Exception:
+                continue
+        return out
+
 
 def open_zvr(
     path: str | Path,
@@ -195,3 +215,11 @@ def open_zvr(
     root = open_store(str(path), backend=backend, **backend_kwargs)
     meta = read_root_metadata(root)
     return ZVRStore(root, meta)
+
+
+def object_levels(zvr: ZVRStore, oid: int) -> list[int]:
+    """Return the levels at which ``oid`` is present.
+
+    Module-level convenience around :meth:`ZVRStore.object_levels`.
+    """
+    return zvr.object_levels(oid)

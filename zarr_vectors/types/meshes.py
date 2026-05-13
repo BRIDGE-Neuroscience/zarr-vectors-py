@@ -34,6 +34,7 @@ from zarr_vectors.core.arrays import (
     create_object_index_array,
     create_vertices_array,
     list_chunk_keys,
+    resolve_chunk_keys,
     read_chunk_links,
     read_chunk_vertices,
     read_cross_chunk_faces,
@@ -68,7 +69,6 @@ from zarr_vectors.spatial.boundary import (
 from zarr_vectors.spatial.chunking import (
     assign_bins,
     assign_chunks,
-    chunks_intersecting_bbox,
     compute_bounds,
     group_bins_by_chunk,
 )
@@ -204,9 +204,9 @@ def write_mesh(
     )
     level_group = create_resolution_level(root, 0, level_meta)
     create_vertices_array(level_group, dtype=dtype, encoding=encoding)
-    create_links_array(level_group, link_width=link_width)
+    create_links_array(level_group, link_width=link_width, delta=0)
     create_object_index_array(level_group)
-    create_cross_chunk_links_array(level_group)
+    create_cross_chunk_links_array(level_group, delta=0)
 
     if vertex_attributes:
         for name, data in vertex_attributes.items():
@@ -272,7 +272,9 @@ def write_mesh(
     if encoding != ENCODING_DRACO:
         for chunk_coords in chunk_list:
             if chunk_coords in intra_faces:
-                write_chunk_links(level_group, chunk_coords, [intra_faces[chunk_coords]])
+                write_chunk_links(
+                    level_group, chunk_coords, [intra_faces[chunk_coords]], delta=0,
+                )
 
     # Write cross-chunk faces
     # Convert cross-face refs to cross_chunk_links format
@@ -288,7 +290,9 @@ def write_mesh(
 
     idx_ndim = ndim + 1 if vertex_attr_bins is not None else ndim
     if cross_links:
-        write_cross_chunk_links(level_group, cross_links, sid_ndim=idx_ndim)
+        write_cross_chunk_links(
+            level_group, cross_links, sid_ndim=idx_ndim, delta=0,
+        )
 
     # Tier C: persist cross-chunk face identity alongside the edge-pair
     # fallback.  Old readers that ignore the new array still see
@@ -323,6 +327,7 @@ def read_mesh(
     level: int = 0,
     bbox: BoundingBox | None = None,
     object_ids: list[int] | None = None,
+    chunks: list[ChunkCoords] | None = None,
     attribute_filter: dict[str, Any] | None = None,
     backend: str | None = None,
 ) -> dict[str, Any]:
@@ -333,6 +338,10 @@ def read_mesh(
         level: Resolution level.
         bbox: Optional bounding box filter.
         object_ids: Optional object ID filter.
+        chunks: Optional whitelist of chunk coordinate tuples; only data
+            in those chunks is returned. AND-ed with ``bbox`` and
+            ``object_ids``. ``chunks=[]`` yields an empty result;
+            ``chunks=None`` (default) applies no chunk filter.
 
     Returns:
         Dict with:
@@ -354,19 +363,16 @@ def read_mesh(
 
     link_width = 3
     try:
-        lmeta = level_group.read_array_meta("links")
+        lmeta = level_group.read_array_meta("links/0")
         link_width = lmeta.get("link_width", 3)
     except Exception:
         pass
 
-    # Determine chunks to read
-    chunk_keys = list_chunk_keys(level_group)
-    if bbox is not None:
-        target = set(chunks_intersecting_bbox(
-            np.asarray(bbox[0]), np.asarray(bbox[1]),
-            root_meta.chunk_shape,
-        ))
-        chunk_keys = [k for k in chunk_keys if k in target]
+    # Determine chunks to read (intersection of physical keys, bbox-implied
+    # set, and explicit chunks whitelist).
+    chunk_keys = resolve_chunk_keys(
+        level_group, root_meta.chunk_shape, bbox=bbox, chunks=chunks,
+    )
 
     if attribute_filter:
         try:
@@ -424,7 +430,7 @@ def read_mesh(
     for chunk_coords in chunk_keys:
         try:
             link_groups = read_chunk_links(
-                level_group, chunk_coords, link_width=link_width,
+                level_group, chunk_coords, link_width=link_width, delta=0,
             )
             offset = chunk_offsets.get(chunk_coords, 0)
             for lg in link_groups:

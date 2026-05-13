@@ -54,7 +54,7 @@ seeding strategy, propagation algorithm).
 |-----------|----------|-------------|
 | `vertices/` | Yes | Vertex positions |
 | `vertex_group_offsets/` | Yes | VG index |
-| `links/edges/` | Yes | Intra-chunk consecutive vertex pairs |
+| `links/<delta>/` | Yes | Intra-chunk consecutive vertex pairs |
 | `object_index/` | Yes | Object ID → primary chunk + VG offset |
 | `cross_chunk_links/` | Yes* | Inter-chunk vertex connections |
 | `attributes/<name>/` | No | Per-vertex attributes |
@@ -72,12 +72,12 @@ its vertices appear in multiple VGs. Within each VG, vertices are stored in
 traversal order (from the start of the polyline toward the end).
 
 Across VGs within the same chunk, vertices may be interleaved with vertices
-from other polylines. The `links/edges/` array stores the consecutive pairs
+from other polylines. The `links/<delta>/` array stores the consecutive pairs
 for all polylines in the chunk, regardless of VG assignment.
 
-### `links/edges/` for polylines
+### `links/<delta>/` for polylines
 
-Each row in `links/edges/` is a pair `[i, j]` where `i` and `j` are
+Each row in `links/<delta>/` is a pair `[i, j]` where `i` and `j` are
 local-chunk vertex indices and vertex `i` immediately precedes vertex `j`
 in the traversal order of some polyline. For a polyline contributing
 vertices at local indices `[3, 7, 11, 4]` (in traversal order), the edges
@@ -171,7 +171,7 @@ as a separate string lookup table in `groupings_attributes/name/`).
 
 ### Validation
 
-L1: `vertices/`, `vertex_group_offsets/`, `links/edges/`, `object_index/`
+L1: `vertices/`, `vertex_group_offsets/`, `links/<delta>/`, `object_index/`
 exist.
 
 L3:

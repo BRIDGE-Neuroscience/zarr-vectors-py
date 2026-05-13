@@ -185,6 +185,78 @@ def partition_edges(
     return intra, cross_links
 
 
+def partition_cross_level_edges(
+    edges: npt.NDArray[np.integer],
+    src_vertex_chunks: npt.NDArray[np.int64],
+    src_vertex_local_indices: npt.NDArray[np.int64],
+    src_chunk_coords_list: list[ChunkCoords],
+    tgt_vertex_chunks: npt.NDArray[np.int64],
+    tgt_vertex_local_indices: npt.NDArray[np.int64],
+    tgt_chunk_coords_list: list[ChunkCoords],
+) -> tuple[dict[ChunkCoords, npt.NDArray[np.int64]], list[CrossChunkLink]]:
+    """Partition cross-pyramid-level edges into chunk-aligned + cross-chunk.
+
+    Unlike :func:`partition_edges` (which operates within a single
+    resolution level), this helper classifies edges whose endpoints
+    live in *different* resolution levels.  Source-side endpoint
+    indices (column 0 of ``edges``) are interpreted against
+    ``src_vertex_chunks`` / ``src_vertex_local_indices`` /
+    ``src_chunk_coords_list``; target-side endpoint indices (column 1)
+    use the ``tgt_*`` tables.
+
+    An edge is classified as **chunk-aligned** when its source chunk
+    coordinates equal its target chunk coordinates — in that case the
+    edge is bucketed by chunk and written to ``links/<delta>/<chunk_key>``
+    at the source level.  Otherwise the edge is **cross-chunk** and
+    written to ``cross_chunk_links/<delta>/data`` at the source level.
+
+    Args:
+        edges: ``(M, 2)`` integer pairs.  Column 0 is the source-level
+            global vertex index; column 1 is the target-level global
+            vertex index.
+        src_vertex_chunks, src_vertex_local_indices, src_chunk_coords_list:
+            Source-level chunk-mapping tables, in the same shape as the
+            arguments to :func:`partition_edges`.
+        tgt_vertex_chunks, tgt_vertex_local_indices, tgt_chunk_coords_list:
+            Same triple for the target level.
+
+    Returns:
+        aligned: Dict mapping source ``chunk_coords`` → ``(M_aligned, 2)``
+            array of ``(src_local_idx, tgt_local_idx)`` rows.
+        cross: List of :data:`CrossChunkLink` for edges where the
+            source and target chunk_keys differ.  Endpoint A is the
+            source side at the owning level; endpoint B is the target
+            side at ``this_level + delta``.
+    """
+    src = edges[:, 0]
+    dst = edges[:, 1]
+
+    src_chunk = src_vertex_chunks[src]
+    dst_chunk = tgt_vertex_chunks[dst]
+
+    src_cc = [src_chunk_coords_list[int(i)] for i in src_chunk]
+    dst_cc = [tgt_chunk_coords_list[int(i)] for i in dst_chunk]
+
+    aligned: dict[ChunkCoords, list[tuple[int, int]]] = {}
+    cross: list[CrossChunkLink] = []
+
+    for i in range(len(edges)):
+        s, d = int(src[i]), int(dst[i])
+        cc_s = src_cc[i]
+        cc_d = dst_cc[i]
+        local_s = int(src_vertex_local_indices[s])
+        local_d = int(tgt_vertex_local_indices[d])
+        if cc_s == cc_d:
+            aligned.setdefault(cc_s, []).append((local_s, local_d))
+        else:
+            cross.append(((cc_s, local_s), (cc_d, local_d)))
+
+    aligned_arr: dict[ChunkCoords, npt.NDArray[np.int64]] = {
+        cc: np.asarray(rows, dtype=np.int64) for cc, rows in aligned.items()
+    }
+    return aligned_arr, cross
+
+
 def partition_faces(
     faces: npt.NDArray[np.integer],
     vertex_chunks: npt.NDArray[np.int64],

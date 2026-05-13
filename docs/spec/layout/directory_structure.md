@@ -86,7 +86,11 @@ dataset.zarrvectors/
 
 ### Full annotated tree (streamline / polyline)
 
-The streamline tree adds connectivity and object-model arrays:
+The streamline tree adds connectivity and object-model arrays. Under
+the 0.4 multiscale-links layout, every link-family array carries a
+signed `<delta>` segment that says how many pyramid levels its edges
+span (`0` = intra-level, `+N` / `-N` = N levels coarser / finer). See
+[Links and cross-chunk links](../object_model/cross_chunk_links.md).
 
 ```
 tracts.zarrvectors/
@@ -102,31 +106,59 @@ tracts.zarrvectors/
     ├── vertices/                # vertex positions
     ├── vertex_group_offsets/    # VG index
     │
-    ├── links/                   # connectivity
-    │   └── edges/               # (N_seg, 2) int32 — consecutive vertex pairs
-    │       ├── zarr.json
-    │       └── c/ …
+    ├── links/                   # connectivity (per spatial chunk)
+    │   └── 0/                   # <delta>=0 → intra-level edges
+    │       ├── zarr.json        # link_width=2 for streamline/polyline
+    │       └── c/ …             # one file per chunk_key
+    │
+    ├── cross_chunk_links/       # inter-chunk edges (global flat blob)
+    │   └── 0/
+    │       ├── zarr.json        # num_links, sid_ndim, level_delta=0
+    │       └── data             # 2*(sid_ndim+1) int64s per link
+    │
+    ├── link_attributes/         # per-edge attrs, parallel to links/<delta>/
+    │   └── weight/
+    │       └── 0/
+    │           ├── zarr.json
+    │           └── c/ …
+    │
+    ├── cross_chunk_link_attributes/    # per-CCL attrs (NEW in 0.4)
+    │   └── weight/                     # parallel to cross_chunk_links/<delta>/data
+    │       └── 0/
+    │           ├── zarr.json           # num_links matches CCL meta
+    │           └── data
     │
     ├── attributes/              # per-vertex attributes (e.g. FA, MD)
     │
-    ├── object_index/            # object ID → (chunk_flat, vg_index) mapping
-    │   ├── zarr.json            # shape (n_objects, 2) int64
-    │   └── c/ …
+    ├── object_index/            # object ID → (chunk_coords, vg_index)
     │
     ├── object_attributes/       # per-object scalars (e.g. mean FA)
     │   ├── mean_fa/
     │   └── tract_length/
     │
     ├── groupings/               # group ID → [object IDs]
-    │   ├── zarr.json
-    │   └── c/ …
     │
-    ├── groupings_attributes/    # per-group metadata
-    │
-    └── cross_chunk_links/       # inter-chunk vertex connections
-        ├── zarr.json            # shape (n_links, 2) int64
-        └── c/ …
+    └── groupings_attributes/    # per-group metadata
 ```
+
+Pyramids built with `cross_level_depth >= 1` add `<delta>` siblings
+to the link arrays. A typical level-0 tree under
+`build_pyramid(..., cross_level_depth=1, cross_level_storage="explicit")`:
+
+```
+resolution_0/
+├── links/
+│   ├── 0/                   # intra-level edges
+│   └── +1/                  # cross-level: source local → coarse local (same chunk_key)
+├── cross_chunk_links/
+│   ├── 0/                   # intra-level inter-chunk edges
+│   └── +1/                  # cross-level inter-chunk edges
+└── …
+```
+
+At an intermediate level (e.g. `resolution_1`), both `+1` (drill up to
+level 2) and `-1` (drill down to level 0) appear. See
+[`examples/07_multiscale_links.ipynb`](../../../examples/07_multiscale_links.ipynb).
 
 ### Full annotated tree (graph / skeleton)
 
@@ -139,11 +171,18 @@ neuron.zarrvectors/
     ├── vertices/
     ├── vertex_group_offsets/
     ├── links/
-    │   └── edges/               # (n_edges, 2) int32 or int64
+    │   └── 0/                   # link_width=2 for graphs / skeletons
+    ├── cross_chunk_links/
+    │   └── 0/
+    ├── link_attributes/
+    │   └── weight/
+    │       └── 0/
+    ├── cross_chunk_link_attributes/
+    │   └── weight/
+    │       └── 0/
     ├── attributes/
     ├── object_index/
-    ├── object_attributes/
-    └── cross_chunk_links/
+    └── object_attributes/
 ```
 
 ### Full annotated tree (mesh)
@@ -157,7 +196,9 @@ brain.zarrvectors/
     ├── vertices/
     ├── vertex_group_offsets/
     ├── links/
-    │   └── faces/               # (n_faces, 3) int32 — triangle vertex indices
+    │   └── 0/                   # link_width=3 for triangle meshes
+    ├── cross_chunk_links/
+    │   └── 0/
     ├── attributes/
     ├── object_index/
     └── object_attributes/
@@ -203,11 +244,12 @@ Per-vertex and per-object custom attributes must be placed under
 | `resolution_0/` | All types | At least one level required |
 | `vertices/` | All types | |
 | `vertex_group_offsets/` | All types | Required for spatial queries |
-| `links/edges/` | polyline, streamline, graph, skeleton | |
-| `links/faces/` | mesh | |
+| `links/<delta>/` | polyline, streamline, graph, skeleton (`link_width=2`); mesh (`link_width=3`) | `<delta>=0` for intra-level edges; `<delta>=±N` for cross-pyramid-level edges (0.4+) |
+| `cross_chunk_links/<delta>/` | Any geometry whose objects can span multiple chunks | `<delta>=0` always; `±N` when `cross_level_depth > 0` |
+| `link_attributes/<name>/<delta>/` | Any geometry that wrote `edge_attributes` | Parallel to `links/<delta>/` |
+| `cross_chunk_link_attributes/<name>/<delta>/` | Any geometry with cross-chunk per-edge attrs (0.4+) | Parallel to `cross_chunk_links/<delta>/data` |
 | `attributes/` | All types | Optional if no per-vertex attributes |
 | `object_index/` | polyline, streamline, graph, skeleton, mesh | |
 | `object_attributes/` | Any type | Optional |
 | `groupings/` | Any discrete-object type | Optional |
-| `cross_chunk_links/` | polyline, streamline | Required when objects span chunks |
 | `parametric/` | Any type | Optional |

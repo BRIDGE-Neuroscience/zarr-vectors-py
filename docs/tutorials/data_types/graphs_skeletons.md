@@ -214,13 +214,8 @@ from zarr_vectors.multiresolution.coarsen import build_pyramid
 
 build_pyramid(
     "vessels.zarrvectors",
-    level_configs=[
-        {"bin_ratio": (2, 2, 2), "object_sparsity": 1.0},
-    ],
-    attribute_aggregation={
-        "diameter": "max",     # keep maximum diameter in each bin
-        "flow":     "mean",
-    },
+    factors=[(2.0, 1.00)],
+    agg_mode="mean",  # 0.4+: a single global mode (per-attribute via manual coarsen_level)
 )
 ```
 
@@ -242,9 +237,9 @@ G = nx.from_edgelist(edges.tolist())
 print(nx.is_forest(G))     # should be True for a valid tree
 ```
 
-**Cross-chunk edges in a graph are not in `links/edges/`.**
+**Cross-chunk edges in a graph are not in `links/<delta>/`.**
 Edges between vertices in different chunks are stored in
-`cross_chunk_links/`, not in the per-chunk `links/edges/` array. When
+`cross_chunk_links/`, not in the per-chunk `links/<delta>/` array. When
 reading a specific region, pass `include_boundary_edges=True` to include
 these inter-chunk connections.
 

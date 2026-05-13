@@ -11,7 +11,7 @@
 : The geometry type constant `"line"`. Stored in root `.zattrs` under
   `"geometry_type"`.
 
-**`links/edges/`**
+**`links/<delta>/`**
 : The array storing pairs of local-chunk vertex indices for each line
   segment in a chunk. Shape `(E, 2)` int32 per chunk, where `E` is the
   number of segments in the chunk. Both endpoints of a segment must lie
@@ -42,7 +42,7 @@ unit is a two-point segment rather than an ordered path.
 |-----------|----------|-------------|
 | `vertices/` | Yes | Endpoint positions, shape `(N, D)` float32 per chunk |
 | `vertex_group_offsets/` | Yes | VG index |
-| `links/edges/` | Yes | Segment pairs, shape `(E, 2)` int32 per chunk |
+| `links/<delta>/` | Yes | Segment pairs, shape `(E, 2)` int32 per chunk |
 | `attributes/<name>/` | No | Per-vertex attributes |
 
 No `object_index/`, `cross_chunk_links/`, or `object_attributes/` arrays.
@@ -59,7 +59,7 @@ endpoints in different chunks. To handle cross-chunk segments, pass
 and inserts a midpoint vertex; this changes the geometry slightly and is
 not always appropriate.
 
-### Vertex ordering in `links/edges/`
+### Vertex ordering in `links/<delta>/`
 
 Edge indices are local to the chunk (0-indexed within the chunk's vertex
 slice). An edge `[i, j]` in chunk `(cx, cy, cz)` refers to vertices at
@@ -128,7 +128,7 @@ result = read_lines(
 
 ### Relationship to `polyline`
 
-`line` and `polyline` share the `links/edges/` array schema. The
+`line` and `polyline` share the `links/<delta>/` array schema. The
 distinction is:
 
 | Property | `line` | `polyline` |
@@ -145,7 +145,7 @@ segment pairs.
 
 ### Validation
 
-L1: `vertices/`, `vertex_group_offsets/`, `links/edges/` exist.
+L1: `vertices/`, `vertex_group_offsets/`, `links/<delta>/` exist.
 
 L2: No `object_index/` or `cross_chunk_links/` present.
 

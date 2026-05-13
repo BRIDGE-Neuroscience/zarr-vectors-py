@@ -104,9 +104,9 @@ def write_parametric_objects(
         kw = store_kwargs or {}
         if "spatial_index_dims" not in kw:
             kw["spatial_index_dims"] = [
-                {"name": "x", "type": "space", "unit": "unit"},
-                {"name": "y", "type": "space", "unit": "unit"},
-                {"name": "z", "type": "space", "unit": "unit"},
+                {"name": "x", "type": "space"},
+                {"name": "y", "type": "space"},
+                {"name": "z", "type": "space"},
             ]
         if "chunk_shape" not in kw:
             kw["chunk_shape"] = (1000.0, 1000.0, 1000.0)

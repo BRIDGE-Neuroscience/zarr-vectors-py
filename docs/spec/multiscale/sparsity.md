@@ -216,10 +216,13 @@ object; every vertex is independent. The per-level `.zattrs` for a point
 cloud store always has `"object_sparsity": 1.0`, and the `sparsity_strategy`
 key is absent.
 
-Spatial thinning of point clouds (e.g. retaining only a random subset of
-individual points at coarser levels) is not yet a built-in strategy but
-can be implemented by setting very large `bin_shape` values such that many
-source bins collapse into one target bin with only one metanode.
+Spatial thinning of point clouds is exposed via the
+[`point_thinning` strategy](../../../zarr_vectors/multiresolution/object_selection.py):
+`select_point_thinning(positions, bin_shape, seed=...)` keeps at most
+one survivor per spatial bin, yielding a uniform-density thinned
+cloud.  The same strategy is selectable through
+`apply_sparsity(..., strategy="point_thinning",
+representative_points=, bin_shape=)`.
 
 ### Validation
 

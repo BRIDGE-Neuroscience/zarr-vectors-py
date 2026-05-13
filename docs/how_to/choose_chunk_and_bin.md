@@ -203,7 +203,7 @@ Open the store and inspect the distribution of vertices per chunk
 summary directly):
 
 ```
-resolution_0:  100000 vertices, 125 chunks
+0:  100000 vertices, 125 chunks
   vertices/chunk:  min=124  median=812  max=1843  p95=1602
 ```
 

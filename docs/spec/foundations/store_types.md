@@ -118,7 +118,7 @@ tree:
 scan.zarrvectors/
 ├── zarr.json
 ├── .zattrs
-├── resolution_0/
+├── 0/
 │   ├── zarr.json
 │   ├── .zattrs
 │   ├── vertices/

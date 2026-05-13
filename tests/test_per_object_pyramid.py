@@ -279,7 +279,7 @@ def test_object_attribute_present_mask_roundtrip(tmp_path):
     )
 
     store = _build_store(tmp_path, seed=10, n=20)
-    root = open_store(str(store))
+    root = open_store(str(store), mode="r+")
     lvl0 = get_resolution_level(root, 0)
     # Inject an object_attribute at level 0.
     obj_attr = np.arange(20, dtype="f4")

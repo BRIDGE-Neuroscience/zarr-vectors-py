@@ -79,10 +79,10 @@ build_pyramid(
 After building, the resolution summary is roughly:
 
 ```
-resolution_0:  500000 vertices
-resolution_1:   63000 vertices   (8×  reduction)
-resolution_2:    8000 vertices   (64× reduction)
-resolution_3:    1000 vertices   (512× reduction)
+0:  500000 vertices
+1:   63000 vertices   (8×  reduction)
+2:    8000 vertices   (64× reduction)
+3:    1000 vertices   (512× reduction)
 ```
 
 Actual counts at each level are less than `500000 / 8^N` because bins
@@ -170,10 +170,10 @@ build_pyramid(
 Expected output:
 
 ```
-resolution_0:  10000 streamlines, ~750 000 vertices
-resolution_1:  10000 streamlines, ~96 500 vertices   (8× vertex reduction)
-resolution_2:   2500 streamlines, ~3 100 vertices    (8× × 4× thinning)
-resolution_3:    625 streamlines, ~155 vertices
+0:  10000 streamlines, ~750 000 vertices
+1:  10000 streamlines, ~96 500 vertices   (8× vertex reduction)
+2:   2500 streamlines, ~3 100 vertices    (8× × 4× thinning)
+3:    625 streamlines, ~155 vertices
 ```
 
 `per_object` preserves OIDs: a streamline kept at level 3 has the same

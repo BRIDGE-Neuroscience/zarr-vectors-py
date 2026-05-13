@@ -151,13 +151,13 @@ bin_max = np.floor(local_max / bin_shape).astype(int)
 
 **Step 3 — Read VG index entries for overlapping bins.**
 ```python
-vg_index = zarr_open(f"resolution_0/vertex_group_offsets")[*chunk_coord]
+vg_index = zarr_open(f"0/vertex_group_offsets")[*chunk_coord]
 # Shape: (B_per_chunk, 2)
 for bin_coord in overlapping_bins:
     b = ravel_multi_index(bin_coord, bpc_shape)
     offset, count = vg_index[b]
     if count > 0:
-        verts = zarr_open("resolution_0/vertices")[*chunk_coord, offset:offset+count, :]
+        verts = zarr_open("0/vertices")[*chunk_coord, offset:offset+count, :]
         yield verts
 ```
 

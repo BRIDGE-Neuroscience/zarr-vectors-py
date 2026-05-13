@@ -9,9 +9,12 @@
   explicitly requested.
 
 **In-place rechunking**
-: Rechunking that overwrites the source store. Not supported by
-  `zarr-vectors-py` directly; achievable by writing to a temporary
-  location and replacing the original.
+: Rechunking that overwrites the source store.  Supported by
+  `zarr_vectors.rechunk.rechunk(path, spec)` when ``output`` is left
+  as ``None``: the engine writes to a sibling ``<name>.rechunked``
+  directory, renames the source to ``<name>.backup``, moves the new
+  store into place, and deletes the backup.  The source path
+  identifier is preserved across the swap.
 
 **Out-of-place rechunking**
 : Rechunking that writes to a new destination path. The original store

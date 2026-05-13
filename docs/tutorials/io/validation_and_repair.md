@@ -69,7 +69,7 @@ multi-resolution pyramid correctness.
 **`cross_chunk_links missing`**
 
 ```
-ERROR [L1] cross_chunk_links  resolution_0/cross_chunk_links/ missing;
+ERROR [L1] cross_chunk_links  0/cross_chunk_links/ missing;
                                required for streamline type
 ```
 
@@ -91,7 +91,7 @@ rebuild_cross_chunk_links("tracts.zarrvectors", level=0)
 **`object_index missing`**
 
 ```
-ERROR [L1] object_index  resolution_0/object_index/ missing
+ERROR [L1] object_index  0/object_index/ missing
 ```
 
 *Repair:* rebuild the object index from vertices and edges:
@@ -154,7 +154,7 @@ for level_group in root.values():
 **`levels_match_groups` / `level_0_present`**
 
 ```
-ERROR [L2] levels_match_groups  multiscales entry for resolution_2
+ERROR [L2] levels_match_groups  multiscales entry for 2
                                   references non-existent group
 ```
 

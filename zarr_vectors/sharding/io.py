@@ -22,6 +22,7 @@ from zarr_vectors.constants import (
     LINK_ATTRIBUTES,
 )
 from zarr_vectors.core.store import (
+    get_resolution_level,
     list_resolution_levels,
     open_store,
     read_root_metadata,
@@ -126,7 +127,7 @@ def shard_store(
     total_chunks = 0
 
     for level_idx in list_resolution_levels(root):
-        level = root[f"resolution_{level_idx}"]
+        level = get_resolution_level(root, level_idx)
         for array_name in _list_array_names(level, arrays):
             if not level.array_exists(array_name):
                 continue
@@ -188,7 +189,7 @@ def unshard_store(store_path: str | Path) -> dict[str, Any]:
     total_chunks = 0
 
     for level_idx in list_resolution_levels(root):
-        level = root[f"resolution_{level_idx}"]
+        level = get_resolution_level(root, level_idx)
         for array_name in _list_array_names(level, None):
             if not level.array_exists(array_name):
                 continue
@@ -244,7 +245,7 @@ def get_shard_info(store_path: str | Path) -> dict[str, Any]:
 
     shard_count = 0
     for level_idx in list_resolution_levels(root):
-        level = root[f"resolution_{level_idx}"]
+        level = get_resolution_level(root, level_idx)
         for array_name in _list_array_names(level, None):
             if not level.array_exists(array_name):
                 continue

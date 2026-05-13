@@ -128,7 +128,7 @@ For polyline, streamline, graph, and skeleton types:
 ```
 Level 3 validation of scan.zarrvectors
 ========================================
-Checking resolution_0 (125 chunks)…
+Checking 0 (125 chunks)…
 PASS  vg_offsets_non_negative [0]   all counts ≥ -1
 PASS  vg_offsets_no_overlap [0]     no VG slice overlaps
 PASS  vg_offsets_total_count [0]    vertex totals match

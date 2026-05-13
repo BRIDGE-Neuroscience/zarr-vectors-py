@@ -113,7 +113,7 @@ check.level      # int: conformance level this check belongs to
 check.name       # str: human-readable check name (e.g. "bin_divisibility")
 check.status     # str: "pass", "warning", or "error"
 check.message    # str: description of what was checked / what failed
-check.path       # str: store path relevant to this check (e.g. "resolution_0/.zattrs")
+check.path       # str: store path relevant to this check (e.g. "0/.zattrs")
 ```
 
 ### CLI usage

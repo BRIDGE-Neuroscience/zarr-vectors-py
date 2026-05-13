@@ -42,7 +42,7 @@ geometry_type:  point_cloud
 spatial_dims:   3
 chunk_shape:    [200.0, 200.0, 200.0]
 bin_shape:      [50.0, 50.0, 50.0]
-resolution_0:   100000 vertices, 125 chunks
+0:   100000 vertices, 125 chunks
 ```
 
 ### Write with per-vertex attributes
@@ -200,9 +200,9 @@ build_pyramid(
 After building, the resolution summary is:
 
 ```
-resolution_0:  100000 vertices  (bin_ratio 1×1×1)
-resolution_1:  12890 vertices   (bin_ratio 2×2×2)
-resolution_2:  1613 vertices    (bin_ratio 4×4×4)
+0:  100000 vertices  (bin_ratio 1×1×1)
+1:  12890 vertices   (bin_ratio 2×2×2)
+2:  1613 vertices    (bin_ratio 4×4×4)
 ```
 
 ### Anisotropic pyramids

@@ -92,8 +92,8 @@ class ZVRStore:
         return self._level_list
 
     @property
-    def format_version(self) -> str:
-        return self._meta.format_version
+    def zv_version(self) -> str:
+        return self._meta.zv_version
 
     @property
     def headers(self) -> dict[str, dict[str, Any]]:
@@ -212,7 +212,10 @@ def open_zvr(
     Returns:
         A :class:`ZVRStore` handle for lazy access.
     """
-    root = open_store(str(path), backend=backend, **backend_kwargs)
+    # mode="r+" so the writer() handles returned by ZVRLevel / ZVRStore
+    # can mutate without an extra reopen.  Pure readers pay no cost for
+    # this — the actual reads still touch only the chunks they need.
+    root = open_store(str(path), mode="r+", backend=backend, **backend_kwargs)
     meta = read_root_metadata(root)
     return ZVRStore(root, meta)
 

@@ -150,7 +150,7 @@ def rechunk(
         chunk_shape=chunk_shape,
         bounds=src_meta.bounds,
         geometry_types=src_meta.geometry_types,
-        format_version=src_meta.format_version,
+        zv_version=src_meta.zv_version,
         links_convention=src_meta.links_convention,
         object_index_convention=src_meta.object_index_convention,
         cross_chunk_strategy=src_meta.cross_chunk_strategy,

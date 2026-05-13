@@ -54,9 +54,10 @@ def _to_linkml_logical_form(root_dict: dict) -> dict:
     * ``bounds`` on disk is ``[[min...], [max...]]`` (two parallel lists).
       LinkML models it as a :class:`BoundingBox` object with
       ``min_corner`` / ``max_corner`` properties.
-    * ``crs`` on disk may be a dict or null; LinkML simplifies to a
-      string slot.  Drop None values so the schema's loose type
-      doesn't reject them.
+    * ``crs`` on disk may be a dict, scalar, or null; LinkML models it
+      as the open ``CRS`` class (``additionalProperties: true``).  The
+      JSON Schema accepts any of those, so no bridging is needed
+      anymore.
 
     This is the only place that bridges the two representations; if it
     grows beyond a handful of lines we should tighten the schema.
@@ -68,8 +69,6 @@ def _to_linkml_logical_form(root_dict: dict) -> dict:
             "min_corner": list(out["bounds"][0]),
             "max_corner": list(out["bounds"][1]),
         }
-    if out.get("crs") is None:
-        out.pop("crs", None)
     return out
 
 
@@ -244,3 +243,38 @@ def test_constant_set_matches_schema_enum(schema, enum_name, members):
     assert not extra, (
         f"{enum_name}: schema members not in constants: {sorted(extra)}"
     )
+
+
+# ===================================================================
+# Format-version cutoff (0.5.0 hard break: ``format_version`` →
+# ``zv_version`` rename, axes moved to NGFF multiscales block).
+# ===================================================================
+
+
+def test_format_version_is_0_5_0():
+    """The current ZV writer stamps 0.5.0; bump tests here when bumping."""
+    from zarr_vectors.constants import FORMAT_VERSION
+
+    assert FORMAT_VERSION == "0.5.0", (
+        f"FORMAT_VERSION drifted to {FORMAT_VERSION!r}; if intentional "
+        f"update this test and the version-cutoff check in "
+        f"zarr_vectors.core.metadata.RootMetadata.validate()."
+    )
+
+
+@pytest.mark.parametrize("stale_version", ["0.3", "0.3.5", "0.4", "0.4.0", "0.4.1"])
+def test_pre_0_5_0_stores_rejected(stale_version):
+    """Pre-0.5.0 stores must fail validate() with a clear message that
+    mentions the rename so the user knows what changed."""
+    from zarr_vectors.exceptions import MetadataError
+
+    md = _minimal_root_md()
+    md.zv_version = stale_version
+    with pytest.raises(MetadataError, match="zv_version"):
+        md.validate()
+
+
+def test_0_5_0_store_passes_validate():
+    md = _minimal_root_md()
+    md.zv_version = "0.5.0"
+    md.validate()  # should not raise

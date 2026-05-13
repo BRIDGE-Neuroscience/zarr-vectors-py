@@ -1,8 +1,17 @@
 """OME-Zarr compatible multiscale metadata for zarr vectors stores.
 
 Generates and reads ``multiscales`` metadata blocks in the root
-``.zattrs``, following the OME-NGFF spec (v0.5).  This allows
+``.zattrs``, following the OME-NGFF spec (v0.4).  This allows
 OME-Zarr-aware viewers to discover the resolution pyramid structure.
+
+NGFF v0.5 nests OME metadata under ``attributes.ome`` inside Zarr v3
+``zarr.json``; ZV writes ``multiscales`` at bare root, which matches
+the v0.4 layout — hence the ``version: "0.4"`` declaration.
+
+The ZV format discriminator lives in
+``multiscales[].metadata.format = "zarr_vectors"``, NOT in
+``multiscales[].type`` — NGFF reserves ``type`` for the downsampling
+method (``"gaussian"``, ``"nearest"``, ...).
 
 The metadata is informational and coexists with zarr vectors-specific
 metadata — it does not replace the ``zarr_vectors_level`` entries.
@@ -43,14 +52,19 @@ def write_multiscale_metadata(root: FsGroup) -> dict[str, Any]:
     ndim = meta.sid_ndim
     levels = list_resolution_levels(root)
 
-    # Build axes from spatial_index_dims
-    axes = []
+    # Build axes from spatial_index_dims.  ``unit`` is omitted unless
+    # the source axis carries a non-empty value — NGFF requires units to
+    # be UDUNITS-2 names (no placeholder strings).
+    axes: list[dict[str, str]] = []
     for ax in meta.spatial_index_dims:
-        axes.append({
+        out: dict[str, str] = {
             "name": ax.get("name", f"dim{len(axes)}"),
             "type": ax.get("type", "space"),
-            "unit": ax.get("unit", "unit"),
-        })
+        }
+        unit = ax.get("unit")
+        if unit:
+            out["unit"] = unit
+        axes.append(out)
 
     # Build datasets array (one per level)
     datasets: list[dict[str, Any]] = []
@@ -92,11 +106,14 @@ def write_multiscale_metadata(root: FsGroup) -> dict[str, Any]:
         })
 
     multiscales = [{
-        "version": "0.5",
+        "version": "0.4",
         "name": "default",
-        "type": "zarr_vectors",
         "axes": axes,
         "datasets": datasets,
+        # NGFF reserves ``type`` for the downsampling method
+        # (``"gaussian"``, ``"nearest"``, ...).  Stash the ZV format
+        # discriminator under ``metadata.format`` instead.
+        "metadata": {"format": "zarr_vectors"},
     }]
 
     # Write to root attrs (alongside existing zarr_vectors metadata)

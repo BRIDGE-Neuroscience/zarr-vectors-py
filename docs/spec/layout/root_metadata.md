@@ -83,7 +83,7 @@ optional keys.
       ],
       "datasets": [
         {
-          "path":            "resolution_0",
+          "path":            "0",
           "level":           0,
           "bin_ratio":       [1, 1, 1],
           "bin_shape":       [50.0, 50.0, 50.0],
@@ -94,7 +94,7 @@ optional keys.
           ]
         },
         {
-          "path":            "resolution_1",
+          "path":            "1",
           "level":           1,
           "bin_ratio":       [2, 2, 2],
           "bin_shape":       [100.0, 100.0, 100.0],

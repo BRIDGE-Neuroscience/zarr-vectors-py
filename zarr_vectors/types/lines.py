@@ -44,11 +44,14 @@ from zarr_vectors.core.attr_chunking import (
     assign_attribute_bins,
     compute_chunk_dim_names,
 )
+from zarr_vectors.constants import DEFAULT_OOB_POLICY
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
     FsGroup,
+    _apply_out_of_bounds_policy,
     _create_or_open_store,
     _ensure_root_metadata_for_write,
+    _finalize_write,
     create_resolution_level,
     create_store,
     get_resolution_level,
@@ -80,11 +83,13 @@ def write_lines(
     *,
     chunk_shape: ChunkShape,
     bin_shape: BinShape | None = None,
+    bounds: tuple[list[float], list[float]] | None = None,
     attributes: dict[str, npt.NDArray] | None = None,
     line_attributes: dict[str, npt.NDArray] | None = None,
     dtype: str = "float32",
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
+    out_of_bounds: str = DEFAULT_OOB_POLICY,
 ) -> dict[str, Any]:
     """Write finite line segments to a new zarr vectors store.
 
@@ -157,15 +162,30 @@ def write_lines(
     )
 
     all_pts = endpoints.reshape(-1, ndim)
-    bounds = compute_bounds(all_pts)
-    bounds_list = (bounds[0].tolist(), bounds[1].tolist())
+    if bounds is None:
+        inferred = compute_bounds(all_pts)
+        bounds_list = (inferred[0].tolist(), inferred[1].tolist())
+    else:
+        bounds_list = (list(bounds[0]), list(bounds[1]))
 
-    root = _create_or_open_store(store_path, backend=backend)
+    root = _create_or_open_store(
+        store_path,
+        backend=backend,
+        bounds=bounds_list,
+        chunk_shape=tuple(chunk_shape),
+        ndim=ndim,
+    )
+    if out_of_bounds == "ignore":
+        raise ArrayError(
+            "out_of_bounds='ignore' is not supported for write_lines: "
+            "endpoint pairing depends on full line presence. Use 'raise' "
+            "(default) or 'expand'."
+        )
+    _apply_out_of_bounds_policy(root, all_pts, policy=out_of_bounds)
+
     root_meta = _ensure_root_metadata_for_write(
         root,
         inferred_ndim=ndim,
-        inferred_bounds=bounds_list,
-        chunk_shape_hint=chunk_shape,
         geometry_type=GEOM_LINE,
         base_bin_shape=bin_shape,
         links_convention=LINKS_IMPLICIT_SEQUENTIAL,
@@ -262,6 +282,7 @@ def write_lines(
             create_object_attributes_array(level_group, name)
             write_object_attributes(level_group, name, np.asarray(data))
 
+    _finalize_write(root, "write_lines")
     return {
         "line_count": n_lines,
         "chunk_count": len(chunk_groups),

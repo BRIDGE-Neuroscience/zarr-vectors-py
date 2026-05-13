@@ -57,11 +57,14 @@ from zarr_vectors.core.attr_chunking import (
     assign_attribute_bins,
     compute_chunk_dim_names,
 )
+from zarr_vectors.constants import DEFAULT_OOB_POLICY
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
     FsGroup,
+    _apply_out_of_bounds_policy,
     _create_or_open_store,
     _ensure_root_metadata_for_write,
+    _finalize_write,
     create_resolution_level,
     create_store,
     get_resolution_level,
@@ -93,6 +96,7 @@ def write_points(
     *,
     chunk_shape: ChunkShape | None = None,
     bin_shape: BinShape | None = None,
+    bounds: tuple[list[float], list[float]] | None = None,
     attributes: dict[str, npt.NDArray] | None = None,
     object_ids: npt.NDArray[np.integer] | None = None,
     object_attributes: dict[str, npt.NDArray] | None = None,
@@ -101,6 +105,7 @@ def write_points(
     dtype: str = "float32",
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
+    out_of_bounds: str = DEFAULT_OOB_POLICY,
 ) -> dict[str, Any]:
     """Write a point cloud to a new ZV store.
 
@@ -123,6 +128,11 @@ def write_points(
             ``gene_bin.z.y.x``.  Vertices with mixed values within the
             same object are split across multiple attribute chunks.
             v1 supports integer / string dtypes only.
+        out_of_bounds: Policy for vertices outside the store's current
+            ``bounds``.  ``"raise"`` (default) rejects the write,
+            ``"ignore"`` drops out-of-bounds vertices (and their aligned
+            per-vertex data), ``"expand"`` grows the store's bounds to
+            include all input vertices.
 
     Returns:
         Summary dict.
@@ -182,15 +192,41 @@ def write_points(
     if needs_objects and object_ids is None:
         object_ids = np.arange(n_vertices, dtype=np.int64)
 
-    bounds = compute_bounds(positions)
-    bounds_list = (bounds[0].tolist(), bounds[1].tolist())
+    # Explicit `bounds=` kwarg overrides input-data extent.
+    if bounds is None:
+        inferred = compute_bounds(positions)
+        bounds_list = (inferred[0].tolist(), inferred[1].tolist())
+    else:
+        bounds_list = (list(bounds[0]), list(bounds[1]))
 
-    root = _create_or_open_store(store_path, backend=backend)
+    root = _create_or_open_store(
+        store_path,
+        backend=backend,
+        bounds=bounds_list,
+        chunk_shape=tuple(chunk_shape),
+        ndim=ndim,
+    )
+
+    # Apply out-of-bounds policy against the store's persisted bounds.
+    # On a freshly-warmed store with default bounds (128³), points that
+    # fall outside trigger this — caller picks raise / ignore / expand.
+    positions, oob_mask = _apply_out_of_bounds_policy(
+        root, positions, policy=out_of_bounds,
+    )
+    if not oob_mask.all() and out_of_bounds == "ignore":
+        n_vertices = int(oob_mask.sum())
+        if object_ids is not None:
+            object_ids = np.asarray(object_ids)[oob_mask]
+        if attributes:
+            attributes = {
+                k: np.asarray(v)[oob_mask] for k, v in attributes.items()
+            }
+        if attr_bins is not None:
+            attr_bins = attr_bins[oob_mask]
+
     root_meta = _ensure_root_metadata_for_write(
         root,
         inferred_ndim=ndim,
-        inferred_bounds=bounds_list,
-        chunk_shape_hint=chunk_shape,
         geometry_type=GEOM_POINT_CLOUD,
         base_bin_shape=bin_shape,
         links_convention=LINKS_IMPLICIT_SEQUENTIAL,
@@ -340,6 +376,7 @@ def write_points(
             create_groupings_attributes_array(level_group, name)
             write_groupings_attributes(level_group, name, data)
 
+    _finalize_write(root, "write_points")
     return {
         "vertex_count": n_vertices,
         "chunk_count": n_chunks,

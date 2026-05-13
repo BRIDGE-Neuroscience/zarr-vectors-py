@@ -140,7 +140,7 @@ read efficiently without scanning the full array:
 ```python
 from zarr_vectors.core.store import open_store
 root = open_store("tracts.zarrvectors", mode="r")
-n = root["resolution_0"]["object_index"].shape[0]
+n = root["0"]["object_index"].shape[0]
 ```
 
 ### Object index at coarser levels

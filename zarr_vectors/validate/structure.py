@@ -65,7 +65,21 @@ def validate_structure(store_path: str | Path) -> ValidationResult:
     else:
         result.add_error("No root metadata found (expected .zattrs, zarr.json, or metadata.json)")
 
-    level_dirs = sorted(d for d in root.iterdir() if d.is_dir() and d.name.startswith("resolution_"))
+    # Level directories are bare integer names (``0/``, ``1/``, ...) under
+    # the 0.4.1+ layout.  Anything that doesn't parse as an int is some
+    # other top-level group (e.g. ``parametric/``).
+    def _is_level_dir(d):
+        if not d.is_dir():
+            return False
+        try:
+            int(d.name)
+            return True
+        except ValueError:
+            return False
+    level_dirs = sorted(
+        (d for d in root.iterdir() if _is_level_dir(d)),
+        key=lambda d: int(d.name),
+    )
     if not level_dirs:
         result.add_error("No resolution level directories found")
         return result

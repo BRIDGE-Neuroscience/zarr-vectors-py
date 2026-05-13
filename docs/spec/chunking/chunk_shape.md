@@ -22,7 +22,7 @@
 **Storage key**
 : The string path at which a chunk's compressed data is stored in the
   Zarr store. For a `vertices/` chunk at coordinate `(i, j, k)` the key
-  is `resolution_0/vertices/c/i/j/k` (with `c/` prefix per Zarr v3
+  is `0/vertices/c/i/j/k` (with `c/` prefix per Zarr v3
   default encoding).
 
 **Boundary chunk**

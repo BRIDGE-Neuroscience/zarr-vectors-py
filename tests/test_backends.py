@@ -251,7 +251,7 @@ def test_rebind_swap_local_for_local(tmp_path):
 
     # Read back works after rebind.
     reopened = open_store(store_path)
-    assert reopened.attrs["zarr_vectors"]["format_version"]
+    assert reopened.attrs["zarr_vectors"]["zv_version"]
 
 
 def test_rebind_url_mismatch_raises(tmp_path):

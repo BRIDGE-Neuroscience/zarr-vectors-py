@@ -181,6 +181,63 @@ def select_by_attribute(
     return kept.astype(np.int64)
 
 
+def select_point_thinning(
+    positions: npt.NDArray[np.floating],
+    bin_shape: tuple[float, ...] | float,
+    *,
+    seed: int | None = None,
+) -> npt.NDArray[np.int64]:
+    """Spatially-aware point thinning: ≤1 point retained per spatial bin.
+
+    Distinct from :func:`select_by_spatial_coverage`: that function
+    distributes a *fixed* ``target_count`` budget proportionally to
+    each bin's density; this one *enforces* a max of one survivor per
+    bin and the resulting count is determined by the bin layout
+    (≤ number of occupied bins).  Useful for point-cloud levels where
+    the goal is uniform density, not a target object count.
+
+    Args:
+        positions: ``(N, D)`` point positions.
+        bin_shape: Spatial bin edge lengths.  Larger bins → fewer
+            survivors.
+        seed: Optional seed for selecting the survivor when a bin
+            contains multiple candidates.  When ``None``, the
+            lowest-index candidate is kept (deterministic).
+
+    Returns:
+        Sorted array of kept point indices, one per occupied bin.
+    """
+    n = len(positions)
+    if n == 0:
+        return np.zeros(0, dtype=np.int64)
+
+    ndim = positions.shape[1]
+    if isinstance(bin_shape, (int, float)):
+        bs = np.array([float(bin_shape)] * ndim)
+    else:
+        bs = np.array(bin_shape, dtype=np.float64)
+    if np.any(bs <= 0):
+        raise ValueError(f"bin_shape components must be > 0, got {bin_shape}")
+
+    # Bin each point.  np.unique over the row-of-int64 bin keys gives
+    # one representative per unique bin via ``return_index``.
+    bin_keys = np.floor(positions / bs).astype(np.int64)
+
+    if seed is not None:
+        # Permute then unique → the permuted order's first hit per bin
+        # is the survivor (randomised within bin).
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(n)
+        permuted = bin_keys[perm]
+        _, perm_first = np.unique(permuted, axis=0, return_index=True)
+        kept = perm[perm_first]
+    else:
+        _, first = np.unique(bin_keys, axis=0, return_index=True)
+        kept = first
+
+    return np.sort(kept).astype(np.int64)
+
+
 def select_random(
     n_objects: int,
     target_count: int,
@@ -225,15 +282,18 @@ def apply_sparsity(
 
     Args:
         n_objects: Total number of objects.
-        sparsity: Fraction to keep, in (0, 1].
+        sparsity: Fraction to keep, in (0, 1].  Ignored by the
+            ``"point_thinning"`` strategy, which derives the survivor
+            count from the ``bin_shape`` instead.
         strategy: One of ``"random"``, ``"length"``, ``"attribute"``,
-            ``"spatial_coverage"``.
-        seed: Random seed (for ``"random"`` strategy).
+            ``"spatial_coverage"``, ``"point_thinning"``.
+        seed: Random seed (for ``"random"`` / ``"point_thinning"``).
         lengths: Per-object lengths (for ``"length"`` strategy).
         attribute_values: Per-object values (for ``"attribute"`` strategy).
         attribute_mode: ``"max"`` or ``"min"`` (for ``"attribute"``).
-        representative_points: ``(N, D)`` points (for ``"spatial_coverage"``).
-        bin_shape: Bin shape for spatial coverage assessment.
+        representative_points: ``(N, D)`` points (for ``"spatial_coverage"``
+            and ``"point_thinning"``).
+        bin_shape: Bin shape for spatial coverage / point thinning.
 
     Returns:
         Sorted array of kept object indices.
@@ -274,10 +334,24 @@ def apply_sparsity(
             representative_points, bin_shape, target_count,
         )
 
+    elif strategy == "point_thinning":
+        if representative_points is None:
+            raise ValueError(
+                "'point_thinning' strategy requires 'representative_points'"
+            )
+        if bin_shape is None:
+            raise ValueError(
+                "'point_thinning' strategy requires 'bin_shape'"
+            )
+        return select_point_thinning(
+            representative_points, bin_shape, seed=seed,
+        )
+
     else:
         raise ValueError(
             f"Unknown strategy '{strategy}'. Must be one of: "
-            f"'random', 'length', 'attribute', 'spatial_coverage'"
+            f"'random', 'length', 'attribute', 'spatial_coverage', "
+            f"'point_thinning'"
         )
 
 

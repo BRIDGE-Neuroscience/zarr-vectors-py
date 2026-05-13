@@ -140,8 +140,8 @@ filter by length before loading geometry):
 from zarr_vectors.core.store import open_store
 
 root = open_store("tracts.zarrvectors", mode="r")
-lengths  = root["resolution_0"]["object_attributes"]["length"][:]
-mean_fa  = root["resolution_0"]["object_attributes"]["mean_fa"][:]
+lengths  = root["0"]["object_attributes"]["length"][:]
+mean_fa  = root["0"]["object_attributes"]["mean_fa"][:]
 
 # Select long, high-FA streamlines
 good_ids = np.where((lengths > 100) & (mean_fa > 0.4))[0]
@@ -215,9 +215,9 @@ build_pyramid(
 After building, the resolution summary looks like:
 
 ```
-resolution_0:  1000 streamlines, ~40 000 vertices
-resolution_1:  1000 streamlines, ~5 800 vertices (8× reduction)
-resolution_2:  250 streamlines,  ~365 vertices   (64× × 4× = 256× total)
+0:  1000 streamlines, ~40 000 vertices
+1:  1000 streamlines, ~5 800 vertices (8× reduction)
+2:  250 streamlines,  ~365 vertices   (64× × 4× = 256× total)
 ```
 
 ---

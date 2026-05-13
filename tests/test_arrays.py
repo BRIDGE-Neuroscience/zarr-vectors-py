@@ -47,7 +47,7 @@ from zarr_vectors.core.store import FsGroup
 from zarr_vectors.exceptions import ArrayError
 
 
-def _make_level_group(tmp_path: Path, name: str = "resolution_0") -> FsGroup:
+def _make_level_group(tmp_path: Path, name: str = "0") -> FsGroup:
     root = FsGroup(tmp_path / "store.zarr", create=True)
     return root.create_group(name)
 

@@ -170,7 +170,7 @@ count to avoid metadata bottlenecks:
 
 ```bash
 lfs setstripe -c 1 -S 1m /scratch/scan.zarrvectors  # metadata stripe
-lfs setstripe -c 8 -S 4m /scratch/scan.zarrvectors/resolution_0/vertices/c/
+lfs setstripe -c 8 -S 4m /scratch/scan.zarrvectors/0/vertices/c/
 ```
 
 ### Parallel I/O considerations

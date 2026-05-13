@@ -21,14 +21,18 @@ from zarr.storage import LocalStore
 from zarr_vectors.constants import (
     CAP_VERTEX_COUNT_CACHE,
     DEFAULT_AXES_NAMES,
+    DEFAULT_BOUNDS_SIDE,
+    DEFAULT_OOB_POLICY,
     FORMAT_VERSION,  # noqa: F401  (re-exported for callers)
     PARAMETRIC_GROUP,
     RESOLUTION_PREFIX,
+    VALID_OOB_POLICIES,
     VERTICES,
 )
 from zarr_vectors.core.group import Group, _BackendShim
 from zarr_vectors.core.metadata import (
     LevelMetadata,
+    NgffAxis,
     ParametricTypeDef,
     RootMetadata,
     deserialise_parametric_types,
@@ -81,16 +85,22 @@ def _make_zarr_store_with_session(
     session must be kept alive for the lifetime of the store and is
     flushed via :func:`commit`.
 
-    ``backend="icechunk"`` routes through
-    :func:`zarr_vectors.core.backends.icechunk_backend.make_icechunk_session`
-    and accepts ``branch``, ``snapshot_id``, ``repository_config``, and
-    any storage-specific kwargs (``region``, ``endpoint_url``, ...).
+    Backend routing:
 
-    Local / file:// URLs without an explicit backend use
-    :class:`zarr.storage.LocalStore`.  Cloud schemes without
-    ``backend="icechunk"`` raise: byte-level cloud routing through this
-    Zarr-Store layer is not wired up; use ``backend="icechunk"`` for a
-    transactional cloud-backed store.
+    - ``backend="icechunk"`` → transactional Zarr store from
+      :func:`zarr_vectors.core.backends.icechunk_backend.make_icechunk_session`.
+    - ``backend="fsspec"`` (or auto-detected from a cloud URL when
+      ``fsspec`` is installed) → :class:`zarr.storage.FsspecStore`
+      built from the URL.  ``**kwargs`` are forwarded as
+      ``storage_options`` (credentials, region, etc.).
+    - ``backend="obstore"`` (or auto-detected when ``obstore`` is
+      installed) → uses ``obstore.store.from_url(...)`` wrapped in
+      :class:`zarr.storage.ObjectStore` if available; falls back to
+      ``FsspecStore`` otherwise.
+    - Local / ``file://`` URLs → :class:`zarr.storage.LocalStore`.
+
+    Raises :class:`StoreError` for cloud schemes when neither
+    ``obstore`` nor ``fsspec`` is installed, with an install hint.
     """
     if backend == "icechunk":
         from zarr_vectors.core.backends.icechunk_backend import (
@@ -100,13 +110,86 @@ def _make_zarr_store_with_session(
         return make_icechunk_session(str(path), mode=mode, **kwargs)
 
     scheme = _detect_scheme(path)
-    if scheme not in {"", "file"}:
+    if scheme in {"", "file"}:
+        return LocalStore(_resolve_local_path(path)), None
+
+    # Cloud scheme — route through fsspec or obstore.
+    from zarr_vectors.core.backends import resolve_backend_name
+
+    name = resolve_backend_name(str(path), backend)
+    if name == "obstore":
+        try:
+            store = _make_obstore_zarr_store(str(path), **kwargs)
+            return store, None
+        except StoreError:
+            # Fall back to fsspec if the obstore-zarr bridge isn't
+            # available in the installed obstore version.
+            name = "fsspec"
+    if name == "fsspec":
+        return _make_fsspec_zarr_store(str(path), **kwargs), None
+
+    raise StoreError(
+        f"URL scheme {scheme!r} not routable to a Zarr-native store "
+        f"(resolved backend={name!r}). Install zarr-vectors[obstore] "
+        f"or zarr-vectors[fsspec] for cloud schemes."
+    )
+
+
+def _make_fsspec_zarr_store(url: str, **storage_options: Any) -> Any:
+    """Build a :class:`zarr.storage.FsspecStore` from a URL."""
+    try:
+        from zarr.storage import FsspecStore  # type: ignore[import-not-found]
+    except ImportError as e:  # pragma: no cover - exercised in env probes
         raise StoreError(
-            f"URL scheme {scheme!r} is not yet wired into the Zarr-native "
-            f"store layer for backend={backend!r}. Pass backend='icechunk' "
-            f"for a transactional cloud-backed store, or use a local path."
+            "FsspecStore unavailable. Install zarr>=3 and "
+            "zarr-vectors[fsspec] for cloud URL support."
+        ) from e
+    try:
+        return FsspecStore.from_url(url, storage_options=storage_options or None)
+    except Exception as e:
+        raise StoreError(
+            f"Failed to build FsspecStore for {url!r}: {e}. "
+            f"Check that the matching fsspec driver "
+            f"(s3fs / gcsfs / adlfs) is installed."
+        ) from e
+
+
+def _make_obstore_zarr_store(url: str, **storage_options: Any) -> Any:
+    """Try the obstore→zarr bridge; raise StoreError if unavailable.
+
+    The obstore→Zarr-store class moved between obstore releases; this
+    helper probes a couple of locations and surfaces a clear
+    ``StoreError`` when none are present so the caller can fall back
+    to fsspec.
+    """
+    try:
+        from obstore.store import from_url as obstore_from_url  # type: ignore[import-not-found]
+    except ImportError as e:
+        raise StoreError(
+            "obstore is not installed. Install zarr-vectors[obstore] "
+            "to enable the obstore route, or fall back to fsspec."
+        ) from e
+
+    # Newer obstore exposes a zarr-compatible store wrapper.  The
+    # symbol name has shifted across releases — try the documented
+    # locations and fall through otherwise.
+    bridge = None
+    try:
+        from obstore.store import ZarrStore as bridge  # type: ignore[import-not-found]
+    except ImportError:
+        try:
+            from obstore.zarr import ObstoreStore as bridge  # type: ignore[import-not-found]
+        except ImportError:
+            bridge = None
+
+    if bridge is None:
+        raise StoreError(
+            "Installed obstore version doesn't expose a Zarr-store "
+            "wrapper; falling back to fsspec."
         )
-    return LocalStore(_resolve_local_path(path)), None
+
+    obj_store = obstore_from_url(url, **storage_options)
+    return bridge(obj_store)
 
 
 def _make_zarr_store(
@@ -168,11 +251,12 @@ def create_store(
     path: str | Path,
     root_metadata: RootMetadata | None = None,
     *,
-    chunk_shape: tuple[float, ...] | None = None,
     bounds: tuple[list[float], list[float]] | None = None,
-    axes: list[dict[str, str]] | None = None,
+    chunk_shape: tuple[float, ...] | None = None,
+    axes: list[NgffAxis] | None = None,
     geometry_types: list[str] | None = None,
     crs: dict[str, Any] | None = None,
+    ndim: int | None = None,
     vertex_dtype: str = "float32",
     vertex_encoding: str = "raw",
     backend: str | None = None,
@@ -180,32 +264,36 @@ def create_store(
 ) -> Group:
     """Create a new ZV store.
 
-    The minimal form ``create_store(path)`` produces a structurally valid
-    "warm" shell: root group with format markers only, a ``resolution_0/``
-    sub-group, and the empty ragged-vertex pair
-    ``resolution_0/vertices/`` + ``resolution_0/vertex_group_offsets/``.
-    Dimensionality, bounds, and chunk shape are inferred and stamped
-    into root attrs on the first write call (e.g. :func:`write_points`).
+    ``create_store(path)`` produces a structurally valid "warm" shell:
+    root group with format markers + default ``bounds``, a
+    ``0/`` sub-group, and the empty ragged-vertex pair
+    ``0/vertices/`` + ``0/vertex_group_offsets/``.
 
-    Callers that already have a fully-populated :class:`RootMetadata`
-    can pass it as the second positional arg (or ``root_metadata=``);
-    its fields are written eagerly and validated up-front.
+    ``bounds`` is **mandatory** for every ZV store; when the caller does
+    not pass one, the default ``([0,...,0], [128,...,128])`` is stamped
+    (using ``ndim`` if given, otherwise inferred from ``axes`` /
+    ``chunk_shape`` / ``bounds``, defaulting to 3D).  Subsequent writes
+    must fit within these bounds unless the caller passes
+    ``out_of_bounds="expand"`` (which grows the bounds in-place) or
+    calls :func:`set_bounds` first.
 
-    The ``/parametric`` sub-group is **not** created here.  It is created
+    The ``/parametric`` sub-group is **not** created here; it is created
     lazily on first use via :func:`get_parametric_group`.
 
     Args:
         path: URL or filesystem path for the new store.
-        root_metadata: Optional fully-populated :class:`RootMetadata`.
-            When given, individual kwargs below are ignored.
-        chunk_shape: Spatial chunk size per dimension.  Optional — when
-            ``None``, inferred on first write.
-        bounds: ``(min_corner, max_corner)``.  Optional — when ``None``,
-            inferred on first write and grown across subsequent writes.
-        axes: OME-Zarr-style axes list.  Optional — when ``None``,
-            generated from :data:`DEFAULT_AXES_NAMES` on first write.
+        bounds: ``(min_corner, max_corner)``.  When omitted, defaults to
+            ``([0]*ndim, [128]*ndim)``.
+        chunk_shape: Spatial chunk size per dimension.  When omitted,
+            defaults to a single chunk covering ``bounds``.
+        axes: OME-Zarr-style axes list.  When omitted, generated from
+            :data:`DEFAULT_AXES_NAMES`.
         geometry_types: List of geometry types the store will contain.
+            Defaults to ``[]``.
         crs: Coordinate reference system dict.
+        ndim: Number of spatial index dimensions.  Useful when no other
+            ndim-bearing kwarg is supplied (``axes`` / ``bounds`` /
+            ``chunk_shape``).  Defaults to 3.
         vertex_dtype: dtype for the level-0 vertices array.
         vertex_encoding: ``"raw"`` or ``"draco"``.
         backend: Force a particular backend (``"local"`` / ``"icechunk"``).
@@ -216,18 +304,48 @@ def create_store(
 
     Raises:
         StoreError: If a store already exists at ``path``.
-        MetadataError: If ``root_metadata`` is supplied and invalid.
+        MetadataError: If kwargs are inconsistent (mismatched ndim).
     """
+    # Backward-compat: accept a fully-populated RootMetadata as the
+    # second positional arg (the pre-0.4.1 API).  Unpack it into the
+    # flat-kwargs path so the rest of the function only handles one shape.
     if root_metadata is not None:
         root_metadata.validate()
-        if CAP_VERTEX_COUNT_CACHE not in root_metadata.format_capabilities:
-            root_metadata.format_capabilities = [
-                *root_metadata.format_capabilities,
-                CAP_VERTEX_COUNT_CACHE,
-            ]
-        full_attrs: dict[str, Any] | None = root_metadata.to_dict()
-    else:
-        full_attrs = None
+        if axes is None:
+            axes = root_metadata.spatial_index_dims
+        if chunk_shape is None:
+            chunk_shape = root_metadata.chunk_shape
+        if bounds is None:
+            bounds = root_metadata.bounds
+        if geometry_types is None:
+            geometry_types = root_metadata.geometry_types
+        if crs is None:
+            crs = root_metadata.crs
+
+    resolved_ndim = _resolve_ndim(
+        ndim=ndim, axes=axes, chunk_shape=chunk_shape, bounds=bounds,
+    )
+    if axes is None:
+        if resolved_ndim > len(DEFAULT_AXES_NAMES):
+            raise MetadataError(
+                f"Cannot auto-generate axes for ndim={resolved_ndim}; "
+                f"pass an explicit `axes` kwarg."
+            )
+        axes = [
+            {"name": n, "type": "space"}
+            for n in DEFAULT_AXES_NAMES[:resolved_ndim]
+        ]
+    if bounds is None:
+        bounds = (
+            [0.0] * resolved_ndim,
+            [DEFAULT_BOUNDS_SIDE] * resolved_ndim,
+        )
+    if chunk_shape is None:
+        chunk_shape = tuple(
+            float(hi - lo) for lo, hi in zip(bounds[0], bounds[1])
+        )
+    if geometry_types is None:
+        geometry_types = []
 
     local_root: Path | None = None
     if backend != "icechunk":
@@ -247,19 +365,25 @@ def create_store(
     root = FsGroup.__new__(FsGroup) if isinstance(store, LocalStore) else Group.__new__(Group)
     root._zarr = zg
 
-    if full_attrs is not None:
-        root.attrs.update(full_attrs)
-    else:
-        _write_root_attrs_partial(
-            root,
-            chunk_shape=chunk_shape,
-            bounds=bounds,
-            axes=axes,
-            geometry_types=geometry_types,
-            crs=crs,
-        )
+    _write_root_attrs(
+        root,
+        chunk_shape=chunk_shape,
+        bounds=bounds,
+        axes=axes,
+        geometry_types=geometry_types,
+        crs=crs,
+    )
+    # Backward-compat: merge the non-structural fields from a supplied
+    # RootMetadata (conventions, base_bin_shape, cross_level_*, etc.) on
+    # top of the flat-kwarg attrs.
+    if root_metadata is not None:
+        full = root_metadata.to_dict()
+        attrs = root.attrs.to_dict()
+        merged = dict(attrs.get("zarr_vectors", {}))
+        merged.update(full.get("zarr_vectors", {}))
+        root.attrs.update({"zarr_vectors": merged})
 
-    # resolution_0/ + empty vertices pair — the "warm" payload.
+    # 0/ + empty vertices pair — the "warm" payload.
     level0 = root.create_group(f"{RESOLUTION_PREFIX}0")
     level0.attrs.update(
         LevelMetadata(
@@ -274,117 +398,146 @@ def create_store(
     return root
 
 
-def _write_root_attrs_partial(
-    root: Group,
+def _resolve_ndim(
     *,
+    ndim: int | None,
+    axes: list[dict[str, str]] | None,
     chunk_shape: tuple[float, ...] | None,
     bounds: tuple[list[float], list[float]] | None,
-    axes: list[dict[str, str]] | None,
-    geometry_types: list[str] | None,
-    crs: dict[str, Any] | None,
-) -> None:
-    """Write the ``zarr_vectors`` root-attrs block with only the fields
-    the caller supplied.  Missing structural fields stay absent and are
-    later filled in by :func:`_ensure_root_metadata_for_write` on the
-    first write.
+) -> int:
+    """Resolve a single ``sid_ndim`` from the kwargs that bear it.
+
+    Mismatched values raise.  ``None`` falls back to 3D.
     """
-    existing = root.attrs.to_dict().get("zarr_vectors", {})
+    candidates: list[tuple[str, int]] = []
+    if ndim is not None:
+        candidates.append(("ndim", ndim))
+    if axes is not None:
+        candidates.append(("axes", len(axes)))
+    if chunk_shape is not None:
+        candidates.append(("chunk_shape", len(chunk_shape)))
+    if bounds is not None:
+        candidates.append(("bounds[0]", len(bounds[0])))
+        candidates.append(("bounds[1]", len(bounds[1])))
+    if not candidates:
+        return 3
+    base_name, base = candidates[0]
+    for name, value in candidates[1:]:
+        if value != base:
+            raise MetadataError(
+                f"Inconsistent dimensionality: {base_name}={base}, "
+                f"{name}={value}"
+            )
+    return base
+
+
+def _write_root_attrs(
+    root: Group,
+    *,
+    chunk_shape: tuple[float, ...],
+    bounds: tuple[list[float], list[float]],
+    axes: list[dict[str, str]],
+    geometry_types: list[str],
+    crs: dict[str, Any] | None = None,
+) -> None:
+    """Write the ``zarr_vectors`` root-attrs block plus the eager NGFF
+    ``multiscales`` block (axes only — ``datasets`` are filled in by
+    :func:`zarr_vectors.core.multiscale.write_multiscale_metadata`
+    when the pyramid is materialised).
+
+    Used by :func:`create_store` (initial) and helpers that update
+    structural fields after create (e.g. :func:`set_bounds`).
+    """
+    full_attrs = root.attrs.to_dict()
+    existing = full_attrs.get("zarr_vectors", {})
     zv: dict[str, Any] = dict(existing)
-    zv["format_version"] = FORMAT_VERSION
+    zv["zv_version"] = FORMAT_VERSION
     caps = list(zv.get("format_capabilities") or [])
     if CAP_VERTEX_COUNT_CACHE not in caps:
         caps.append(CAP_VERTEX_COUNT_CACHE)
     zv["format_capabilities"] = caps
-    if axes is not None:
-        zv["spatial_index_dims"] = axes
-    if chunk_shape is not None:
-        zv["chunk_shape"] = list(chunk_shape)
-    if bounds is not None:
-        zv["bounds"] = [list(bounds[0]), list(bounds[1])]
-    if geometry_types is not None:
-        zv["geometry_types"] = list(geometry_types)
+    zv["chunk_shape"] = list(chunk_shape)
+    zv["bounds"] = [list(bounds[0]), list(bounds[1])]
+    zv["geometry_types"] = list(geometry_types)
     if crs is not None:
         zv["crs"] = crs
-    root.attrs.update({"zarr_vectors": zv})
+
+    # Eager NGFF ``multiscales`` block — axes are the canonical axis
+    # store from 0.5.0 on.  We seed datasets with level 0 only; the
+    # multiscale module rewrites datasets when more levels appear.
+    existing_ms = full_attrs.get("multiscales") or []
+    ms_entry: dict[str, Any] = (
+        dict(existing_ms[0]) if existing_ms and isinstance(existing_ms, list)
+        else {}
+    )
+    ms_entry["version"] = "0.4"
+    ms_entry.setdefault("name", "default")
+    ms_entry["axes"] = list(axes)
+    ms_entry.setdefault(
+        "datasets",
+        [{"path": "0", "coordinateTransformations": [
+            {"type": "scale", "scale": [1.0] * len(axes)},
+        ]}],
+    )
+    md = dict(ms_entry.get("metadata") or {})
+    md["format"] = "zarr_vectors"
+    ms_entry["metadata"] = md
+    multiscales = [ms_entry]
+
+    root.attrs.update({"zarr_vectors": zv, "multiscales": multiscales})
 
 
 def _ensure_root_metadata_for_write(
     root: Group,
     *,
     inferred_ndim: int,
-    inferred_bounds: tuple[list[float], list[float]],
-    chunk_shape_hint: tuple[float, ...] | None = None,
     geometry_type: str | None = None,
     base_bin_shape: tuple[float, ...] | None = None,
     links_convention: str | None = None,
     object_index_convention: str | None = None,
     cross_chunk_strategy: str | None = None,
 ) -> RootMetadata:
-    """Fill in any missing structural root-attrs from the values a writer
-    just inferred from its input data.
+    """Stamp any writer-specific fields (``geometry_type``, conventions,
+    ``base_bin_shape``) onto root attrs and return the parsed metadata.
 
-    - If structural fields are already set, they are kept and ``bounds``
-      is grown by min/max union with ``inferred_bounds``.
-    - If unset, defaults are derived: axes from
-      :data:`DEFAULT_AXES_NAMES`, ``chunk_shape`` from a single-chunk-
-      covers-bounds heuristic when no hint is supplied.
-
-    Persists the result to root attrs and returns the now-complete
-    :class:`RootMetadata`.
+    Structural fields (``axes`` / ``bounds`` / ``chunk_shape``) are set
+    at :func:`create_store` time and are NOT modified here — bounds
+    growth is the responsibility of :func:`_apply_out_of_bounds_policy`
+    (per-write) and :func:`set_bounds` (explicit).
     """
-    existing = root.attrs.to_dict().get("zarr_vectors", {})
+    full_attrs = root.attrs.to_dict()
+    existing = full_attrs.get("zarr_vectors", {})
     zv: dict[str, Any] = dict(existing)
-    zv.setdefault("format_version", FORMAT_VERSION)
+    zv.setdefault("zv_version", FORMAT_VERSION)
     caps = list(zv.get("format_capabilities") or [])
     if CAP_VERTEX_COUNT_CACHE not in caps:
         caps.append(CAP_VERTEX_COUNT_CACHE)
     zv["format_capabilities"] = caps
 
-    axes_existing = zv.get("spatial_index_dims")
-    if not axes_existing:
-        if inferred_ndim > len(DEFAULT_AXES_NAMES):
-            raise MetadataError(
-                f"Cannot auto-generate axes for ndim={inferred_ndim}; "
-                f"pass an explicit `axes` kwarg to create_store."
-            )
-        names = DEFAULT_AXES_NAMES[:inferred_ndim]
-        zv["spatial_index_dims"] = [
-            {"name": n, "type": "space", "unit": ""} for n in names
-        ]
-    elif len(axes_existing) != inferred_ndim:
+    # Axes live in NGFF ``multiscales[0].axes`` (0.5.0+).
+    ms = full_attrs.get("multiscales") or []
+    axes_existing = (
+        ms[0].get("axes") if ms and isinstance(ms, list) else None
+    ) or []
+    if not axes_existing or len(axes_existing) != inferred_ndim:
         raise MetadataError(
-            f"Inferred ndim={inferred_ndim} does not match stored "
-            f"spatial_index_dims length {len(axes_existing)}"
+            f"Store ndim={len(axes_existing)} does not match data "
+            f"ndim={inferred_ndim}.  Re-create the store with the right "
+            f"`ndim`/`axes`/`bounds` shape."
         )
-
-    existing_bounds = zv.get("bounds")
-    inf_min, inf_max = list(inferred_bounds[0]), list(inferred_bounds[1])
-    if existing_bounds and existing_bounds[0] and existing_bounds[1]:
-        new_min = [min(a, b) for a, b in zip(existing_bounds[0], inf_min)]
-        new_max = [max(a, b) for a, b in zip(existing_bounds[1], inf_max)]
-        zv["bounds"] = [new_min, new_max]
-    else:
-        zv["bounds"] = [inf_min, inf_max]
-
-    if not zv.get("chunk_shape"):
-        if chunk_shape_hint is not None:
-            zv["chunk_shape"] = list(chunk_shape_hint)
-        else:
-            min_corner = zv["bounds"][0]
-            max_corner = zv["bounds"][1]
-            extent = [hi - lo for hi, lo in zip(max_corner, min_corner)]
-            max_extent = max(extent) if extent else 1.0
-            max_abs_bound = max((abs(v) for v in max_corner), default=0.0)
-            side = max_extent + max_abs_bound + 1.0
-            zv["chunk_shape"] = [side] * inferred_ndim
+    if not zv.get("bounds") or not zv.get("chunk_shape"):
+        raise MetadataError(
+            "Store missing required `bounds` / `chunk_shape`. "
+            "This should never happen for stores created by the current "
+            "`create_store` — the store may have been written by an older "
+            "build; re-create it."
+        )
 
     if geometry_type is not None:
         gts = list(zv.get("geometry_types") or [])
         if geometry_type not in gts:
             gts.append(geometry_type)
         zv["geometry_types"] = gts
-    elif "geometry_types" not in zv:
-        zv["geometry_types"] = []
 
     if base_bin_shape is not None:
         zv["base_bin_shape"] = list(base_bin_shape)
@@ -400,20 +553,216 @@ def _ensure_root_metadata_for_write(
     return RootMetadata.from_dict({"zarr_vectors": zv})
 
 
+def _apply_out_of_bounds_policy(
+    root: Group,
+    positions: Any,  # npt.NDArray[np.floating]
+    *,
+    policy: str,
+) -> tuple[Any, Any]:
+    """Apply the ``out_of_bounds`` policy to ``positions`` against the
+    store's current bounds.
+
+    Returns ``(filtered_positions, kept_mask)``.
+
+    - ``"raise"`` — raise :class:`MetadataError` if any point is out of
+      bounds (no filtering).
+    - ``"ignore"`` — drop out-of-bounds points; ``kept_mask`` marks the
+      survivors so callers can drop aligned attribute arrays / object
+      ids in lock-step.
+    - ``"expand"`` — grow the store's ``bounds`` (min/max union) to
+      include the new points, persist the new bounds, and return all
+      points untouched.
+    """
+    import numpy as np
+
+    if policy not in VALID_OOB_POLICIES:
+        raise MetadataError(
+            f"unknown out_of_bounds policy {policy!r}; "
+            f"valid: {sorted(VALID_OOB_POLICIES)}"
+        )
+    positions = np.asarray(positions)
+    if positions.ndim != 2 or positions.size == 0:
+        # Nothing to check — empty input or non-(N, D) shape (caller
+        # validates downstream).  Return as-is with an all-True mask.
+        return positions, np.ones(len(positions), dtype=bool)
+
+    zv = root.attrs.to_dict().get("zarr_vectors", {})
+    cur_bounds = zv.get("bounds")
+    if not cur_bounds:
+        raise MetadataError(
+            "Store is missing `bounds`; cannot apply out_of_bounds policy."
+        )
+    bmin = np.asarray(cur_bounds[0], dtype=positions.dtype)
+    bmax = np.asarray(cur_bounds[1], dtype=positions.dtype)
+    in_bounds = np.all(
+        (positions >= bmin) & (positions <= bmax), axis=1,
+    )
+    if in_bounds.all():
+        return positions, in_bounds
+
+    n_out = int((~in_bounds).sum())
+    if policy == "raise":
+        raise MetadataError(
+            f"{n_out} of {len(positions)} points are outside store bounds "
+            f"{cur_bounds!r}; pass out_of_bounds='ignore' to drop them, "
+            f"'expand' to grow bounds, or call set_bounds() first."
+        )
+    if policy == "ignore":
+        return positions[in_bounds], in_bounds
+    # policy == "expand": union the bounds in-place
+    pt_min = positions.min(axis=0).tolist()
+    pt_max = positions.max(axis=0).tolist()
+    new_min = [min(a, b) for a, b in zip(cur_bounds[0], pt_min)]
+    new_max = [max(a, b) for a, b in zip(cur_bounds[1], pt_max)]
+    zv["bounds"] = [new_min, new_max]
+    root.attrs.update({"zarr_vectors": zv})
+    return positions, in_bounds
+
+
+def set_bounds(
+    root: Group,
+    new_bounds: tuple[list[float], list[float]],
+    *,
+    force: bool = False,
+) -> None:
+    """Update the store's ``bounds`` after creation.
+
+    - **Expanding** in any dimension (``new_min <= cur_min`` and
+      ``new_max >= cur_max``) is always allowed.
+    - **Contracting** in any dimension requires ``force=True``.  When
+      forced, any vertices that fall outside the new bounds are pruned
+      per-vertex from every level's ``vertices/`` array.  Auxiliary
+      arrays (``object_index``, attributes) are NOT rewritten — re-run
+      the type writer or :mod:`rechunk` if you need a fully consistent
+      store after a contract.
+
+    Args:
+        root: Store root group returned by :func:`create_store` /
+            :func:`open_store`.
+        new_bounds: ``(min_corner, max_corner)`` for the new bounds.
+        force: Required when any dimension is contracting.
+    """
+    import numpy as np
+
+    zv = root.attrs.to_dict().get("zarr_vectors", {})
+    cur = zv.get("bounds")
+    if not cur:
+        raise MetadataError("Store is missing `bounds`; cannot update.")
+    cur_min = np.asarray(cur[0], dtype=float)
+    cur_max = np.asarray(cur[1], dtype=float)
+    new_min = np.asarray(new_bounds[0], dtype=float)
+    new_max = np.asarray(new_bounds[1], dtype=float)
+    if new_min.shape != cur_min.shape or new_max.shape != cur_max.shape:
+        raise MetadataError(
+            f"new_bounds shape {new_min.shape}/{new_max.shape} does not "
+            f"match store ndim={len(cur_min)}"
+        )
+    if np.any(new_max < new_min):
+        raise MetadataError(
+            f"new_bounds inverted: max={new_max.tolist()} < min={new_min.tolist()}"
+        )
+
+    contracting = bool(np.any(new_min > cur_min) or np.any(new_max < cur_max))
+    if contracting and not force:
+        raise StoreError(
+            f"new_bounds {new_bounds!r} contract the current bounds "
+            f"{cur!r}; pass force=True to remove out-of-bounds vertices."
+        )
+
+    if contracting:
+        _prune_vertices_outside_bounds(root, new_min, new_max)
+
+    zv["bounds"] = [new_min.tolist(), new_max.tolist()]
+    root.attrs.update({"zarr_vectors": zv})
+
+
+def _prune_vertices_outside_bounds(
+    root: Group,
+    new_min: Any,  # np.ndarray
+    new_max: Any,
+) -> None:
+    """Per-vertex prune every level's ``vertices/`` array to the new
+    bounds.  See :func:`set_bounds`.
+    """
+    import numpy as np
+
+    from zarr_vectors.core.arrays import (
+        list_chunk_keys,
+        read_chunk_vertices,
+        write_chunk_vertices,
+    )
+
+    ndim = len(new_min)
+    for level_idx in list_resolution_levels(root):
+        level = get_resolution_level(root, level_idx)
+        try:
+            vmeta = level.read_array_meta(VERTICES)
+        except Exception:
+            continue
+        dtype = np.dtype(vmeta.get("dtype", "float32"))
+        for chunk_key in list_chunk_keys(level):
+            try:
+                vert_groups = read_chunk_vertices(
+                    level, chunk_key, dtype=dtype, ndim=ndim,
+                )
+            except Exception:
+                continue
+            new_groups: list[Any] = []
+            changed = False
+            for vg in vert_groups:
+                if len(vg) == 0:
+                    new_groups.append(vg)
+                    continue
+                in_b = np.all(
+                    (vg >= new_min) & (vg <= new_max), axis=1,
+                )
+                if in_b.all():
+                    new_groups.append(vg)
+                else:
+                    changed = True
+                    new_groups.append(vg[in_b])
+            if changed:
+                write_chunk_vertices(level, chunk_key, new_groups, dtype=dtype)
+
+
 def _create_or_open_store(
     path: str | Path,
     *,
     backend: str | None = None,
+    bounds: tuple[list[float], list[float]] | None = None,
+    chunk_shape: tuple[float, ...] | None = None,
+    axes: list[dict[str, str]] | None = None,
+    geometry_types: list[str] | None = None,
+    ndim: int | None = None,
     **backend_kwargs: Any,
 ) -> Group:
     """Warm the store with :func:`create_store` if no store exists at
     ``path``, else open it read-write.  Writers route through this so
     callers can either ``create_store(path)`` first and then write, or
     write directly against a fresh path.
+
+    The create-only kwargs (``bounds`` / ``chunk_shape`` / ``axes`` /
+    ``geometry_types`` / ``ndim``) are forwarded to :func:`create_store`
+    on a fresh path and ignored when opening an existing store — the
+    existing store's structural metadata stays authoritative.
     """
+    creator_kwargs: dict[str, Any] = {}
+    if bounds is not None:
+        creator_kwargs["bounds"] = bounds
+    if chunk_shape is not None:
+        creator_kwargs["chunk_shape"] = chunk_shape
+    if axes is not None:
+        creator_kwargs["axes"] = axes
+    if geometry_types is not None:
+        creator_kwargs["geometry_types"] = geometry_types
+    if ndim is not None:
+        creator_kwargs["ndim"] = ndim
+
     if backend == "icechunk":
         try:
-            return create_store(path, backend=backend, **backend_kwargs)
+            return create_store(
+                path, backend=backend, **creator_kwargs, **backend_kwargs,
+            )
         except StoreError:
             return open_store(path, mode="r+", backend=backend, **backend_kwargs)
     scheme = _detect_scheme(path)
@@ -421,7 +770,25 @@ def _create_or_open_store(
         local_root = _resolve_local_path(path)
         if local_root.exists() and local_root.is_dir() and any(local_root.iterdir()):
             return open_store(path, mode="r+", backend=backend, **backend_kwargs)
-    return create_store(path, backend=backend, **backend_kwargs)
+    return create_store(
+        path, backend=backend, **creator_kwargs, **backend_kwargs,
+    )
+
+
+def _finalize_write(root: Group, message: str) -> str | None:
+    """Commit the in-flight write transaction if the store is icechunk-backed.
+
+    This is the auto-commit hook the high-level type writers
+    (``write_points``, ``write_graph``, etc.) call just before
+    returning their summary dict.  For non-transactional backends it
+    is a no-op; for icechunk-backed stores it flushes the writable
+    session opened by :func:`_create_or_open_store`, otherwise all
+    writes would be discarded when the session is GC'd.
+
+    Returns the new snapshot id on icechunk-backed stores, ``None``
+    otherwise.
+    """
+    return commit(root, message)
 
 
 def open_store(
@@ -435,9 +802,14 @@ def open_store(
 
     Args:
         path: URL or filesystem path to the store.
-        mode: ``"r"`` (read-only), ``"r+"`` (read-write), ``"a"`` (append).
-            Currently informational — actual mutability is governed by
-            the backend's permissions.
+        mode: ``"r"`` (read-only — writes will raise), ``"r+"``
+            (read-write), ``"a"`` (append).  For ``mode="r"`` the
+            underlying Zarr store is wrapped via
+            ``store.with_read_only(True)`` when the store implementation
+            supports it (the LocalStore and FsspecStore do; icechunk
+            readonly sessions enforce read-only at the transaction
+            layer).  Callers that need to mutate must open with
+            ``mode="r+"``.
         backend: Force a particular backend (auto-detect by default).
         **backend_kwargs: Forwarded to the backend constructor.
 
@@ -458,15 +830,27 @@ def open_store(
                 raise StoreError(f"Store not found at {local_root}")
 
     # Pass mode through so the icechunk backend can pick readonly_session
-    # vs writable_session.  For non-icechunk backends mode is ignored.
+    # vs writable_session.  For non-icechunk backends the byte-level
+    # store is wrapped read-only below when mode="r".
     store, session = _make_zarr_store_with_session(
         path, mode=mode, backend=backend, **backend_kwargs,
     )
     if session is not None:
         store._zv_icechunk_session = session
-    # mode is informational at the public API — the underlying zarr group
-    # is always opened read-write so that ``lazy.writer`` can write
-    # through the same handle returned by ``open_store(mode='r')``.
+
+    # Enforce read-only when mode="r": wrap the underlying Zarr store
+    # via ``with_read_only(True)`` if the store supports it.  Callers in
+    # ``zarr_vectors.lazy`` that resurrect a Group via
+    # :meth:`Group._from_backend` already know how to unwrap this; the
+    # standard path through ``open_store`` honours the requested mode.
+    if mode == "r" and hasattr(store, "with_read_only"):
+        try:
+            store = store.with_read_only(True)
+        except Exception:
+            # Some Zarr store implementations don't support runtime
+            # mode flips; fall back to opening read-only at the group
+            # level only.
+            pass
     zarr_open_mode = "r" if mode == "r" else "r+"
     try:
         zg = zarr.open_group(store, mode=zarr_open_mode)
@@ -633,15 +1017,24 @@ def get_resolution_level(root: Group, level: int) -> Group:
 
 
 def list_resolution_levels(root: Group) -> list[int]:
-    """Return sorted level indices present in the store."""
+    """Return sorted level indices present in the store.
+
+    Resolution-level group names are bare integers (``0``, ``1``, ...)
+    under the 0.4.1+ layout (formerly ``resolution_0`` /
+    ``resolution_1``).  Top-level groups whose name doesn't parse as
+    ``int`` are some other entity (e.g. ``parametric/``) and are
+    silently skipped.
+    """
     levels: list[int] = []
     for name in root:
-        if name.startswith(RESOLUTION_PREFIX):
-            try:
-                idx = int(name[len(RESOLUTION_PREFIX):])
-                levels.append(idx)
-            except ValueError:
-                continue
+        # Tolerate the legacy ``RESOLUTION_PREFIX`` slice in case it is
+        # ever re-introduced; the empty prefix in 0.4.1+ makes this a
+        # no-op.
+        candidate = name[len(RESOLUTION_PREFIX):] if RESOLUTION_PREFIX else name
+        try:
+            levels.append(int(candidate))
+        except ValueError:
+            continue
     return sorted(levels)
 
 
@@ -705,7 +1098,7 @@ def store_info(root: Group) -> dict[str, Any]:
     ptypes = read_parametric_types(root)
 
     return {
-        "format_version": meta.format_version,
+        "zv_version": meta.zv_version,
         "geometry_types": meta.geometry_types,
         "spatial_index_dims": meta.spatial_index_dims,
         "chunk_shape": list(meta.chunk_shape),

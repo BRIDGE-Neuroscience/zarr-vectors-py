@@ -102,7 +102,7 @@ An OME-Zarr reader (e.g. `ome-zarr-py`, napari with `napari-ome-zarr`,
 1. Find a valid `multiscales` block in `.zattrs`. ✓
 2. Read `axes`, `datasets`, and `coordinateTransformations`. ✓
 3. Ignore `type: "zarr_vectors_multiscale"` (unknown type, skipped). ✓
-4. Attempt to open `resolution_0/vertices/` as an image array.
+4. Attempt to open `0/vertices/` as an image array.
    - The array is `(Cx, Cy, Cz, N_max, D)` float32 — 5-D.
    - Most image viewers expect 2–4-D arrays. The viewer may reject the
      array or display it as a meaningless 5-D volume. ✗
@@ -139,7 +139,7 @@ experiment/
 │   └── 0/ 1/ 2/              ← resolution levels
 └── tracts.zarrvectors/       ← ZVF streamlines in the same RAS space
     ├── .zattrs               ← multiscales with matching axes/units
-    └── resolution_0/ 1/
+    └── 0/ 1/
 ```
 
 Both stores declare `"axes": [{"name": "z", "unit": "micrometer"}, …]`.

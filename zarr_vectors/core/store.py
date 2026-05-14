@@ -933,15 +933,17 @@ def open_store(
     store, session = _make_zarr_store_with_session(
         path, mode=mode, backend=backend, **backend_kwargs,
     )
-    if session is not None:
-        store._zv_icechunk_session = session
 
     # Enforce read-only when mode="r": wrap the underlying Zarr store
     # via ``with_read_only(True)`` if the store supports it.  Callers in
     # ``zarr_vectors.lazy`` that resurrect a Group via
     # :meth:`Group._from_backend` already know how to unwrap this; the
     # standard path through ``open_store`` honours the requested mode.
-    if mode == "r" and hasattr(store, "with_read_only"):
+    # Skip this for transactional backends (icechunk): they returned a
+    # session and already picked the right readonly/writable session
+    # inside their factory — wrapping here would create a new store
+    # object and break the session linkage below.
+    if session is None and mode == "r" and hasattr(store, "with_read_only"):
         try:
             store = store.with_read_only(True)
         except Exception:
@@ -949,6 +951,8 @@ def open_store(
             # mode flips; fall back to opening read-only at the group
             # level only.
             pass
+    if session is not None:
+        store._zv_icechunk_session = session
     zarr_open_mode = "r" if mode == "r" else "r+"
     try:
         zg = zarr.open_group(store, mode=zarr_open_mode)

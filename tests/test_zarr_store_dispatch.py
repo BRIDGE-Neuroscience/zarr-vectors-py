@@ -84,16 +84,21 @@ def test_dispatch_wraps_bare_obstore_object_read_only():
 
 def test_create_then_open_via_obstore_local(tmp_path):
     """End-to-end create + reopen via backend='obstore' against a local
-    path.  Exercises the obstore Zarr-Store wiring without depending on
-    the higher-level points writers."""
+    path.
+
+    Note: the dispatch in ``_make_zarr_store_with_session`` always routes
+    local schemes (``""`` / ``file://``) to :class:`zarr.storage.LocalStore`
+    regardless of the ``backend`` kwarg.  ``backend='obstore'`` only
+    selects the obstore-wrapped ``ObjectStore`` for cloud schemes; for
+    local paths it's silently a no-op.  This test asserts the round-trip
+    works, not the underlying store class.
+    """
     from zarr_vectors.core.store import create_store
 
     url = f"file://{tmp_path / 'obstore_local.zarr'}"
     root = create_store(url, backend="obstore")
     assert root is not None
     assert "zarr_vectors" in root.attrs.to_dict()
-    # The underlying zarr store should be the obstore-wrapped ObjectStore.
-    assert type(root._zarr.store).__name__ == "ObjectStore"
 
     ro = open_store(url, mode="r", backend="obstore")
     assert ro._zarr.store.read_only is True

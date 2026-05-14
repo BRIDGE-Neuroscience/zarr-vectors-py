@@ -82,7 +82,17 @@ def _parse_chunk_key(key: str) -> ChunkCoords:
 
 
 def _ensure_array_dir(level_group: FsGroup, array_name: str) -> None:
-    """Ensure an array subdirectory exists within a level group."""
+    """Ensure an array subdirectory exists within a level group.
+
+    Inside :meth:`Group.batched_writes` we skip the sync ``require_group``
+    round-trip — the metadata flush will PUT the parent ``zarr.json``
+    directly, including the right attributes, in the same gather as the
+    chunk PUTs.  Outside batched mode we still call ``require_group`` so
+    the parent group exists before any subsequent ``write_array_meta``
+    call (which only ``attrs.update``s — it does not create the group).
+    """
+    if level_group._pending_array_metas is not None:
+        return
     level_group.require_group(array_name)
 
 

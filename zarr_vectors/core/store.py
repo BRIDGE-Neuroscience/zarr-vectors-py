@@ -782,7 +782,7 @@ def _prune_vertices_outside_bounds(
 
 
 def _create_or_open_store(
-    path: str | Path,
+    path: StoreLike | Group,
     *,
     backend: str | None = None,
     bounds: tuple[list[float], list[float]] | None = None,
@@ -797,11 +797,19 @@ def _create_or_open_store(
     callers can either ``create_store(path)`` first and then write, or
     write directly against a fresh path.
 
+    Accepts an already-opened :class:`Group` (e.g. the return value of
+    :func:`create_store` / :func:`open_store`) and returns it unchanged
+    — this lets callers write through a handle they already hold.
+
     The create-only kwargs (``bounds`` / ``chunk_shape`` / ``axes`` /
     ``geometry_types`` / ``ndim``) are forwarded to :func:`create_store`
     on a fresh path and ignored when opening an existing store — the
     existing store's structural metadata stays authoritative.
     """
+    # Pass-through for an already-opened Group handle.
+    if isinstance(path, Group):
+        return path
+
     creator_kwargs: dict[str, Any] = {}
     if bounds is not None:
         creator_kwargs["bounds"] = bounds

@@ -3,16 +3,16 @@
 ## Terms
 
 **Level group**
-: The Zarr group at path `resolution_<N>/` representing one resolution level.
+: The Zarr group at path `<N>/` representing one resolution level.
   Contains all array groups for that level plus a `zarr.json` and `.zattrs`.
 
 **Level index (N)**
-: The integer suffix of a resolution level directory name. Level 0 is
+: The integer suffix of a level group name. Level 0 is
   always the full-resolution (finest) level. Higher indices correspond to
   progressively coarser representations.
 
 **Per-level `.zattrs`**
-: The `.zattrs` file inside `resolution_<N>/`. Stores the parameters of the
+: The `.zattrs` file inside `<N>/`. Stores the parameters of the
   coarsening operation applied to produce this level from level 0:
   `bin_ratio`, `object_sparsity`, `sparsity_strategy`, and the actual
   `bin_shape` in effect at this level.
@@ -67,7 +67,7 @@ Full example for level 1, produced from a 3-D streamline store:
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `level` | `integer` | Must equal `N` in `resolution_<N>`. |
+| `level` | `integer` | Must equal `N` in `<N>`. |
 | `bin_ratio` | `[int, …]` | D-tuple. Ratio of this level's bin shape to `base_bin_shape`. Level 0 must have `[1, 1, …, 1]`. |
 | `bin_shape` | `[float, …]` | D-tuple. Effective bin shape: `base_bin_shape[i] × bin_ratio[i]`. Redundant given `base_bin_shape` and `bin_ratio` but stored explicitly for readers that do not access the root metadata. |
 
@@ -93,8 +93,8 @@ satisfy:
 
 ### Naming convention and ordering
 
-Level directories are named `resolution_0`, `resolution_1`, …,
-`resolution_N`. The naming convention encodes the level index; the
+Level directories are named `0`, `1`, …,
+`N`. The naming convention encodes the level index; the
 directory listing order on the file system is not relied upon.
 
 The `list_resolution_levels()` function returns levels sorted by index:
@@ -183,9 +183,9 @@ coarsen_level(
 
 Level group validation (L1):
 
-- `resolution_0/` must exist.
-- Each `resolution_<N>/` must contain a `zarr.json` identifying a group node.
-- Each `resolution_<N>/` must contain a `.zattrs` with the required keys.
+- `0/` must exist.
+- Each `<N>/` must contain a `zarr.json` identifying a group node.
+- Each `<N>/` must contain a `.zattrs` with the required keys.
 
 Level group validation (L2):
 

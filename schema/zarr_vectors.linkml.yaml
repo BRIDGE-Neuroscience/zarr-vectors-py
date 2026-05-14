@@ -1,18 +1,21 @@
-id: https://w3id.org/zarr-vectors/schema/0.4
+id: https://w3id.org/zarr-vectors/schema/0.5
 name: zarr_vectors
 title: Zarr Vectors (ZV) format
 description: >
-  Reference schema for the Zarr Vectors (ZV) on-disk metadata.  Covers
-  the root-level ``.zattrs`` block (``zarr_vectors`` envelope), the
-  per-resolution-level ``.zattrs`` block (``zarr_vectors_level`` envelope),
-  and the per-array ``.zattrs`` shapes emitted by the writers in
-  ``zarr_vectors/core/arrays.py`` (discriminator slot ``zv_array``).
+  Reference schema for the Zarr Vectors (ZV) on-disk metadata (0.5.0).
+  Covers the root-level ``.zattrs`` block (``zarr_vectors`` envelope),
+  the NGFF ``multiscales`` block (which now carries the canonical axes
+  list — ZV no longer duplicates them under ``spatial_index_dims``),
+  the per-resolution-level ``.zattrs`` block (``zarr_vectors_level``
+  envelope), and the per-array ``.zattrs`` shapes emitted by the
+  writers in ``zarr_vectors/core/arrays.py`` (discriminator slot
+  ``zv_array``).
 license: BSD-3-Clause
 
 prefixes:
   linkml: https://w3id.org/linkml/
-  zv: https://w3id.org/zarr-vectors/schema/0.4/
-  ngff: https://ngff.openmicroscopy.org/0.5/
+  zv: https://w3id.org/zarr-vectors/schema/0.5/
+  ngff: https://ngff.openmicroscopy.org/0.4/
   schema: http://schema.org/
 
 default_prefix: zv
@@ -173,6 +176,15 @@ classes:
       - min_corner
       - max_corner
 
+  CRS:
+    description: >
+      Free-form coordinate reference system metadata.  Modelled as an
+      open dict because real-world CRS payloads come from many
+      vocabularies (WKT, PROJ4, EPSG, CF conventions, ...) and we don't
+      want to force a single one.  Generators that consume this schema
+      should emit ``additionalProperties: true`` or equivalent.
+    class_uri: linkml:Any
+
   # ----- root + level metadata ------------------------------------------
 
   RootMetadata:
@@ -180,9 +192,11 @@ classes:
       Root-level ``.zattrs`` payload, persisted under the key
       ``zarr_vectors``.  Validates the runtime
       :class:`zarr_vectors.core.metadata.RootMetadata` dataclass.
+      Note: the canonical axis list lives in
+      ``multiscales[0].axes`` at root level (NGFF-style), NOT under
+      ``zarr_vectors`` — see ``MultiscalesMetadata``.
     slots:
-      - format_version
-      - spatial_index_dims
+      - zv_version
       - chunk_shape
       - bounds
       - geometry_types
@@ -374,18 +388,15 @@ slots:
 
   # -- RootMetadata ------------------------------------------------------
 
-  format_version:
-    description: Spec version this store was written against (e.g. "0.3").
+  zv_version:
+    description: >
+      ZV spec version this store was written against (e.g. "0.5.0").
+      Renamed from ``format_version`` in 0.5.0 to disambiguate from
+      Zarr v3's ``zarr_format`` field.
     range: string
     required: true
     slot_uri: schema:version
     pattern: '^\d+\.\d+(\.\d+)?$'
-  spatial_index_dims:
-    description: NGFF-style axis list — at least 2, with ≥2 of type "space".
-    range: Axis
-    multivalued: true
-    required: true
-    minimum_cardinality: 2
   chunk_shape:
     description: Physical spatial chunk size per axis (all values > 0).
     range: float
@@ -404,8 +415,10 @@ slots:
   crs:
     description: >
       Optional coordinate reference system metadata (free-form dict
-      matching whatever CRS vocabulary the store uses).
-    range: string
+      matching whatever CRS vocabulary the store uses, e.g. WKT,
+      PROJ4, EPSG, CF conventions).
+    range: CRS
+    inlined: true
     slot_uri: schema:coordinateReferenceSystem
   links_convention:
     range: LinksConvention

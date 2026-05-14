@@ -42,16 +42,16 @@ structurally incomplete and cannot be read by any ZVF reader.
 | `root_zarr_json` | `zarr.json` exists at store root and declares `node_type: group` | Error |
 | `root_zattrs` | `.zattrs` exists at store root and is valid JSON | Error |
 | `root_metadata_json` | `metadata.json` exists at store root | Warning (recommended) |
-| `resolution_0_exists` | `resolution_0/` group exists | Error |
+| `level_0_exists` | `0/` group exists | Error |
 
 #### Per resolution level (repeated for each declared level)
 
 | Check | Description | Failure type |
 |-------|-------------|--------------|
-| `level_zarr_json` | `resolution_N/zarr.json` exists and declares `node_type: group` | Error |
-| `level_zattrs` | `resolution_N/.zattrs` exists and is valid JSON | Error |
-| `vertices_array` | `resolution_N/vertices/zarr.json` declares `node_type: array` | Error |
-| `vg_offsets_array` | `resolution_N/vertex_group_offsets/zarr.json` declares `node_type: array` | Error |
+| `level_zarr_json` | `N/zarr.json` exists and declares `node_type: group` | Error |
+| `level_zattrs` | `N/.zattrs` exists and is valid JSON | Error |
+| `vertices_array` | `N/vertices/zarr.json` declares `node_type: array` | Error |
+| `vg_offsets_array` | `N/vertex_group_offsets/zarr.json` declares `node_type: array` | Error |
 
 #### Type-specific array presence (based on `geometry_type` in root `.zattrs`)
 
@@ -69,10 +69,10 @@ structurally incomplete and cannot be read by any ZVF reader.
 
 | Check | Description | Failure type |
 |-------|-------------|--------------|
-| `attributes_is_group` | `resolution_N/attributes/` is a Zarr group if present | Error |
-| `attributes_sub_arrays` | Each `resolution_N/attributes/<name>/` declares `node_type: array` | Error |
-| `object_attrs_is_group` | `resolution_N/object_attributes/` is a Zarr group if present | Error |
-| `groupings_array` | `resolution_N/groupings/zarr.json` declares array if present | Error |
+| `attributes_is_group` | `N/attributes/` is a Zarr group if present | Error |
+| `attributes_sub_arrays` | Each `N/attributes/<name>/` declares `node_type: array` | Error |
+| `object_attrs_is_group` | `N/object_attributes/` is a Zarr group if present | Error |
+| `groupings_array` | `N/groupings/zarr.json` declares array if present | Error |
 
 #### Attribute consistency across levels
 
@@ -89,14 +89,14 @@ Level 1 validation of scan.zarrvectors
 PASS  root_zarr_json               zarr.json exists at store root
 PASS  root_zattrs                  .zattrs exists and is valid JSON
 WARN  root_metadata_json           metadata.json not found (recommended)
-PASS  resolution_0_exists          resolution_0/ group exists
-PASS  level_zarr_json [level=0]    resolution_0/zarr.json exists
-PASS  level_zattrs [level=0]       resolution_0/.zattrs exists
-PASS  vertices_array [level=0]     resolution_0/vertices/ is an array
-PASS  vg_offsets_array [level=0]   resolution_0/vertex_group_offsets/ is an array
-PASS  object_index_array [level=0] resolution_0/object_index/ is an array
-PASS  edges_array [level=0]        resolution_0/links/<delta>/ is an array
-ERROR cross_chunk_links [level=0]  resolution_0/cross_chunk_links/ missing;
+PASS  level_0_exists          0/ group exists
+PASS  level_zarr_json [level=0]    0/zarr.json exists
+PASS  level_zattrs [level=0]       0/.zattrs exists
+PASS  vertices_array [level=0]     0/vertices/ is an array
+PASS  vg_offsets_array [level=0]   0/vertex_group_offsets/ is an array
+PASS  object_index_array [level=0] 0/object_index/ is an array
+PASS  edges_array [level=0]        0/links/<delta>/ is an array
+ERROR cross_chunk_links [level=0]  0/cross_chunk_links/ missing;
                                    required for streamline type
 
 Level 1 validation: FAIL — 9 passed, 1 warning, 1 error

@@ -53,9 +53,11 @@ larger `bin_shape` means coarser queries but lower index overhead.
 Unlike `chunk_shape`, `bin_shape` does not affect the physical file layout.
 Changing `bin_shape` requires only recomputing the VG index and re-sorting
 vertices within each chunk — the chunk files themselves stay the same size
-and location. This makes bin shape somewhat easier to tune after the fact,
-though `zarr-vectors-py` does not yet expose a re-binning-only workflow
-separate from full rechunking.
+and location. Re-binning is exposed for point-cloud stores via
+[`zarr_vectors.rechunk.rebin_level(store_path, target_bin_shape, level=0)`](../../../zarr_vectors/rechunk/rebin.py);
+for other geometry types (polyline, streamline, graph, skeleton, mesh)
+the VG structure carries per-object semantics so a full
+[rechunk](rechunking.md) is required instead.
 
 ---
 

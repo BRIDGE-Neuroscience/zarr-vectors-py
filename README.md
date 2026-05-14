@@ -32,7 +32,7 @@ pip install zarr-vectors
 ```
 dataset.zarrvectors/
 ├── .zattrs                          # root metadata: SID, CRS, conventions, base_bin_shape
-├── resolution_0/                    # full resolution (bin_ratio = 1,1,1)
+├── 0/                    # full resolution (bin_ratio = 1,1,1)
 │   ├── vertices/                    # spatial positions (ragged per bin)
 │   ├── vertex_group_offsets/        # byte offsets for sub-bin random access
 │   ├── links/                       # connectivity (edges, faces, parents)
@@ -44,7 +44,7 @@ dataset.zarrvectors/
 │   ├── groupings/                   # group ID → [object IDs]
 │   ├── groupings_attributes/        # per-group metadata
 │   └── cross_chunk_links/           # connectivity across chunk boundaries
-├── resolution_1/                    # coarsened (bin_ratio, object_sparsity in .zattrs)
+├── 1/                    # coarsened (bin_ratio, object_sparsity in .zattrs)
 │   └── [same arrays]
 ├── parametric/                      # algebraic objects (planes, spheres)
 │   ├── objects/

@@ -142,29 +142,29 @@ def add_geometry(
         ValueError: If the geometry type requires data not provided.
     """
     store_path = Path(store_path)
-    root = _create_or_open_store(str(store_path))
-
-    # Infer ndim/bounds from input data so a warmed-but-empty store can
-    # be filled in here.  When the store already has full metadata, the
-    # bounds union is a no-op against the existing min/max.
     sample_points: npt.NDArray | None = None
     if positions is not None:
         sample_points = np.asarray(positions)
     elif polylines:
         sample_points = np.concatenate([np.asarray(p) for p in polylines], axis=0)
+
+    create_kwargs: dict[str, Any] = {}
+    if sample_points is not None and sample_points.size > 0:
+        inferred_bounds = compute_bounds(sample_points)
+        create_kwargs["bounds"] = (
+            inferred_bounds[0].tolist(),
+            inferred_bounds[1].tolist(),
+        )
+        create_kwargs["ndim"] = int(sample_points.shape[1])
+
+    root = _create_or_open_store(str(store_path), **create_kwargs)
+
     if sample_points is None or sample_points.size == 0:
-        # Nothing to infer from — fall back to strict read (will raise
-        # MetadataError on a freshly-warmed store, surfacing the gap).
         meta = read_root_metadata(root)
     else:
-        inferred_bounds = compute_bounds(sample_points)
         meta = _ensure_root_metadata_for_write(
             root,
-            inferred_ndim=sample_points.shape[1],
-            inferred_bounds=(
-                inferred_bounds[0].tolist(),
-                inferred_bounds[1].tolist(),
-            ),
+            inferred_ndim=int(sample_points.shape[1]),
             geometry_type=geometry_type,
         )
     ndim = meta.sid_ndim

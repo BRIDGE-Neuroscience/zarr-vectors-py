@@ -71,7 +71,7 @@ consult that document for full detail.
 ### Store model
 
 A Zarr v3 store is an abstract key–value mapping. Keys are slash-separated
-strings (e.g. `resolution_0/vertices/c/0/1/2`). Values are bytes. The
+strings (e.g. `0/vertices/c/0/1/2`). Values are bytes. The
 mapping is implemented by a *store backend*; ZVF supports the following
 backends (see [Store types](store_types.md) for detail):
 
@@ -96,7 +96,7 @@ ZVF uses the following group hierarchy (abbreviated):
 ```
 zarr.json                   ← store root group
 .zattrs                     ← ZVF root metadata
-resolution_0/
+0/
     zarr.json               ← resolution level group
     .zattrs                 ← per-level metadata (bin_ratio, object_sparsity)
     vertices/
@@ -148,10 +148,10 @@ custom codec registered with Zarr; see [Codec pipeline](codec_pipeline.md).
 
 ZVF uses the Zarr v3 **default** chunk key encoding with `/` as the
 separator. A chunk at grid coordinate `(i, j, k)` in array
-`resolution_0/vertices` is stored at:
+`0/vertices` is stored at:
 
 ```
-resolution_0/vertices/c/i/j/k
+0/vertices/c/i/j/k
 ```
 
 The `c/` prefix is the Zarr v3 default; do not omit it.

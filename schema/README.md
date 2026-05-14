@@ -62,7 +62,9 @@ object model than in the wire-format `.zattrs` dict:
   [max...]]`; the LinkML schema models it as a `BoundingBox` class
   with `min_corner` / `max_corner` properties.
 - **`crs`** — on disk it is `None` or a free-form dict; the LinkML
-  schema simplifies it to a single string slot for now.
+  schema models this as the open `CRS` class
+  (`additionalProperties: true`), so any of `null` / dict / scalar
+  validates.
 
 `tests/test_linkml_schema.py` documents the bridge in one place
 (`_to_linkml_logical_form`); if it grows beyond a few lines we should

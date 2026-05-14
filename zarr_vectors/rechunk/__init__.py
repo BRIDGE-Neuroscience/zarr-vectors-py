@@ -21,9 +21,10 @@ from __future__ import annotations
 from typing import Any
 
 from zarr_vectors.rechunk.engine import rechunk
+from zarr_vectors.rechunk.rebin import rebin_level
 from zarr_vectors.rechunk.spec import RechunkSpec
 
-__all__ = ["RechunkSpec", "rechunk", "rechunk_by_attribute"]
+__all__ = ["RechunkSpec", "rebin_level", "rechunk", "rechunk_by_attribute"]
 
 
 def rechunk_by_attribute(

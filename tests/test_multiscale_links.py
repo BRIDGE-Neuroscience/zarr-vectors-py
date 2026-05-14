@@ -53,7 +53,7 @@ from zarr_vectors.core.store import FsGroup
 from zarr_vectors.exceptions import ArrayError, MetadataError
 
 
-def _make_level_group(tmp_path: Path, name: str = "resolution_0") -> FsGroup:
+def _make_level_group(tmp_path: Path, name: str = "0") -> FsGroup:
     root = FsGroup(tmp_path / "store.zarr", create=True)
     return root.create_group(name)
 
@@ -215,26 +215,36 @@ def _minimal_root_md(**overrides):
     return RootMetadata(**base)
 
 
-def test_default_format_version_is_04():
+def test_default_zv_version_is_05():
     md = _minimal_root_md()
     md.validate()
-    assert md.format_version == FORMAT_VERSION
-    assert FORMAT_VERSION.startswith("0.4")
+    assert md.zv_version == FORMAT_VERSION
+    assert FORMAT_VERSION.startswith("0.5")
 
 
-def test_pre_04_format_version_rejected():
-    md = _minimal_root_md(format_version="0.3")
-    with pytest.raises(MetadataError, match="0.3"):
+def test_pre_05_zv_version_rejected():
+    md = _minimal_root_md(zv_version="0.4.1")
+    with pytest.raises(MetadataError, match="0.4.1"):
         md.validate()
 
 
-def test_pre_04_format_version_rejected_on_roundtrip():
-    """A wire-format dict with format_version='0.3' must round-trip into
+def test_pre_05_zv_version_rejected_on_roundtrip():
+    """A wire-format dict with zv_version='0.4.1' must round-trip into
     a RootMetadata that fails validate() — proving the cutoff catches
     both freshly-constructed and freshly-loaded stores."""
-    md = _minimal_root_md(format_version="0.3")
-    md.format_version = "0.3"
+    md = _minimal_root_md(zv_version="0.4.1")
+    md.zv_version = "0.4.1"
     d = md.to_dict()
+    # 0.5.0 from_dict reads axes from the NGFF multiscales block; inject
+    # a minimal one so the round trip can complete.
+    d["multiscales"] = [{
+        "version": "0.4",
+        "axes": list(md.spatial_index_dims),
+        "datasets": [{"path": "0", "coordinateTransformations": [
+            {"type": "scale", "scale": [1.0] * md.sid_ndim},
+        ]}],
+        "metadata": {"format": "zarr_vectors"},
+    }]
     reloaded = RootMetadata.from_dict(d)
     with pytest.raises(MetadataError):
         reloaded.validate()

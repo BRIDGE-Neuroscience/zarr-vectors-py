@@ -89,6 +89,18 @@
       "title": "BoundingBox",
       "type": "object"
     },
+    "CRS": {
+      "additionalProperties": true,
+      "description": "Free-form coordinate reference system metadata.  Modelled as an open dict because real-world CRS payloads come from many vocabularies (WKT, PROJ4, EPSG, CF conventions, ...) and we don't want to force a single one.  Generators that consume this schema should emit ``additionalProperties: true`` or equivalent.",
+      "title": "CRS",
+      "type": [
+        "null",
+        "boolean",
+        "object",
+        "number",
+        "string"
+      ]
+    },
     "CrossChunkFacesMeta": {
       "additionalProperties": false,
       "description": "``.zattrs`` for ``cross_chunk_faces/`` (0.3 capability ``cross_chunk_faces``).",
@@ -636,7 +648,7 @@
     },
     "RootMetadata": {
       "additionalProperties": false,
-      "description": "Root-level ``.zattrs`` payload, persisted under the key ``zarr_vectors``.  Validates the runtime :class:`zarr_vectors.core.metadata.RootMetadata` dataclass.",
+      "description": "Root-level ``.zattrs`` payload, persisted under the key ``zarr_vectors``.  Validates the runtime :class:`zarr_vectors.core.metadata.RootMetadata` dataclass. Note: the canonical axis list lives in ``multiscales[0].axes`` at root level (NGFF-style), NOT under ``zarr_vectors`` \u2014 see ``MultiscalesMetadata``.",
       "properties": {
         "base_bin_shape": {
           "description": "Supervoxel bin edge lengths at level 0.  When set, every value must be > 0 and ``chunk_shape`` must be an integer multiple along every axis (enforced runtime-side in ``RootMetadata.validate``).\n",
@@ -675,11 +687,15 @@
           "description": "Whether cross-level link arrays are written in both directions (``explicit``: ``+N`` at the finer level AND ``-N`` at the coarser level) or only positive deltas (``implicit``: only ``+N``, with ``-N`` reconstructed on read).  Default ``explicit``.\n"
         },
         "crs": {
-          "description": "Optional coordinate reference system metadata (free-form dict matching whatever CRS vocabulary the store uses).\n",
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CRS"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional coordinate reference system metadata (free-form dict matching whatever CRS vocabulary the store uses, e.g. WKT, PROJ4, EPSG, CF conventions).\n"
         },
         "format_capabilities": {
           "description": "Optional 0.3+ feature tokens advertised by this store.",
@@ -690,11 +706,6 @@
             "array",
             "null"
           ]
-        },
-        "format_version": {
-          "description": "Spec version this store was written against (e.g. \"0.3\").",
-          "pattern": "^\\d+\\.\\d+(\\.\\d+)?$",
-          "type": "string"
         },
         "geometry_types": {
           "description": "One or more geometry kinds present in the store.",
@@ -718,18 +729,14 @@
             "null"
           ]
         },
-        "spatial_index_dims": {
-          "description": "NGFF-style axis list \u2014 at least 2, with \u22652 of type \"space\".",
-          "items": {
-            "$ref": "#/$defs/Axis"
-          },
-          "minItems": 2,
-          "type": "array"
+        "zv_version": {
+          "description": "ZV spec version this store was written against (e.g. \"0.5.0\"). Renamed from ``format_version`` in 0.5.0 to disambiguate from Zarr v3's ``zarr_format`` field.\n",
+          "pattern": "^\\d+\\.\\d+(\\.\\d+)?$",
+          "type": "string"
         }
       },
       "required": [
-        "format_version",
-        "spatial_index_dims",
+        "zv_version",
         "chunk_shape",
         "bounds",
         "geometry_types"
@@ -783,7 +790,7 @@
       "type": "string"
     }
   },
-  "$id": "https://w3id.org/zarr-vectors/schema/0.4",
+  "$id": "https://w3id.org/zarr-vectors/schema/0.5",
   "$schema": "https://json-schema.org/draft/2019-09/schema",
   "additionalProperties": true,
   "metamodel_version": "1.7.0",

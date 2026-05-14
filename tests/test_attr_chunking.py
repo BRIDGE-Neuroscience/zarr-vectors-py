@@ -81,12 +81,12 @@ def test_points_attr_chunking_round_trip(tmp_path):
     # Level metadata is correctly populated
     root = open_store(str(store))
     lm = read_level_metadata(root, 0)
-    assert lm.chunk_dims == ["gene", "dim0", "dim1", "dim2"]
+    assert lm.chunk_dims == ["gene", "x", "y", "z"]
     assert lm.chunk_attribute_name == "gene"
     assert lm.chunk_attribute_values == ["A", "B"]
 
     # Chunk keys all start with a bin index 0 or 1
-    keys = root["resolution_0"].list_chunks("vertices")
+    keys = root["0"].list_chunks("vertices")
     assert keys, "no chunks written"
     for k in keys:
         parts = k.split(".")
@@ -248,7 +248,7 @@ def test_polylines_attr_chunking_chunk_keys_are_4d(tmp_path):
         chunk_by_attribute="bundle",
     )
     root = open_store(str(store))
-    files = root["resolution_0"].list_chunks("vertices")
+    files = root["0"].list_chunks("vertices")
     assert files, "no chunks written"
     for f in files:
         assert f.count(".") == 3, f"expected 4-arity key, got {f}"

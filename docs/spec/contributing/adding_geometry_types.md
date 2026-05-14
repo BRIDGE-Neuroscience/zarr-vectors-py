@@ -131,19 +131,19 @@ def write_voxel_cloud(
             chunk_verts, chunk_coord, chunk_shape, bin_shape
         )
         # Write vertices
-        _write_chunk_array(root, "resolution_0/vertices", chunk_coord,
+        _write_chunk_array(root, "0/vertices", chunk_coord,
                            sorted_verts)
         # Write VG index
-        _write_chunk_array(root, "resolution_0/vertex_group_offsets",
+        _write_chunk_array(root, "0/vertex_group_offsets",
                            chunk_coord, vg_offsets)
         # Write type-specific array
         sorted_voxel_ids = voxel_ids[chunk_indices][order]
-        _write_chunk_array(root, "resolution_0/links/voxel_ids",
+        _write_chunk_array(root, "0/links/voxel_ids",
                            chunk_coord, sorted_voxel_ids)
         # Write attributes
         if attributes:
             for name, values in attributes.items():
-                _write_chunk_array(root, f"resolution_0/attributes/{name}",
+                _write_chunk_array(root, f"0/attributes/{name}",
                                    chunk_coord, values[chunk_indices][order])
 
     # Write multiscale metadata
@@ -192,7 +192,7 @@ def read_voxel_cloud(
 def check_type_specific_l1(root, geometry_type, result):
     ...
     if geometry_type == GEOM_VOXEL_CLOUD:
-        _assert_array_exists(root, "resolution_0/links/voxel_ids/", result)
+        _assert_array_exists(root, "0/links/voxel_ids/", result)
 ```
 
 ### Step 6 — Add L2 metadata checks
@@ -202,7 +202,7 @@ def check_type_specific_l1(root, geometry_type, result):
 def check_type_specific_l2(root, geometry_type, result):
     ...
     if geometry_type == GEOM_VOXEL_CLOUD:
-        voxel_ids_array = root["resolution_0"]["links"]["voxel_ids"]
+        voxel_ids_array = root["0"]["links"]["voxel_ids"]
         _check_dtype(voxel_ids_array, expected="int64", result=result,
                      check_name="voxel_ids_dtype")
         _check_last_dim(voxel_ids_array, expected=None,  # scalar per vertex

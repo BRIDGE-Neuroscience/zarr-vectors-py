@@ -75,7 +75,7 @@ def validate_conformance(store_path: str | Path) -> ValidationResult:
 
     levels = list_resolution_levels(root)
     if 0 not in levels:
-        result.add_warning("No resolution_0 for geometry checks")
+        result.add_warning("No level 0 for geometry checks")
         return result
 
     lg = get_resolution_level(root, 0)

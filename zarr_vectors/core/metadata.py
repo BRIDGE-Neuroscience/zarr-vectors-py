@@ -18,9 +18,29 @@ from __future__ import annotations
 import copy
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
+
+
+class NgffAxis(TypedDict, total=False):
+    """An NGFF (OME-Zarr RFC 4/5) axis descriptor.
+
+    Three string fields:
+
+    - ``name`` (required): axis identifier — e.g. ``"x"``, ``"z"``,
+      ``"channel"``.  Must be unique within the axis list.
+    - ``type``: one of ``"space"``, ``"time"``, ``"channel"``, or a
+      custom type.  NGFF prescribes the order
+      ``time → channel → custom → space``.
+    - ``unit``: UDUNITS-2 name (``"micrometer"``, ``"second"``, ...) or
+      omitted.  Do **not** stamp a placeholder string here; NGFF
+      validators will reject it.
+    """
+
+    name: str
+    type: str
+    unit: str
 
 from zarr_vectors.constants import (
     DEFAULT_COARSENING_METHOD,
@@ -49,17 +69,21 @@ from zarr_vectors.exceptions import ConventionError, MetadataError
 def build_axes_metadata(
     dim_names: list[str],
     dim_types: list[str],
-    dim_units: list[str],
+    dim_units: list[str | None],
 ) -> list[dict[str, str]]:
     """Build OME-Zarr–style axes list.
 
     Args:
         dim_names: Axis names, e.g. ``["x", "y", "z"]``.
         dim_types: Axis types, e.g. ``["space", "space", "space"]``.
-        dim_units: Axis units, e.g. ``["um", "um", "um"]``.
+        dim_units: Axis units, e.g. ``["micrometer", "micrometer", "micrometer"]``.
+            Each entry may be ``None`` or an empty string to omit the
+            ``unit`` field — NGFF requires ``unit`` to be a valid
+            UDUNITS-2 name when present, so unknown units MUST be
+            omitted rather than stamped with a placeholder.
 
     Returns:
-        List of axis dicts: ``[{"name":"x","type":"space","unit":"um"}, ...]``
+        List of axis dicts: ``[{"name":"x","type":"space","unit":"micrometer"}, ...]``
 
     Raises:
         MetadataError: If list lengths are inconsistent or no space axes.
@@ -71,26 +95,58 @@ def build_axes_metadata(
         )
     if not any(t == "space" for t in dim_types):
         raise MetadataError("At least one axis must have type 'space'")
-    return [
-        {"name": n, "type": t, "unit": u}
-        for n, t, u in zip(dim_names, dim_types, dim_units)
-    ]
+    out: list[dict[str, str]] = []
+    for n, t, u in zip(dim_names, dim_types, dim_units):
+        ax: dict[str, str] = {"name": n, "type": t}
+        if u:
+            ax["unit"] = u
+        out.append(ax)
+    return out
+
+
+_NGFF_AXIS_TYPE_ORDER: dict[str, int] = {
+    "time": 0,
+    "channel": 1,
+    # Any non-time/channel/space type is treated as "custom" and slots
+    # between channel (1) and space (3).
+    "space": 3,
+}
 
 
 def validate_axes(axes: list[dict[str, str]]) -> None:
-    """Validate axes metadata structure.
+    """Validate axes metadata structure against NGFF conventions.
+
+    NGFF (RFC 4/5) prescribes axis ordering ``time → channel → custom
+    → space (z, y, x)``.  Stores written with axes in any other order
+    will not load correctly in NGFF-aware viewers.
 
     Raises:
-        MetadataError: If axes are malformed.
+        MetadataError: If axes are malformed or not in NGFF order.
     """
     if not axes or len(axes) < 2:
         raise MetadataError("At least 2 axes required")
     space_count = sum(1 for a in axes if a.get("type") == "space")
     if space_count < 2:
         raise MetadataError(f"Need ≥2 space axes, found {space_count}")
+    seen_names: set[str] = set()
+    last_rank = -1
     for i, a in enumerate(axes):
         if "name" not in a:
             raise MetadataError(f"Axis {i} missing 'name'")
+        name = a["name"]
+        if name in seen_names:
+            raise MetadataError(f"Duplicate axis name {name!r}")
+        seen_names.add(name)
+        # NGFF rank: time(0) < channel(1) < custom(2) < space(3).
+        a_type = a.get("type", "space")
+        rank = _NGFF_AXIS_TYPE_ORDER.get(a_type, 2)
+        if rank < last_rank:
+            raise MetadataError(
+                f"Axis {i} {name!r} has type {a_type!r} but follows a "
+                f"higher-rank axis; NGFF requires order time → channel "
+                f"→ custom → space."
+            )
+        last_rank = rank
 
 
 def build_coordinate_transforms(
@@ -184,8 +240,14 @@ class RootMetadata:
     """Root-level metadata for a ZV store.
 
     Attributes:
-        format_version: ZV specification version.
-        spatial_index_dims: Axes definitions (OME-Zarr style).
+        zv_version: ZV specification version (renamed from
+            ``format_version`` in 0.5.0 to disambiguate from Zarr v3's
+            ``zarr_format`` field).
+        spatial_index_dims: Axes definitions (NGFF / OME-Zarr style).
+            On disk, axes live in ``multiscales[0].axes`` (NGFF) and
+            are NOT duplicated under the ``zarr_vectors`` namespace as
+            of 0.5.0.  This Python attribute remains the canonical
+            in-memory accessor.
         chunk_shape: Spatial chunk size per dimension.
         bounds: Global bounding box as ``(min_corner, max_corner)``.
         geometry_types: List of geometry types in the store.
@@ -200,7 +262,7 @@ class RootMetadata:
     chunk_shape: tuple[float, ...]
     bounds: tuple[list[float], list[float]]
     geometry_types: list[str]
-    format_version: str = FORMAT_VERSION
+    zv_version: str = FORMAT_VERSION
     crs: dict[str, Any] | None = None
     links_convention: str = LINKS_IMPLICIT_SEQUENTIAL
     object_index_convention: str = OBJIDX_STANDARD
@@ -229,24 +291,36 @@ class RootMetadata:
             MetadataError: If any field is invalid.
             ConventionError: If conventions are inconsistent.
         """
-        if not self.format_version:
-            raise MetadataError("format_version is required")
+        if not self.zv_version:
+            raise MetadataError("zv_version is required")
 
-        # Hard cut at the 0.4 break: pre-0.4 stores used a different
-        # link/CCL layout (no ``<delta>`` segment) and are unreadable
-        # by this build.  See ``schema/zarr_vectors.linkml.yaml`` and
-        # the multiscale-links plan for details.
+        # Hard cuts:
+        #   - pre-0.4   : multiscale-links layout (no ``<delta>`` segment)
+        #   - pre-0.4.1 : resolution-level group names were prefixed
+        #                 (``resolution_0/``); current writers use bare
+        #                 integers (``0/``) to mirror OME-Zarr.
+        #   - pre-0.5.0 : root-attr key was ``format_version`` and axes
+        #                 were duplicated under
+        #                 ``zarr_vectors.spatial_index_dims``; per-array
+        #                 ``.zattrs`` carried a redundant ``dtype`` field.
+        # No shims ship; older stores must be re-written.
+        parts = self.zv_version.split(".")
         try:
-            major, minor = (int(x) for x in self.format_version.split(".")[:2])
-        except (ValueError, AttributeError) as exc:
+            major = int(parts[0])
+            minor = int(parts[1]) if len(parts) >= 2 else 0
+            patch = int(parts[2]) if len(parts) >= 3 else 0
+        except (ValueError, AttributeError, IndexError) as exc:
             raise MetadataError(
-                f"format_version {self.format_version!r} is not a valid X.Y[.Z] string"
+                f"zv_version {self.zv_version!r} is not a valid X.Y[.Z] string"
             ) from exc
-        if (major, minor) < (0, 4):
+        if (major, minor, patch) < (0, 5, 0):
             raise MetadataError(
-                f"store format_version is {self.format_version}; this build "
-                f"requires {FORMAT_VERSION} (0.4) — no backwards-compat shim. "
-                f"Re-write the store with a 0.4 writer."
+                f"store zv_version is {self.zv_version}; this build "
+                f"requires {FORMAT_VERSION} — no backwards-compat shim. "
+                f"Pre-0.5 stores used the legacy ``format_version`` key "
+                f"and duplicated axes under "
+                f"``zarr_vectors.spatial_index_dims``.  Re-write the "
+                f"store with a {FORMAT_VERSION} writer."
             )
 
         if self.cross_level_storage not in VALID_XLEVEL_STORAGE:
@@ -330,11 +404,16 @@ class RootMetadata:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialise to a JSON-compatible dict."""
+        """Serialise to a JSON-compatible dict.
+
+        Returns the **non-axis** fields only — under 0.5.0 axes live in
+        the NGFF ``multiscales[0].axes`` block, written separately by
+        :func:`zarr_vectors.core.multiscale.write_multiscale_metadata`.
+        Combine the two when writing root attrs.
+        """
         d = {
             "zarr_vectors": {
-                "format_version": self.format_version,
-                "spatial_index_dims": self.spatial_index_dims,
+                "zv_version": self.zv_version,
                 "chunk_shape": list(self.chunk_shape),
                 "bounds": [list(self.bounds[0]), list(self.bounds[1])],
                 "geometry_types": self.geometry_types,
@@ -358,14 +437,17 @@ class RootMetadata:
         """Deserialise from a dict (as stored in ``.zattrs``).
 
         Args:
-            d: Dict with a ``"zarr_vectors"`` key containing the metadata.
+            d: The full root-attrs dict — must contain a
+                ``"zarr_vectors"`` key for ZV-specific fields and
+                (when ``strict``) a top-level ``"multiscales"`` key
+                holding the NGFF axes.
             strict: When True (default), every structural field
-                (``spatial_index_dims``, ``chunk_shape``, ``bounds``,
-                ``geometry_types``) must be present.  When False, missing
-                structural fields fall through as ``None``/``[]`` so a
-                freshly-warmed store can round-trip; the resulting
-                instance will fail :meth:`validate` until those fields
-                are filled in.
+                (axes via ``multiscales[0].axes``, ``chunk_shape``,
+                ``bounds``, ``geometry_types``) must be present.  When
+                False, missing structural fields fall through as
+                ``None``/``[]`` so a freshly-warmed store can
+                round-trip; the resulting instance will fail
+                :meth:`validate` until those fields are filled in.
 
         Raises:
             MetadataError: If the dict is malformed or (in strict mode)
@@ -375,24 +457,34 @@ class RootMetadata:
             raise MetadataError("Root metadata must contain 'zarr_vectors' key")
         zv = d["zarr_vectors"]
 
+        # Axes now live in NGFF ``multiscales[0].axes`` (0.5.0+).
+        ms = d.get("multiscales") or []
+        axes: list[dict[str, str]] = []
+        if ms and isinstance(ms, list) and ms[0].get("axes"):
+            axes = list(ms[0]["axes"])
+
         if strict:
-            required = [
-                "format_version", "spatial_index_dims", "chunk_shape",
-                "bounds", "geometry_types",
-            ]
+            required = ["zv_version", "chunk_shape", "bounds", "geometry_types"]
             for key in required:
                 if key not in zv:
                     raise MetadataError(f"Missing required root metadata key: '{key}'")
-        elif "format_version" not in zv:
-            raise MetadataError("Missing required root metadata key: 'format_version'")
+            if not axes:
+                raise MetadataError(
+                    "Missing required root metadata: NGFF "
+                    "``multiscales[0].axes`` block (axes are no longer "
+                    "stored under ``zarr_vectors.spatial_index_dims`` "
+                    "as of format 0.5.0)"
+                )
+        elif "zv_version" not in zv:
+            raise MetadataError("Missing required root metadata key: 'zv_version'")
 
         bbs = zv.get("base_bin_shape")
         caps = zv.get("format_capabilities") or []
         chunk_shape_raw = zv.get("chunk_shape")
         bounds_raw = zv.get("bounds")
         return cls(
-            format_version=zv["format_version"],
-            spatial_index_dims=zv.get("spatial_index_dims") or [],
+            zv_version=zv["zv_version"],
+            spatial_index_dims=axes,
             chunk_shape=tuple(chunk_shape_raw) if chunk_shape_raw else (),
             bounds=(
                 (list(bounds_raw[0]), list(bounds_raw[1]))

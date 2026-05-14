@@ -74,7 +74,7 @@ def _gen_doc(source: Path, out: Path) -> None:
             if p.name in seen:
                 continue
             sections.append(f"\n\n---\n\n{p.read_text(encoding='utf-8')}")
-        out.write_text("\n".join(sections), encoding="utf-8")
+        out.write_text(_strip_docgen_noise("\n".join(sections)), encoding="utf-8")
 
 
 def regen(check: bool) -> int:

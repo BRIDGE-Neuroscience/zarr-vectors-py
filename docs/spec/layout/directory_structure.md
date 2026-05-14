@@ -9,7 +9,7 @@
   `metadata.json`.
 
 **Resolution level group**
-: A Zarr group at path `resolution_<N>/` within the store root, where `N`
+: A Zarr group at path `<N>/` within the store root, where `N`
   is a non-negative integer. Level 0 is always the full-resolution level.
   Higher levels are progressively coarser.
 
@@ -57,7 +57,7 @@ dataset.zarrvectors/
 ├── .zattrs                      # ZVF root metadata (see root_metadata.md)
 ├── metadata.json                # human-readable summary
 │
-├── resolution_0/                # full-resolution level
+├── 0/                # full-resolution level
 │   ├── zarr.json                # Zarr v3 group metadata
 │   ├── .zattrs                  # per-level metadata (bin_ratio, sparsity)
 │   │
@@ -80,8 +80,8 @@ dataset.zarrvectors/
 │           ├── zarr.json
 │           └── c/ …
 │
-└── resolution_1/                # coarser level (bin_ratio declared in .zattrs)
-    └── [same structure as resolution_0]
+└── 1/                # coarser level (bin_ratio declared in .zattrs)
+    └── [same structure as 0]
 ```
 
 ### Full annotated tree (streamline / polyline)
@@ -99,7 +99,7 @@ tracts.zarrvectors/
 ├── .zattrs
 ├── metadata.json
 │
-└── resolution_0/
+└── 0/
     ├── zarr.json
     ├── .zattrs
     │
@@ -146,7 +146,7 @@ to the link arrays. A typical level-0 tree under
 `build_pyramid(..., cross_level_depth=1, cross_level_storage="explicit")`:
 
 ```
-resolution_0/
+0/
 ├── links/
 │   ├── 0/                   # intra-level edges
 │   └── +1/                  # cross-level: source local → coarse local (same chunk_key)
@@ -156,7 +156,7 @@ resolution_0/
 └── …
 ```
 
-At an intermediate level (e.g. `resolution_1`), both `+1` (drill up to
+At an intermediate level (e.g. `1`), both `+1` (drill up to
 level 2) and `-1` (drill down to level 0) appear. See
 [`examples/07_multiscale_links.ipynb`](../../../examples/07_multiscale_links.ipynb).
 
@@ -167,7 +167,7 @@ neuron.zarrvectors/
 ├── zarr.json
 ├── .zattrs
 ├── metadata.json
-└── resolution_0/
+└── 0/
     ├── vertices/
     ├── vertex_group_offsets/
     ├── links/
@@ -192,7 +192,7 @@ brain.zarrvectors/
 ├── zarr.json
 ├── .zattrs
 ├── metadata.json
-└── resolution_0/
+└── 0/
     ├── vertices/
     ├── vertex_group_offsets/
     ├── links/
@@ -224,9 +224,9 @@ dataset.zarrvectors/
 
 ### Naming rules
 
-Resolution level directories must be named `resolution_<N>` where `N` is a
+Resolution level directories must be named `<N>` where `N` is a
 non-negative integer. There is no requirement that levels be contiguous (a
-store may have `resolution_0` and `resolution_2` without `resolution_1`),
+store may have `0` and `2` without `1`),
 but contiguous numbering from 0 is strongly recommended.
 
 Array group names within a level are fixed by this specification. Custom
@@ -241,7 +241,7 @@ Per-vertex and per-object custom attributes must be placed under
 | `zarr.json` (root) | All types | Zarr v3 group node |
 | `.zattrs` (root) | All types | ZVF root metadata |
 | `metadata.json` | All types | Recommended; not read by API |
-| `resolution_0/` | All types | At least one level required |
+| `0/` | All types | At least one level required |
 | `vertices/` | All types | |
 | `vertex_group_offsets/` | All types | Required for spatial queries |
 | `links/<delta>/` | polyline, streamline, graph, skeleton (`link_width=2`); mesh (`link_width=3`) | `<delta>=0` for intra-level edges; `<delta>=±N` for cross-pyramid-level edges (0.4+) |

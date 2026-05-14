@@ -11,14 +11,11 @@ Note on the high-level ``write_*`` API: the per-type writers
 (``write_points``, ``write_graph``, ...) call ``create_store``
 internally and return a plain dict — they do not surface the
 ``Group`` and so cannot commit on their own.  To use icechunk with
-the high-level writers, follow up with::
-
-    write_points(path, positions, ..., backend="icechunk")
-    commit(open_store(path, backend="icechunk", mode="r+"), "msg")
-
-A future change can thread an ``auto_commit`` kwarg through the
-write functions; for now the icechunk wiring stops at
-``create_store``.
+the high-level writers, which auto-commit on success via
+:func:`zarr_vectors.core.store._finalize_write` once all chunks have
+been written.  Callers that need finer-grained snapshots can still
+open the store with ``mode="r+"`` and call :func:`commit` directly
+between batches.
 """
 
 from __future__ import annotations
@@ -105,8 +102,8 @@ def test_subgroup_can_commit(ic_repo_path: str) -> None:
     """Sub-groups (created via root.create_group) share the same session
     and can be passed to commit() too."""
     root = create_store(ic_repo_path, _minimal_root_md(), backend="icechunk")
-    # resolution_0/ was auto-created by create_store
-    res0 = root["resolution_0"]
+    # 0/ was auto-created by create_store
+    res0 = root["0"]
     assert session_for(res0) is session_for(root)
     snap = commit(res0, "via sub-group")
     assert isinstance(snap, str)
@@ -205,3 +202,29 @@ def test_readonly_at_snapshot(ic_repo_path: str) -> None:
     # Reopen at HEAD of main — v2 should be visible.
     head = open_store(ic_repo_path, backend="icechunk", mode="r")
     assert head.attrs.to_dict().get("scratch", {}).get("v") == 2
+
+
+# ===================================================================
+# Auto-commit on high-level write_*()
+# ===================================================================
+
+
+def test_write_points_auto_commits(ic_repo_path: str) -> None:
+    """``write_points(..., backend="icechunk")`` must persist data without
+    requiring a follow-up explicit commit."""
+    import numpy as np
+    from zarr_vectors.types.points import read_points, write_points
+
+    rng = np.random.default_rng(0)
+    positions = rng.uniform(0, 100, (32, 3)).astype(np.float32)
+
+    write_points(
+        ic_repo_path, positions,
+        chunk_shape=(50.0, 50.0, 50.0),
+        backend="icechunk",
+    )
+
+    # No explicit commit by the caller — auto-commit by _finalize_write
+    # should have flushed the session before write_points returned.
+    out = read_points(ic_repo_path, backend="icechunk")
+    assert out["vertex_count"] == 32

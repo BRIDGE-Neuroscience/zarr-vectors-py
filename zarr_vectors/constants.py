@@ -9,8 +9,30 @@ everywhere in the package.
 # Format version
 # ---------------------------------------------------------------------------
 
-FORMAT_VERSION: str = "0.4"
-"""Current ZV specification version."""
+FORMAT_VERSION: str = "0.5.0"
+"""Current ZV specification version.
+
+0.5.0: NGFF-alignment cleanup.  Hard break — see
+``RootMetadata.validate``.  Three on-disk changes vs 0.4.1:
+
+1. Root key ``zarr_vectors.format_version`` is renamed to
+   ``zarr_vectors.zv_version`` to disambiguate from Zarr v3's
+   ``zarr_format`` field.
+2. Root key ``zarr_vectors.spatial_index_dims`` is removed; axes are
+   read from the NGFF ``multiscales[0].axes`` block which is now
+   written eagerly at :func:`zarr_vectors.core.store.create_store`
+   time.  ``multiscales[].version`` is ``"0.4"`` and the ZV
+   discriminator lives in ``multiscales[].metadata.format =
+   "zarr_vectors"`` (NGFF reserves ``type`` for the downsampling
+   method).
+3. Per-array ``.zattrs`` no longer duplicate the array's ``dtype`` —
+   Zarr v3 already stores it as ``data_type`` in the array
+   ``zarr.json``.
+
+0.4.1: bare-integer resolution-level group names (``0/``, ``1/``)
+to mirror OME-Zarr; previously prefixed as ``resolution_0/``,
+``resolution_1/``.
+"""
 
 # Capability tokens stored in RootMetadata.format_capabilities.  Readers
 # inspect these to know which optional 0.3+ features the store uses, and
@@ -42,17 +64,35 @@ CAP_MULTISCALE_LINKS: str = "multiscale_links"
 cross-pyramid-level edges (``delta != 0``)."""
 
 DEFAULT_AXES_NAMES: tuple[str, ...] = ("x", "y", "z", "w")
-"""Default axis names used when first-write inference creates root
-metadata for a store that was warmed without an explicit ``axes`` kwarg.
-Indexed by ``sid_ndim`` (1 → ``("x",)``, 2 → ``("x", "y")``, ...).
-Stops at 4 dims; higher-dim stores must pass axes explicitly."""
+"""Default axis names used when ``create_store`` is called without an
+explicit ``axes`` kwarg.  Indexed by ``sid_ndim`` (1 → ``("x",)``, 2 →
+``("x", "y")``, ...).  Stops at 4 dims; higher-dim stores must pass
+axes explicitly."""
+
+DEFAULT_BOUNDS_SIDE: float = 128.0
+"""Default per-dimension extent for a freshly-warmed store.  When
+``create_store(path)`` is called with no ``bounds`` kwarg, the store is
+created with ``bounds = ([0,...,0], [128,...,128])`` for the resolved
+``sid_ndim``.  Out-of-bounds writes raise unless an ``out_of_bounds=``
+policy is supplied by the caller."""
+
+DEFAULT_OOB_POLICY: str = "raise"
+"""Default ``out_of_bounds`` policy applied by the top-level write
+functions when the caller does not specify one.  Values: ``"raise"``
+(reject the write), ``"ignore"`` (silently drop out-of-bounds vertices),
+``"expand"`` (grow store ``bounds`` to include the new data)."""
+
+VALID_OOB_POLICIES: frozenset[str] = frozenset({"raise", "ignore", "expand"})
 
 # ---------------------------------------------------------------------------
 # Store layout names
 # ---------------------------------------------------------------------------
 
-RESOLUTION_PREFIX: str = "resolution_"
-"""Prefix for resolution level groups: resolution_0, resolution_1, ..."""
+RESOLUTION_PREFIX: str = ""
+"""Empty under the 0.4.1 layout — resolution level groups are bare
+integer names (``0``, ``1``, ...) to mirror OME-Zarr's convention.
+Retained as a symbol so callers that build paths via
+``f"{RESOLUTION_PREFIX}{n}"`` keep working without import churn."""
 
 PARAMETRIC_GROUP: str = "parametric"
 """Name of the root-level parametric objects group."""

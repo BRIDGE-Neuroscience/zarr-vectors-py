@@ -64,7 +64,7 @@ in the store.
 
 | Check | Rule | Failure type |
 |-------|------|--------------|
-| `level_key_matches_name` | `level` in `.zattrs` equals N in `resolution_N/` | Error |
+| `level_key_matches_name` | `level` in `.zattrs` equals N in `N/` | Error |
 | `bin_ratio_length` | `len(bin_ratio) == spatial_dims` | Error |
 | `bin_ratio_positive` | All elements of `bin_ratio` are positive integers | Error |
 | `bin_shape_consistent` | `bin_shape[d] ≈ base_bin_shape[d] × bin_ratio[d]` for all `d` | Error |

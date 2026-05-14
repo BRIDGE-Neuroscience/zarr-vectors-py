@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
+from zarr_vectors.core.store import create_store, open_store
+from zarr_vectors.exceptions import MetadataError
 from zarr_vectors.types.points import read_points, write_points
 
 
@@ -263,3 +265,56 @@ class TestPointsEdgeCases:
 
         result = read_points(store)
         assert result["vertex_count"] == 2
+
+
+# ===================================================================
+# Out-of-bounds policy (against a pre-warmed store)
+# ===================================================================
+
+class TestOutOfBoundsPolicy:
+
+    def test_raise_is_default(self, tmp_path: Path) -> None:
+        """With the default 128³ bounds and `raise` policy, OOB writes
+        surface a clear MetadataError."""
+        store = str(tmp_path / "raise.zarr")
+        create_store(store)  # default bounds = 128³
+        pts = np.array([[200.0, 50.0, 50.0]], dtype=np.float32)
+        try:
+            write_points(store, pts)
+            assert False, "should have raised"
+        except MetadataError:
+            pass
+
+    def test_ignore_drops_oob(self, tmp_path: Path) -> None:
+        """`ignore` drops OOB points and writes the rest."""
+        store = str(tmp_path / "ignore.zarr")
+        create_store(store)
+        pts = np.array(
+            [[200.0, 50.0, 50.0], [10.0, 10.0, 10.0], [50.0, 50.0, 50.0]],
+            dtype=np.float32,
+        )
+        summary = write_points(store, pts, out_of_bounds="ignore")
+        assert summary["vertex_count"] == 2
+
+    def test_expand_grows_bounds(self, tmp_path: Path) -> None:
+        """`expand` grows the store's bounds to enclose all input points."""
+        store = str(tmp_path / "expand.zarr")
+        create_store(store)
+        pts = np.array(
+            [[200.0, 50.0, 50.0], [10.0, 10.0, 10.0]],
+            dtype=np.float32,
+        )
+        write_points(store, pts, out_of_bounds="expand")
+        root = open_store(store)
+        zv = root.attrs.to_dict()["zarr_vectors"]
+        assert zv["bounds"][1][0] >= 200.0
+
+    def test_unknown_policy_raises(self, tmp_path: Path) -> None:
+        store = str(tmp_path / "bad.zarr")
+        create_store(store)
+        pts = np.array([[200.0, 50.0, 50.0]], dtype=np.float32)
+        try:
+            write_points(store, pts, out_of_bounds="garbage")
+            assert False
+        except MetadataError:
+            pass

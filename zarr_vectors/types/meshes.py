@@ -52,10 +52,13 @@ from zarr_vectors.core.attr_chunking import (
     assign_attribute_bins,
     compute_chunk_dim_names,
 )
+from zarr_vectors.constants import DEFAULT_OOB_POLICY
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
+    _apply_out_of_bounds_policy,
     _create_or_open_store,
     _ensure_root_metadata_for_write,
+    _finalize_write,
     create_resolution_level,
     create_store,
     get_resolution_level,
@@ -101,6 +104,7 @@ def write_mesh(
     *,
     chunk_shape: ChunkShape,
     bin_shape: BinShape | None = None,
+    bounds: tuple[list[float], list[float]] | None = None,
     encoding: str = ENCODING_RAW,
     vertex_attributes: dict[str, npt.NDArray] | None = None,
     object_attributes: dict[str, npt.NDArray] | None = None,
@@ -109,6 +113,7 @@ def write_mesh(
     draco_quantization_bits: int = 11,
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
+    out_of_bounds: str = DEFAULT_OOB_POLICY,
 ) -> dict[str, Any]:
     """Write a mesh to a new zarr vectors store.
 
@@ -144,15 +149,37 @@ def write_mesh(
         else:
             object_ids = np.zeros(n_verts, dtype=np.int64)
 
-    bounds = compute_bounds(vertices)
-    bounds_list = (bounds[0].tolist(), bounds[1].tolist())
+    if bounds is None:
+        inferred = compute_bounds(vertices)
+        bounds_list = (inferred[0].tolist(), inferred[1].tolist())
+    else:
+        bounds_list = (list(bounds[0]), list(bounds[1]))
 
-    root = _create_or_open_store(store_path, backend=backend)
+    root = _create_or_open_store(
+        store_path,
+        backend=backend,
+        bounds=bounds_list,
+        chunk_shape=tuple(chunk_shape),
+        ndim=ndim,
+    )
+    # OOB policy for mesh vertices.  "ignore" filters vertices but does
+    # NOT rewrite ``faces`` to drop references to filtered vertices —
+    # call set_bounds(..., force=True) afterwards for a fully consistent
+    # contracted store, or pre-filter vertices+faces upstream.
+    if out_of_bounds == "ignore":
+        raise ArrayError(
+            "out_of_bounds='ignore' is not supported for write_mesh: "
+            "faces reference vertex indices and would be left dangling. "
+            "Use 'raise' (default) or 'expand', or pre-filter vertices "
+            "and remap faces upstream."
+        )
+    vertices, _ = _apply_out_of_bounds_policy(
+        root, vertices, policy=out_of_bounds,
+    )
+
     root_meta = _ensure_root_metadata_for_write(
         root,
         inferred_ndim=ndim,
-        inferred_bounds=bounds_list,
-        chunk_shape_hint=chunk_shape,
         geometry_type=GEOM_MESH,
         base_bin_shape=bin_shape,
         links_convention=LINKS_EXPLICIT,
@@ -314,6 +341,7 @@ def write_mesh(
             create_object_attributes_array(level_group, _name)
             write_object_attributes(level_group, _name, np.asarray(_data))
 
+    _finalize_write(root, "write_mesh")
     return {
         "vertex_count": n_verts,
         "face_count": n_faces,

@@ -34,10 +34,10 @@ The link layout under the 0.4 schema is a single family of four
 arrays, each parameterised by a level delta:
 
 ```
-/resolution_N/links/<delta>/<chunk_key>
-/resolution_N/cross_chunk_links/<delta>/data
-/resolution_N/link_attributes/<name>/<delta>/<chunk_key>
-/resolution_N/cross_chunk_link_attributes/<name>/<delta>/data
+/N/links/<delta>/<chunk_key>
+/N/cross_chunk_links/<delta>/data
+/N/link_attributes/<name>/<delta>/<chunk_key>
+/N/cross_chunk_link_attributes/<name>/<delta>/data
 ```
 
 When an edge's two endpoints share a chunk_key (after re-evaluation

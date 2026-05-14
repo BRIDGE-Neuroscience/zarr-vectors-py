@@ -57,10 +57,13 @@ from zarr_vectors.core.attr_chunking import (
     assign_attribute_bins,
     compute_chunk_dim_names,
 )
+from zarr_vectors.constants import DEFAULT_OOB_POLICY
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import (
+    _apply_out_of_bounds_policy,
     _create_or_open_store,
     _ensure_root_metadata_for_write,
+    _finalize_write,
     create_resolution_level,
     create_store,
     get_resolution_level,
@@ -100,6 +103,7 @@ def write_graph(
     *,
     chunk_shape: ChunkShape,
     bin_shape: BinShape | None = None,
+    bounds: tuple[list[float], list[float]] | None = None,
     is_tree: bool = False,
     node_attributes: dict[str, npt.NDArray] | None = None,
     edge_attributes: dict[str, npt.NDArray] | None = None,
@@ -108,6 +112,7 @@ def write_graph(
     dtype: str = "float32",
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
+    out_of_bounds: str = DEFAULT_OOB_POLICY,
 ) -> dict[str, Any]:
     """Write a graph or skeleton to a new zarr vectors store.
 
@@ -160,16 +165,31 @@ def write_graph(
     geometry_type = GEOM_SKELETON if is_tree else GEOM_GRAPH
     links_conv = LINKS_IMPLICIT_BRANCHES if is_tree else LINKS_EXPLICIT
 
-    # Compute bounds
-    bounds = compute_bounds(positions)
-    bounds_list = (bounds[0].tolist(), bounds[1].tolist())
+    # Compute bounds — explicit `bounds=` kwarg overrides input-data extent.
+    if bounds is None:
+        inferred = compute_bounds(positions)
+        bounds_list = (inferred[0].tolist(), inferred[1].tolist())
+    else:
+        bounds_list = (list(bounds[0]), list(bounds[1]))
 
-    root = _create_or_open_store(store_path, backend=backend)
+    root = _create_or_open_store(
+        store_path,
+        backend=backend,
+        bounds=bounds_list,
+        chunk_shape=tuple(chunk_shape),
+        ndim=ndim,
+    )
+    if out_of_bounds == "ignore":
+        raise ArrayError(
+            "out_of_bounds='ignore' is not supported for write_graph: "
+            "edges reference node indices and would be left dangling. "
+            "Use 'raise' (default) or 'expand'."
+        )
+    _apply_out_of_bounds_policy(root, positions, policy=out_of_bounds)
+
     root_meta = _ensure_root_metadata_for_write(
         root,
         inferred_ndim=ndim,
-        inferred_bounds=bounds_list,
-        chunk_shape_hint=chunk_shape,
         geometry_type=geometry_type,
         base_bin_shape=bin_shape,
         links_convention=links_conv,
@@ -367,6 +387,7 @@ def write_graph(
             create_object_attributes_array(level_group, _name)
             write_object_attributes(level_group, _name, np.asarray(_data))
 
+    _finalize_write(root, "write_graph" if not is_tree else "write_skeleton")
     return {
         "node_count": n_nodes,
         "edge_count": n_edges,

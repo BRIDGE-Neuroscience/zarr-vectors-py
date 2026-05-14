@@ -232,7 +232,9 @@ class TestOMEZarrMetadata:
 
         root = open_store(store, mode="r+")
         ms = write_multiscale_metadata(root)
-        assert ms[0]["version"] == "0.5"
+        assert ms[0]["version"] == "0.4"
+        assert ms[0]["metadata"]["format"] == "zarr_vectors"
+        assert "type" not in ms[0]
         assert len(ms[0]["datasets"]) == 3
 
         # Verify scales

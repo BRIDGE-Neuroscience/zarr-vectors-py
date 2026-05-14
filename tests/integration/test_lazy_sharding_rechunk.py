@@ -191,7 +191,7 @@ class TestRechunkByGroup:
         assert result["objects_rechunked"] == 60
 
         # Verify 4D chunk keys
-        keys = list_chunk_keys(open_store(out)["resolution_0"])
+        keys = list_chunk_keys(open_store(out)["0"])
         assert all(len(k) == 4 for k in keys)
 
         # Group 0 prefix scan
@@ -199,7 +199,7 @@ class TestRechunkByGroup:
         g0_verts = 0
         for ck in g0_keys:
             groups = read_chunk_vertices(
-                open_store(out)["resolution_0"], ck,
+                open_store(out)["0"], ck,
                 dtype=np.float32, ndim=3,
             )
             g0_verts += sum(len(g) for g in groups)
@@ -230,7 +230,7 @@ class TestRechunkByAttribute:
         assert result["objects_rechunked"] == 80
 
         # 4D keys with prefix = length bin
-        keys = list_chunk_keys(open_store(out)["resolution_0"])
+        keys = list_chunk_keys(open_store(out)["0"])
         assert all(len(k) == 4 for k in keys)
         bin_prefixes = sorted(set(k[0] for k in keys))
         assert len(bin_prefixes) >= 2

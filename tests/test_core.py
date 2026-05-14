@@ -36,6 +36,7 @@ from zarr_vectors.core.store import (
     read_level_metadata,
     read_parametric_types,
     read_root_metadata,
+    set_bounds,
     store_info,
     write_parametric_types,
 )
@@ -233,8 +234,20 @@ class TestRootMetadata:
             reduction_factor=8,
         )
         d = m.to_dict()
+        # 0.5.0+: axes live in NGFF ``multiscales[0].axes`` rather
+        # than under ``zarr_vectors.spatial_index_dims``, so a round
+        # trip through to_dict / from_dict requires injecting the
+        # NGFF block on the side.
+        d["multiscales"] = [{
+            "version": "0.4",
+            "axes": list(m.spatial_index_dims),
+            "datasets": [{"path": "0", "coordinateTransformations": [
+                {"type": "scale", "scale": [1.0] * m.sid_ndim},
+            ]}],
+            "metadata": {"format": "zarr_vectors"},
+        }]
         m2 = RootMetadata.from_dict(d)
-        assert m2.format_version == m.format_version
+        assert m2.zv_version == m.zv_version
         assert m2.chunk_shape == m.chunk_shape
         assert m2.geometry_types == m.geometry_types
         assert m2.reduction_factor == 8
@@ -249,7 +262,7 @@ class TestRootMetadata:
 
     def test_missing_required_field(self) -> None:
         try:
-            RootMetadata.from_dict({"zarr_vectors": {"format_version": "0.2"}})
+            RootMetadata.from_dict({"zarr_vectors": {"zv_version": "0.2"}})
             assert False
         except MetadataError:
             pass
@@ -502,47 +515,63 @@ class TestStoreCreate:
         root = create_store(tmp_store_path, meta)
         assert tmp_store_path.is_dir()
         assert "zarr_vectors" in root.attrs.to_dict()
-        assert f"resolution_0" in root
+        assert f"0" in root
         # /parametric is no longer auto-created; it is created lazily by
         # get_parametric_group() on first use.
         assert "parametric" not in root
         # The warm shell already contains the empty ragged-vertex pair.
-        res0 = root["resolution_0"]
+        res0 = root["0"]
         assert "vertices" in res0
         assert "vertex_group_offsets" in res0
 
     def test_create_store_minimal(self, tmp_store_path: Path) -> None:
-        """create_store(path) with no metadata produces a warm shell."""
+        """create_store(path) with no kwargs produces a warm 3D shell
+        with default bounds = ([0,0,0], [128,128,128])."""
         root = create_store(tmp_store_path)
         assert tmp_store_path.is_dir()
         attrs = root.attrs.to_dict()
-        assert "zarr_vectors" in attrs
-        assert attrs["zarr_vectors"]["format_version"]
-        assert "spatial_index_dims" not in attrs["zarr_vectors"]
-        assert "chunk_shape" not in attrs["zarr_vectors"]
-        assert "resolution_0" in root
+        zv = attrs["zarr_vectors"]
+        assert zv["zv_version"]
+        assert zv["bounds"] == [[0.0, 0.0, 0.0], [128.0, 128.0, 128.0]]
+        assert zv["chunk_shape"] == [128.0, 128.0, 128.0]
+        # Axes now live in the NGFF multiscales block, not under
+        # zarr_vectors.spatial_index_dims (0.5.0+).
+        assert "spatial_index_dims" not in zv
+        assert len(attrs["multiscales"][0]["axes"]) == 3
+        assert zv["geometry_types"] == []
+        assert "0" in root
         assert "parametric" not in root
-        res0 = root["resolution_0"]
+        res0 = root["0"]
         assert "vertices" in res0
         assert "vertex_group_offsets" in res0
 
-    def test_create_store_kwargs_partial(self, tmp_store_path: Path) -> None:
-        """Individual structural kwargs round-trip through root attrs."""
-        axes = [
-            {"name": "x", "type": "space", "unit": "um"},
-            {"name": "y", "type": "space", "unit": "um"},
-        ]
+    def test_create_store_ndim_2d(self, tmp_store_path: Path) -> None:
+        """ndim kwarg resolves to a 2D store with default 2D bounds."""
+        root = create_store(tmp_store_path, ndim=2)
+        zv = root.attrs.to_dict()["zarr_vectors"]
+        assert zv["bounds"] == [[0.0, 0.0], [128.0, 128.0]]
+        assert len(zv["spatial_index_dims"]) == 2
+
+    def test_create_store_explicit_bounds(self, tmp_store_path: Path) -> None:
+        """Explicit bounds kwarg overrides the default."""
         root = create_store(
             tmp_store_path,
-            chunk_shape=(50.0, 50.0),
-            axes=axes,
+            bounds=([-10.0, -10.0, -10.0], [50.0, 50.0, 50.0]),
         )
         zv = root.attrs.to_dict()["zarr_vectors"]
-        assert zv["chunk_shape"] == [50.0, 50.0]
-        assert zv["spatial_index_dims"] == axes
-        # bounds + geometry_types were not supplied → stay unset.
-        assert "bounds" not in zv
-        assert "geometry_types" not in zv
+        assert zv["bounds"] == [[-10.0, -10.0, -10.0], [50.0, 50.0, 50.0]]
+
+    def test_create_store_ndim_mismatch(self, tmp_store_path: Path) -> None:
+        """Inconsistent kwargs raise MetadataError."""
+        try:
+            create_store(
+                tmp_store_path,
+                ndim=3,
+                chunk_shape=(100.0, 100.0),
+            )
+            assert False
+        except MetadataError:
+            pass
 
     def test_create_store_already_exists(self, tmp_store_path: Path) -> None:
         meta = _make_root_meta()
@@ -658,9 +687,47 @@ class TestStoreInfo:
         write_parametric_types(root, [PARAMETRIC_PLANE])
 
         info = store_info(root)
-        assert info["format_version"] == "0.3"
+        assert info["zv_version"].startswith("0.5")
         assert info["geometry_types"] == ["point_cloud", "skeleton"]
         assert info["chunk_shape"] == [100.0, 100.0, 100.0]
         assert len(info["levels"]) == 1
         assert info["levels"][0]["vertex_count"] == 5000
         assert len(info["parametric_types"]) == 1
+
+
+class TestSetBounds:
+
+    def test_expand(self, tmp_store_path: Path) -> None:
+        """Expanding bounds is allowed without force."""
+        root = create_store(tmp_store_path)
+        set_bounds(root, ([0.0, 0.0, 0.0], [200.0, 200.0, 200.0]))
+        zv = root.attrs.to_dict()["zarr_vectors"]
+        assert zv["bounds"] == [[0.0, 0.0, 0.0], [200.0, 200.0, 200.0]]
+
+    def test_contract_requires_force(self, tmp_store_path: Path) -> None:
+        """Contracting bounds without force raises."""
+        root = create_store(tmp_store_path)
+        try:
+            set_bounds(root, ([10.0, 10.0, 10.0], [100.0, 100.0, 100.0]))
+            assert False
+        except StoreError:
+            pass
+
+    def test_contract_with_force(self, tmp_store_path: Path) -> None:
+        """Contracting with force=True is allowed."""
+        root = create_store(tmp_store_path)
+        set_bounds(
+            root,
+            ([10.0, 10.0, 10.0], [100.0, 100.0, 100.0]),
+            force=True,
+        )
+        zv = root.attrs.to_dict()["zarr_vectors"]
+        assert zv["bounds"] == [[10.0, 10.0, 10.0], [100.0, 100.0, 100.0]]
+
+    def test_shape_mismatch_raises(self, tmp_store_path: Path) -> None:
+        root = create_store(tmp_store_path)  # 3D store
+        try:
+            set_bounds(root, ([0.0, 0.0], [100.0, 100.0]))  # 2D
+            assert False
+        except MetadataError:
+            pass

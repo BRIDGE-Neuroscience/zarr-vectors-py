@@ -47,7 +47,7 @@ dtype recommendations, and behaviour during multi-resolution coarsening.
 #### Array schema
 
 ```
-path:        resolution_<N>/attributes/<name>/
+path:        <N>/attributes/<name>/
 shape:       (*chunk_grid_shape, N_max)       for scalar attributes
              (*chunk_grid_shape, N_max, K)     for K-dimensional vector attributes
 chunk_shape: (1, 1, …, 1, N_max)
@@ -127,7 +127,7 @@ result = read_points("scan.zarrvectors",
 #### Array schema
 
 ```
-path:        resolution_<N>/object_attributes/<name>/
+path:        <N>/object_attributes/<name>/
 shape:       (n_objects,)     for scalar attributes
              (n_objects, K)   for K-dimensional vector attributes
 chunk_shape: (65536,)  or  (65536, K)
@@ -166,7 +166,7 @@ from zarr_vectors.types.polylines import read_polylines
 # Read object attributes without fetching vertex data
 from zarr_vectors.core.store import open_store
 root = open_store("tracts.zarrvectors", mode="r")
-mean_fa = root["resolution_0"]["object_attributes"]["mean_fa"][:]
+mean_fa = root["0"]["object_attributes"]["mean_fa"][:]
 
 # Read object attributes alongside vertices
 result = read_polylines(

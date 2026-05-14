@@ -31,6 +31,7 @@ Public surface mirrors the legacy :class:`FsGroup` for back-compat:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -44,13 +45,27 @@ from zarr_vectors.exceptions import StoreError
 class Group:
     """A ZV group wrapping an underlying :class:`zarr.Group`."""
 
+    # Class-level defaults so callers that build a Group via ``__new__``
+    # (see ``create_store`` / ``open_store``) start with batching off
+    # without needing to remember to set the attributes.
+    _pending_writes: list[tuple[str, str, bytes]] | None = None
+    _pending_array_metas: dict[str, dict[str, Any]] | None = None
+
     def __init__(self, zarr_group: zarr.Group) -> None:
         self._zarr = zarr_group
+        # Deferred-write queues activated by :meth:`batched_writes`.
+        # When set, :meth:`write_bytes` appends to ``_pending_writes``
+        # and :meth:`write_array_meta` appends to
+        # ``_pending_array_metas``; both flush in one ``asyncio.gather``
+        # against the underlying Store on context exit.
+        self._pending_writes = None
+        self._pending_array_metas = None
 
     @classmethod
     def _from_zarr(cls, zarr_group: zarr.Group) -> Group:
         instance = cls.__new__(cls)
         instance._zarr = zarr_group
+        instance._pending_writes = None
         return instance
 
     @classmethod
@@ -109,6 +124,11 @@ class Group:
     # ---------------- chunk I/O (Option G: 1 tiny array per chunk) ----------------
 
     def write_bytes(self, array_name: str, chunk_key: str, data: bytes) -> None:
+        # Batched-write mode (see :meth:`batched_writes`): defer until
+        # the context manager flushes all queued PUTs concurrently.
+        if self._pending_writes is not None:
+            self._pending_writes.append((array_name, chunk_key, bytes(data)))
+            return
         arr_group = self._zarr.require_group(array_name)
         if chunk_key in arr_group:
             del arr_group[chunk_key]
@@ -122,6 +142,57 @@ class Group:
             chunk_key, shape=(n,), chunks=(n,), dtype="uint8",
         )
         a[:] = np.frombuffer(data, dtype="uint8")
+
+    @contextmanager
+    def batched_writes(self) -> Iterator[None]:
+        """Defer every :meth:`write_bytes` and :meth:`write_array_meta`
+        call inside the block and flush them in a single
+        :func:`asyncio.gather` on exit.
+
+        Use for chunk-heavy write loops against high-latency object
+        stores (GCS / S3 / Azure).  Each per-chunk PUT and each per-array
+        ``zarr.json`` PUT becomes one async task instead of one serial
+        sync call, so the total wall time approaches one round-trip
+        rather than ``N`` round-trips.
+
+        Nesting is not supported and raises :class:`StoreError`.  Reads
+        inside the block are unaffected and execute synchronously.
+
+        Example::
+
+            with level_group.batched_writes():
+                create_vertices_array(level_group, dtype="float32")
+                create_attribute_array(level_group, "intensity")
+                for cc in chunk_coords:
+                    write_chunk_vertices(level_group, cc, ...)
+                    write_chunk_attributes(level_group, "intensity", cc, ...)
+            # exit point: every PUT scheduled above flushes in parallel
+        """
+        if self._pending_writes is not None:
+            raise StoreError("batched_writes() does not support nesting")
+        self._pending_writes = []
+        self._pending_array_metas = {}
+        try:
+            yield
+            pending_writes = self._pending_writes
+            pending_metas = self._pending_array_metas
+            self._pending_writes = None
+            self._pending_array_metas = None
+            if pending_writes or pending_metas:
+                # Lazy import to avoid pulling the asyncio/zarr-sync
+                # machinery into the import path of every Group caller.
+                from zarr_vectors.core._batch_writer import flush_batch
+
+                flush_batch(
+                    self._zarr,
+                    pending_writes,
+                    array_metas=pending_metas,
+                )
+        finally:
+            # On normal exit the queues are already None.  On an
+            # exception, drop them so the Group stays usable.
+            self._pending_writes = None
+            self._pending_array_metas = None
 
     def read_bytes(self, array_name: str, chunk_key: str) -> bytes:
         path = f"{array_name}/{chunk_key}"
@@ -171,6 +242,18 @@ class Group:
     # ---------------- array metadata ----------------
 
     def write_array_meta(self, array_name: str, meta: dict[str, Any]) -> None:
+        # Batched-write mode (see :meth:`batched_writes`): queue the
+        # full parent-group ``zarr.json`` content so it flushes in the
+        # gather instead of paying a per-array sync ``require_group +
+        # attrs.update`` (which costs 2-3 round-trips each on cloud).
+        # Merge with anything already queued for the same name so
+        # successive ``write_array_meta`` calls within the block
+        # compose, matching the existing ``attrs.update`` semantics.
+        if self._pending_array_metas is not None:
+            existing = self._pending_array_metas.get(array_name, {})
+            merged = {**existing, **_json_safe(meta)}
+            self._pending_array_metas[array_name] = merged
+            return
         arr_group = self._zarr.require_group(array_name)
         arr_group.attrs.update(_json_safe(meta))
 

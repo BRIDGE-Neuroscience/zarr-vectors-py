@@ -1,0 +1,67 @@
+name: Tests
+
+# Runs on every push to main and on PRs.  PRs from OWNER / MEMBER /
+# COLLABORATOR auto-run; PRs from outside contributors require a
+# maintainer to add the `ci-approved` label before tests will run.
+# Re-running after the label is added is automatic (the `labeled`
+# trigger re-evaluates the gate).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+# Cancel superseded runs on the same ref (avoids piling up jobs when a
+# PR is force-pushed several times in a row).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    # Auto-pass for push events and trusted PR authors.  Outside
+    # contributors wait for a maintainer to apply the `ci-approved`
+    # label, at which point the `labeled` event re-triggers this
+    # workflow and the gate passes.
+    name: Approval gate
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.author_association == 'OWNER' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      contains(github.event.pull_request.labels.*.name, 'ci-approved')
+    steps:
+      - name: Record gate decision
+        run: |
+          echo "Event: ${{ github.event_name }}"
+          echo "Author association: ${{ github.event.pull_request.author_association }}"
+          echo "Labels: ${{ join(github.event.pull_request.labels.*.name, ', ') }}"
+
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    needs: gate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs uv and caches the resolved environment keyed on the
+      # contents of uv.lock.  The cache restores on a hit, so cold
+      # runs are the only ones that pay the install cost.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync dependencies (frozen, all extras + dev)
+        run: uv sync --frozen --extra all --extra dev
+
+      - name: Run tests
+        run: uv run pytest tests/ --ignore=tests/integration -v

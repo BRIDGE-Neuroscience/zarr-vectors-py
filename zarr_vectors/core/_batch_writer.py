@@ -41,9 +41,25 @@ import asyncio
 import json
 from typing import Any, Iterable
 
+import numpy as np
 import zarr
 from zarr.core.buffer import default_buffer_prototype
 from zarr.core.sync import sync
+
+
+def _is_icechunk_store(store: Any) -> bool:
+    """Return True when ``store`` is an icechunk-backed :class:`zarr.abc.store.Store`.
+
+    Detection is by class name to avoid importing icechunk at module
+    load time (it's an optional dep).  Icechunk tracks arrays and
+    groups as first-class entities; raw ``store.set("…/zarr.json", …)``
+    PUTs don't register them, so the batched direct-PUT path can't be
+    used and we have to fall back to the synchronous
+    ``zarr.Array.create_array`` + ``array[:] = …`` path that the
+    icechunk session knows how to commit.
+    """
+    cls = type(store)
+    return cls.__name__ == "IcechunkStore" or cls.__module__.startswith("icechunk")
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +130,41 @@ def _group_zarr_json_bytes(attributes: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def _flush_batch_sync(
+    zarr_group: zarr.Group,
+    triples: list[tuple[str, str, bytes]],
+    array_metas: dict[str, dict[str, Any]],
+) -> None:
+    """Synchronous fallback for stores that can't accept raw ``set()``
+    PUTs against array paths (currently just icechunk).
+
+    Replays each queued operation through the zarr ``Array.create_array``
+    + ``array[:] = data`` path that ``Group.write_bytes`` would have
+    used in unbatched mode, so a transactional backend's commit picks
+    them up.
+    """
+    # Array metadata first so the parent group exists with the right
+    # attributes before any per-chunk array creation.
+    for array_name, meta in array_metas.items():
+        arr_group = zarr_group.require_group(array_name)
+        arr_group.attrs.update(meta)
+
+    for array_name, chunk_key, data in triples:
+        arr_group = zarr_group.require_group(array_name)
+        if chunk_key in arr_group:
+            del arr_group[chunk_key]
+        n = len(data)
+        if n == 0:
+            arr_group.create_array(
+                chunk_key, shape=(0,), chunks=(1,), dtype="uint8",
+            )
+            continue
+        a = arr_group.create_array(
+            chunk_key, shape=(n,), chunks=(n,), dtype="uint8",
+        )
+        a[:] = np.frombuffer(data, dtype="uint8")
+
+
 def flush_batch(
     zarr_group: zarr.Group,
     triples: Iterable[tuple[str, str, bytes]],
@@ -145,6 +196,15 @@ def flush_batch(
     array_metas = dict(array_metas or {})
 
     if not triples and not array_metas:
+        return
+
+    # Icechunk doesn't pick up arrays added via raw ``store.set`` of
+    # their ``zarr.json`` — it tracks arrays as first-class entities and
+    # expects them through ``zarr.Array.create_array``.  Fall back to
+    # synchronous writes for icechunk-backed stores; the icechunk
+    # session batches everything at commit time anyway.
+    if _is_icechunk_store(zarr_group.store):
+        _flush_batch_sync(zarr_group, triples, array_metas)
         return
 
     # Resolve the addressing prefix once.

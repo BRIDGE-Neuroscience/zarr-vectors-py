@@ -111,6 +111,39 @@ def test_batched_write_array_meta_composes_multiple_updates(tmp_store_path):
     assert meta == {"a": 1, "b": 99, "c": 3}
 
 
+def test_batched_writes_falls_back_to_sync_for_icechunk_like_store(
+    tmp_store_path, monkeypatch
+):
+    """Stores that look like icechunk (by class name) take the sync
+    fallback path: raw ``store.set`` PUTs on ``zarr.json`` skip
+    icechunk's array registry, so flush_batch must replay each write
+    through ``zarr.Array.create_array`` + ``array[:] = …``.
+
+    We can't install icechunk in every CI matrix slot, so this test
+    forces the detection via monkeypatch and verifies the resulting
+    round-trip rather than the icechunk-specific commit machinery.
+    """
+    from zarr_vectors.core import _batch_writer
+
+    monkeypatch.setattr(_batch_writer, "_is_icechunk_store", lambda _store: True)
+
+    root = create_store(str(tmp_store_path))
+    payloads = {
+        "0.0.0": b"chunk-bytes-via-fallback",
+        "1.0.0": np.arange(64, dtype=np.uint8).tobytes(),
+        "empty": b"",
+    }
+    with root.batched_writes():
+        root.write_array_meta("fallback_arr", {"zv_array": "vertices", "dtype": "float32"})
+        for k, v in payloads.items():
+            root.write_bytes("fallback_arr", k, v)
+
+    # Round-trip via the normal sync read path.
+    assert root.read_array_meta("fallback_arr")["zv_array"] == "vertices"
+    for k, v in payloads.items():
+        assert root.read_bytes("fallback_arr", k) == v
+
+
 def test_batched_writes_handles_exception_cleanly(tmp_store_path):
     """If the batch block raises, the queue is cleared and the Group
     stays usable for subsequent writes."""

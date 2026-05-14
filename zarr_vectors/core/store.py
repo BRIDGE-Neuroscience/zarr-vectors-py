@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse
 
 import zarr
 from zarr.storage import LocalStore
+
+if TYPE_CHECKING:
+    from zarr.storage import StoreLike
 
 from zarr_vectors.constants import (
     CAP_VERTEX_COUNT_CACHE,
@@ -155,7 +158,7 @@ def _make_fsspec_zarr_store(
 
 
 def _make_zarr_store_with_session(
-    path: str | Path | Any,
+    path: StoreLike,
     *,
     mode: str = "r+",
     backend: str | None = None,
@@ -349,7 +352,7 @@ class FsGroup(Group):
 
 
 def create_store(
-    path: str | Path | Any,
+    path: StoreLike,
     root_metadata: RootMetadata | None = None,
     *,
     bounds: tuple[list[float], list[float]] | None = None,
@@ -901,7 +904,7 @@ def _finalize_write(root: Group, message: str) -> str | None:
     return commit(root, message)
 
 def open_store(
-    path: str | Path | Any,
+    path: StoreLike,
     mode: str = "r",
     *,
     backend: str | None = None,

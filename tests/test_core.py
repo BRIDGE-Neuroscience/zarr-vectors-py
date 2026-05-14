@@ -548,9 +548,11 @@ class TestStoreCreate:
     def test_create_store_ndim_2d(self, tmp_store_path: Path) -> None:
         """ndim kwarg resolves to a 2D store with default 2D bounds."""
         root = create_store(tmp_store_path, ndim=2)
-        zv = root.attrs.to_dict()["zarr_vectors"]
+        attrs = root.attrs.to_dict()
+        zv = attrs["zarr_vectors"]
         assert zv["bounds"] == [[0.0, 0.0], [128.0, 128.0]]
-        assert len(zv["spatial_index_dims"]) == 2
+        # Axes live in NGFF ``multiscales[0].axes`` as of format 0.5.0.
+        assert len(attrs["multiscales"][0]["axes"]) == 2
 
     def test_create_store_explicit_bounds(self, tmp_store_path: Path) -> None:
         """Explicit bounds kwarg overrides the default."""

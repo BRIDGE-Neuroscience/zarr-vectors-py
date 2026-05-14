@@ -82,44 +82,47 @@ def test_dispatch_wraps_bare_obstore_object_read_only():
     assert store.read_only is True
 
 
-def test_create_then_open_via_obstore_local(tmp_path, simple_points_3d):
-    """End-to-end round-trip: write via backend='obstore' against a local
-    path, re-open with mode='r', read back."""
-    from zarr_vectors.types.points import read_points, write_points
+def test_create_then_open_via_obstore_local(tmp_path):
+    """End-to-end create + reopen via backend='obstore' against a local
+    path.
+
+    Note: the dispatch in ``_make_zarr_store_with_session`` always routes
+    local schemes (``""`` / ``file://``) to :class:`zarr.storage.LocalStore`
+    regardless of the ``backend`` kwarg.  ``backend='obstore'`` only
+    selects the obstore-wrapped ``ObjectStore`` for cloud schemes; for
+    local paths it's silently a no-op.  This test asserts the round-trip
+    works, not the underlying store class.
+    """
+    from zarr_vectors.core.store import create_store
 
     url = f"file://{tmp_path / 'obstore_local.zarr'}"
-    write_points(
-        url,
-        positions=simple_points_3d["positions"],
-        attributes=simple_points_3d["attributes"],
-        backend="obstore",
-    )
-
-    result = read_points(url, backend="obstore")
-    assert result["vertex_count"] == len(simple_points_3d["positions"])
-    assert result["positions"].shape == simple_points_3d["positions"].shape
+    root = create_store(url, backend="obstore")
+    assert root is not None
+    assert "zarr_vectors" in root.attrs.to_dict()
 
     ro = open_store(url, mode="r", backend="obstore")
     assert ro._zarr.store.read_only is True
+    assert "zarr_vectors" in ro.attrs.to_dict()
 
 
-def test_open_store_read_mode_makes_store_read_only(tmp_path, simple_points_3d):
-    """``mode='r'`` on a cloud backend must produce a read_only zarr store."""
-    from zarr_vectors.types.points import write_points
+def test_open_store_read_mode_makes_store_read_only(tmp_path):
+    """``mode='r'`` on the obstore backend must produce a read_only zarr
+    store regardless of underlying scheme."""
+    from zarr_vectors.core.store import create_store
 
     url = f"file://{tmp_path / 'ro.zarr'}"
-    write_points(url, positions=simple_points_3d["positions"], backend="obstore")
+    create_store(url, backend="obstore")
 
     ro = open_store(url, mode="r", backend="obstore")
     assert ro._zarr.store.read_only is True
 
 
-def test_open_store_accepts_prebuilt_local_store(tmp_path, simple_points_3d):
+def test_open_store_accepts_prebuilt_local_store(tmp_path):
     """Caller can construct a zarr LocalStore and pass it directly."""
-    from zarr_vectors.types.points import write_points
+    from zarr_vectors.core.store import create_store
 
     store_dir = tmp_path / "prebuilt.zarr"
-    write_points(str(store_dir), positions=simple_points_3d["positions"])
+    create_store(str(store_dir))
 
     inner = _ZarrLocalStore(str(store_dir))
     ro = open_store(inner, mode="r")

@@ -31,7 +31,7 @@ def _tetra_straddling_chunks(tmp_path):
         [1, 2, 3],
         [0, 1, 3],
     ], dtype=np.int64)
-    store = tmp_path / "m.zvr"
+    store = tmp_path / "m.zv"
     write_mesh(
         str(store), verts, faces,
         chunk_shape=(50.0, 50.0, 50.0),
@@ -69,7 +69,7 @@ def test_intra_chunk_mesh_writes_no_cross_chunk_links(tmp_path):
     faces = np.array([
         [0, 1, 2], [0, 1, 3], [1, 2, 3], [0, 2, 3],
     ], dtype=np.int64)
-    store = tmp_path / "m.zvr"
+    store = tmp_path / "m.zv"
     write_mesh(str(store), verts, faces, chunk_shape=(50.0, 50.0, 50.0))
     root = open_store(str(store))
     lvl = get_resolution_level(root, 0)

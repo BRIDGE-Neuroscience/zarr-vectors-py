@@ -40,11 +40,11 @@ from zarr_vectors.exceptions import StoreError
 @pytest.mark.parametrize(
     "url,expected",
     [
-        ("/abs/path/store.zvr", ""),
+        ("/abs/path/store.zv", ""),
         ("relative/path", ""),
-        (r"C:\Users\me\store.zvr", ""),   # bare Windows drive — not a scheme
-        ("file:///C:/Users/me/store.zvr", "file"),
-        ("file:///tmp/store.zvr", "file"),
+        (r"C:\Users\me\store.zv", ""),   # bare Windows drive — not a scheme
+        ("file:///C:/Users/me/store.zv", "file"),
+        ("file:///tmp/store.zv", "file"),
         ("s3://bucket/path", "s3"),
         ("gs://bucket/path", "gs"),
         ("gcs://bucket/path", "gcs"),
@@ -241,7 +241,7 @@ def test_rebind_swap_local_for_local(tmp_path):
     Trivial but proves the rebind mechanics: same URL must be preserved,
     cached handles must continue to resolve.
     """
-    store_path = tmp_path / "test.zvr"
+    store_path = tmp_path / "test.zv"
     root = create_store(store_path, **_minimal_root_kwargs())
     original_url = root.url
 
@@ -255,10 +255,10 @@ def test_rebind_swap_local_for_local(tmp_path):
 
 def test_rebind_url_mismatch_raises(tmp_path):
     """Rebinding to a different URL is a programming error."""
-    store_path = tmp_path / "test.zvr"
+    store_path = tmp_path / "test.zv"
     root = create_store(store_path, **_minimal_root_kwargs())
 
-    other = LocalBackend(tmp_path / "other.zvr")
+    other = LocalBackend(tmp_path / "other.zv")
     with pytest.raises(StoreError, match="matching URLs"):
         rebind(root, other)
 
@@ -269,12 +269,12 @@ def test_rebind_url_mismatch_raises(tmp_path):
 
 
 def test_create_store_with_explicit_local_backend(tmp_path):
-    root = create_store(tmp_path / "x.zvr", **_minimal_root_kwargs(), backend="local")
+    root = create_store(tmp_path / "x.zv", **_minimal_root_kwargs(), backend="local")
     assert "zarr_vectors" in root.attrs
 
 
 def test_open_store_with_explicit_local_backend(tmp_path):
-    p = tmp_path / "x.zvr"
+    p = tmp_path / "x.zv"
     create_store(p, **_minimal_root_kwargs())
     root = open_store(p, backend="local")
     assert "zarr_vectors" in root.attrs

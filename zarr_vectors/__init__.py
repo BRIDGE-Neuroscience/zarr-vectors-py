@@ -13,7 +13,7 @@ from zarr_vectors.core.store import (
     open_store,
     rebind,
 )
-from zarr_vectors.lazy.writer import ZVRWriter
+from zarr_vectors.lazy.writer import ZVWriter
 from zarr_vectors.rechunk import RechunkSpec, rechunk, rechunk_by_attribute
 
 __version__ = "0.1.0"
@@ -29,6 +29,6 @@ __all__ = [
     "RechunkSpec",
     "rechunk",
     "rechunk_by_attribute",
-    "ZVRWriter",
+    "ZVWriter",
     "__version__",
 ]

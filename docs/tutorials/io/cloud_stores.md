@@ -27,7 +27,7 @@ to `fsspec` for any URL scheme it can't handle.
 ## Backend resolution at a glance
 
 When you pass a cloud URL to any `read_*` / `write_*` / `open_store` /
-`open_zvr` call, the backend is chosen in this order:
+`open_zv` call, the backend is chosen in this order:
 
 1. **Explicit `backend=` kwarg** — e.g. `backend="fsspec"` forces fsspec
    even if obstore is installed.
@@ -262,9 +262,9 @@ a resolution level, writing new attributes).
 
 ```python
 import numpy as np
-from zarr_vectors.lazy import open_zvr
+from zarr_vectors.lazy import open_zv
 
-store = open_zvr("s3://open-neuro/scan.zarrvectors")
+store = open_zv("s3://open-neuro/scan.zarrvectors")
 
 print(store.levels)                          # metadata only — no chunk I/O
 print(store[2].vertex_count)                 # one metadata request
@@ -281,7 +281,7 @@ detail = read_points(
 )
 ```
 
-`open_zvr` accepts the same `backend=` / `**backend_kwargs` as
+`open_zv` accepts the same `backend=` / `**backend_kwargs` as
 `open_store`.
 
 ---

@@ -40,7 +40,7 @@
 ## Introduction
 
 ZV stores are backend-agnostic: the same `create_store` / `open_store` /
-`open_zvr` calls work whether the data lives on a local SSD, a ZIP
+`open_zv` calls work whether the data lives on a local SSD, a ZIP
 archive, an in-memory dict, or a cloud object store. The backing store
 type affects performance characteristics (latency, throughput, cost per
 request) but not the data model or the semantics of any operation.
@@ -69,12 +69,12 @@ All three entry points accept `backend=` and `**backend_kwargs`:
 
 ```python
 from zarr_vectors.core.store import create_store, open_store
-from zarr_vectors.lazy import open_zvr
+from zarr_vectors.lazy import open_zv
 
 create_store(path, *, bounds=None, chunk_shape=None, axes=None,
               geometry_types=None, ..., backend=None, **backend_kwargs) -> Group
 open_store(path, mode="r", *, backend=None, **backend_kwargs)         -> Group
-open_zvr(path, *, backend=None, **backend_kwargs)                     -> ZVRStore
+open_zv(path, *, backend=None, **backend_kwargs)                     -> ZVStore
 ```
 
 `backend` is one of `"local"` / `"obstore"` / `"fsspec"` or `None` for

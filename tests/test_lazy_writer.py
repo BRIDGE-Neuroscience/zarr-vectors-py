@@ -1,4 +1,4 @@
-"""Tests for the ZVRWriter (Tier A + append_vertices)."""
+"""Tests for the ZVWriter (Tier A + append_vertices)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from zarr_vectors.core.store import (
     open_store,
     read_root_metadata,
 )
-from zarr_vectors.lazy.store import open_zvr
+from zarr_vectors.lazy.store import open_zv
 from zarr_vectors.types.points import read_points, write_points
 
 
@@ -24,7 +24,7 @@ def _run(coro):
 def _make_store(tmp_path, n=200):
     rng = np.random.default_rng(0)
     pos = rng.uniform(0, 100, (n, 3)).astype("f4")
-    store = tmp_path / "p.zvr"
+    store = tmp_path / "p.zv"
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
@@ -43,8 +43,8 @@ def test_add_attribute_round_trip(tmp_path):
     normals = np.random.default_rng(1).normal(size=(200, 3)).astype("f4")
 
     async def go():
-        zvr = open_zvr(str(store))
-        async with zvr[0].writer() as w:
+        zv = open_zv(str(store))
+        async with zv[0].writer() as w:
             await w.add_attribute("normal", normals)
 
     _run(go())
@@ -60,8 +60,8 @@ def test_add_attribute_sync_mirror(tmp_path):
     rng = np.random.default_rng(2)
     intensities = rng.uniform(0, 1, 120).astype("f4")
 
-    zvr = open_zvr(str(store))
-    with zvr[0].writer() as w:
+    zv = open_zv(str(store))
+    with zv[0].writer() as w:
         w.add_attribute_sync("intensity", intensities)
 
     out = read_points(str(store), attribute_names=["intensity"])
@@ -73,8 +73,8 @@ def test_add_attribute_length_mismatch_raises(tmp_path):
     bad = np.zeros(51, dtype="f4")  # one too many
 
     async def go():
-        zvr = open_zvr(str(store))
-        async with zvr[0].writer() as w:
+        zv = open_zv(str(store))
+        async with zv[0].writer() as w:
             await w.add_attribute("bad", bad)
 
     from zarr_vectors.exceptions import ArrayError
@@ -87,8 +87,8 @@ def test_add_object_attribute(tmp_path):
     store, _ = _make_store(tmp_path, n=80)
 
     async def go():
-        zvr = open_zvr(str(store))
-        async with zvr[0].writer() as w:
+        zv = open_zv(str(store))
+        async with zv[0].writer() as w:
             await w.add_object_attribute("score", np.arange(80, dtype="f4"))
 
     _run(go())
@@ -110,8 +110,8 @@ def test_append_vertices_grows_store(tmp_path):
     new_pos = np.random.default_rng(3).uniform(0, 100, (40, 3)).astype("f4")
 
     async def go():
-        zvr = open_zvr(str(store))
-        async with zvr[0].writer() as w:
+        zv = open_zv(str(store))
+        async with zv[0].writer() as w:
             result = await w.append_vertices(new_pos)
             return result
 
@@ -132,8 +132,8 @@ def test_append_then_compact_is_a_no_op(tmp_path):
     store, _ = _make_store(tmp_path, n=60)
 
     async def go():
-        zvr = open_zvr(str(store))
-        async with zvr[0].writer() as w:
+        zv = open_zv(str(store))
+        async with zv[0].writer() as w:
             await w.append_vertices(
                 np.random.default_rng(4).uniform(0, 100, (10, 3)).astype("f4")
             )
@@ -141,8 +141,8 @@ def test_append_then_compact_is_a_no_op(tmp_path):
     _run(go())
 
     async def do_compact():
-        zvr = open_zvr(str(store))
-        async with zvr[0].writer() as w:
+        zv = open_zv(str(store))
+        async with zv[0].writer() as w:
             return await w.compact()
 
     result = _run(do_compact())
@@ -156,13 +156,13 @@ def test_two_sequential_appends_merge_into_object_index(tmp_path):
     store, _ = _make_store(tmp_path, n=30)
 
     async def go():
-        zvr = open_zvr(str(store))
-        async with zvr[0].writer() as w:
+        zv = open_zv(str(store))
+        async with zv[0].writer() as w:
             await w.append_vertices(
                 np.random.default_rng(5).uniform(0, 100, (5, 3)).astype("f4")
             )
-        zvr = open_zvr(str(store))
-        async with zvr[0].writer() as w:
+        zv = open_zv(str(store))
+        async with zv[0].writer() as w:
             await w.append_vertices(
                 np.random.default_rng(6).uniform(0, 100, (7, 3)).astype("f4")
             )
@@ -180,8 +180,8 @@ def test_append_vertices_overlap_oid_raises(tmp_path):
     overlap = np.array([5, 6, 7], dtype=np.int64)  # collide with existing
 
     async def go():
-        zvr = open_zvr(str(store))
-        async with zvr[0].writer() as w:
+        zv = open_zv(str(store))
+        async with zv[0].writer() as w:
             await w.append_vertices(
                 np.zeros((3, 3), dtype="f4"),
                 object_ids=overlap,

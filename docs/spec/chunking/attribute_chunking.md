@@ -154,7 +154,7 @@ a bin index via the stored `chunk_attribute_values` list, and the chunk
 scan is restricted to keys with that leading coord. Unknown values
 yield an empty result rather than an error.
 
-Lazy readers (`ZVRLevel`) expose:
+Lazy readers (`ZVLevel`) expose:
 
 - `chunk_dims` — the level's chunk-axis names, or `None` for legacy.
 - `chunk_attribute_name` — the leading-axis attribute name.

@@ -75,7 +75,7 @@ def _make_points_store_with_object_attr(tmp_path, n_objects=30, attr="cluster"):
     # Assign each object to one of 5 cluster IDs.
     clusters = rng.integers(0, 5, size=n_objects)
 
-    store = tmp_path / "src.zvr"
+    store = tmp_path / "src.zv"
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
@@ -87,7 +87,7 @@ def _make_points_store_with_object_attr(tmp_path, n_objects=30, attr="cluster"):
 
 def test_rechunk_by_attribute_wrapper_categorical(tmp_path):
     src, clusters = _make_points_store_with_object_attr(tmp_path, n_objects=40)
-    out = tmp_path / "rechunked.zvr"
+    out = tmp_path / "rechunked.zv"
 
     summary = rechunk_by_attribute(str(src), "cluster", output=str(out))
 
@@ -108,8 +108,8 @@ def test_rechunk_by_attribute_matches_explicit_spec(tmp_path):
     src1, _ = _make_points_store_with_object_attr(tmp_path / "a", n_objects=20)
     src2, _ = _make_points_store_with_object_attr(tmp_path / "b", n_objects=20)
 
-    out1 = tmp_path / "out1.zvr"
-    out2 = tmp_path / "out2.zvr"
+    out1 = tmp_path / "out1.zv"
+    out2 = tmp_path / "out2.zv"
 
     rechunk_by_attribute(str(src1), "cluster", output=str(out1))
     rechunk(
@@ -138,7 +138,7 @@ def test_rechunk_by_attribute_high_cardinality(tmp_path):
     clusters = np.arange(n_objects, dtype=np.int64)  # 40 unique values
     obj_ids = np.arange(n_objects, dtype=np.int64)
 
-    src = tmp_path / "src.zvr"
+    src = tmp_path / "src.zv"
     write_points(
         str(src), pos,
         chunk_shape=(50.0, 50.0, 50.0),
@@ -146,7 +146,7 @@ def test_rechunk_by_attribute_high_cardinality(tmp_path):
         object_attributes={"cluster": clusters},
     )
 
-    out = tmp_path / "rechunked.zvr"
+    out = tmp_path / "rechunked.zv"
     summary = rechunk_by_attribute(str(src), "cluster", output=str(out))
     # Without categorical=True this would have been 4 (quartile fallback).
     assert summary["bins_created"] == n_objects

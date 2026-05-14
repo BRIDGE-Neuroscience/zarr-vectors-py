@@ -71,7 +71,7 @@ def test_new_writes_emit_zv_array_key(tmp_path):
     """``write_chunk_vertices`` writes the new ``zv_array`` discriminator."""
     rng = np.random.default_rng(0)
     pos = rng.uniform(0, 100, (50, 3)).astype("f4")
-    store = tmp_path / "p.zvr"
+    store = tmp_path / "p.zv"
     write_points(str(store), pos, chunk_shape=(50.0, 50.0, 50.0))
 
     root = open_store(str(store))

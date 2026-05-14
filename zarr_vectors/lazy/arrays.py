@@ -60,7 +60,7 @@ except ImportError:
 # ===================================================================
 
 
-class ZVRVertexCollection:
+class ZVVertexCollection:
     """Lazy collection of vertices across chunks.
 
     No data is read until ``.compute()`` or ``.to_delayed()`` is called.
@@ -98,7 +98,7 @@ class ZVRVertexCollection:
 
             verts[0, 0, 0].compute()  # read chunk (0,0,0)
         """
-        # Handle zvr[0].vertices[0, 0, 0] and zvr[0].vertices[(0, 0, 0)]
+        # Handle zv[0].vertices[0, 0, 0] and zv[0].vertices[(0, 0, 0)]
         if len(coords) == 1 and isinstance(coords[0], tuple):
             chunk_coords = coords[0]
         else:
@@ -155,7 +155,7 @@ class ZVRVertexCollection:
 
     def __repr__(self) -> str:
         return (
-            f"ZVRVertexCollection("
+            f"ZVVertexCollection("
             f"chunks={len(self._chunk_keys)}, "
             f"vertices={self._vertex_count}, "
             f"ndim={self._ndim}, "
@@ -168,7 +168,7 @@ class ZVRVertexCollection:
 # ===================================================================
 
 
-class ZVRAttributeCollection:
+class ZVAttributeCollection:
     """Lazy collection of per-vertex attributes across chunks.
 
     Args:
@@ -213,7 +213,7 @@ class ZVRAttributeCollection:
 
     def __repr__(self) -> str:
         return (
-            f"ZVRAttributeCollection('{self._attr_name}', "
+            f"ZVAttributeCollection('{self._attr_name}', "
             f"chunks={len(self._chunk_keys)})"
         )
 
@@ -223,7 +223,7 @@ class ZVRAttributeCollection:
 # ===================================================================
 
 
-class ZVRObjectIndex:
+class ZVObjectIndex:
     """Lazy accessor for object manifests.
 
     The full manifest list is loaded on first access and cached.
@@ -269,7 +269,7 @@ class ZVRObjectIndex:
         return self.object_count
 
     def __repr__(self) -> str:
-        return f"ZVRObjectIndex(objects={self.object_count})"
+        return f"ZVObjectIndex(objects={self.object_count})"
 
 
 # ===================================================================

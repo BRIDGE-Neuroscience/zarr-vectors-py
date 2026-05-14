@@ -6,15 +6,15 @@ Dask for parallel I/O.
 
 Usage::
 
-    from zarr_vectors.lazy import open_zvr
+    from zarr_vectors.lazy import open_zv
 
-    zvr = open_zvr("scan.zarrvectors")
-    zvr[0].vertices.compute()          # materialise all level-0 vertices
-    zvr[0].vertices[0, 0, 0].compute() # single chunk
-    zvr[0].attributes["intensity"].compute()
+    zv = open_zv("scan.zarrvectors")
+    zv[0].vertices.compute()          # materialise all level-0 vertices
+    zv[0].vertices[0, 0, 0].compute() # single chunk
+    zv[0].attributes["intensity"].compute()
 """
 
-from zarr_vectors.lazy.store import ZVRStore, open_zvr
-from zarr_vectors.lazy.views import ZVRView, ZVRPolylineCollection
+from zarr_vectors.lazy.store import ZVStore, open_zv
+from zarr_vectors.lazy.views import ZVView, ZVPolylineCollection
 
-__all__ = ["ZVRStore", "ZVRView", "ZVRPolylineCollection", "open_zvr"]
+__all__ = ["ZVStore", "ZVView", "ZVPolylineCollection", "open_zv"]

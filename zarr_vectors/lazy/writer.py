@@ -1,4 +1,4 @@
-"""ZVRWriter — lazy / async mutation handle for a single ``ZVRLevel``.
+"""ZVWriter — lazy / async mutation handle for a single ``ZVLevel``.
 
 Adds the write-back surface the algorithms package needs:
 
@@ -43,28 +43,28 @@ from zarr_vectors.spatial.chunking import assign_chunks
 from zarr_vectors.typing import ChunkCoords, ObjectManifest
 
 if TYPE_CHECKING:
-    from zarr_vectors.lazy.level import ZVRLevel
+    from zarr_vectors.lazy.level import ZVLevel
 
 
-class ZVRWriter:
-    """Mutation handle for one :class:`ZVRLevel`.
+class ZVWriter:
+    """Mutation handle for one :class:`ZVLevel`.
 
-    Acquire one via ``zvr[0].writer()``.  Holds a reference to the
+    Acquire one via ``zv[0].writer()``.  Holds a reference to the
     level's :class:`Group` so all mutations go through the same backend
     the reader uses.
 
     Usage::
 
         # Async — recommended for cloud stores
-        async with zvr[0].writer() as w:
+        async with zv[0].writer() as w:
             await w.add_attribute("normal", normals)
 
         # Sync — convenient for scripts
-        with zvr[0].writer() as w:
+        with zv[0].writer() as w:
             w.add_attribute_sync("normal", normals)
     """
 
-    def __init__(self, level: ZVRLevel) -> None:
+    def __init__(self, level: ZVLevel) -> None:
         self._level = level
         self._group = level._group
         self._committed = False
@@ -75,14 +75,14 @@ class ZVRWriter:
 
     # ---------------- context manager -----------------------------------
 
-    async def __aenter__(self) -> ZVRWriter:
+    async def __aenter__(self) -> ZVWriter:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         if exc is None:
             await self.commit()
 
-    def __enter__(self) -> ZVRWriter:
+    def __enter__(self) -> ZVWriter:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

@@ -49,20 +49,39 @@ from zarr_vectors.exceptions import MetadataError, StoreError
 # ===================================================================
 
 
-def _resolve_local_path(path: str | Path) -> Path:
-    """Coerce a path-or-``file://``-URL to a local :class:`Path`."""
+def _resolve_local_path(path: StoreLike) -> Path:
+    """Coerce a path-or-``file://``-URL to a local :class:`Path`.
+
+    Only ``str`` and :class:`pathlib.Path` inputs are meaningful here;
+    other ``StoreLike`` variants (``Store``, ``StorePath``, ``FSMap``,
+    ``dict``) should be handled by the caller before reaching this
+    helper and will raise :class:`TypeError`.
+    """
     if isinstance(path, Path):
         return path
-    if isinstance(path, str) and path.startswith("file://"):
-        parsed = urlparse(path)
-        p = unquote(parsed.path)
-        if os.name == "nt" and len(p) > 2 and p[0] == "/" and p[2] == ":":
-            p = p[1:]
-        return Path(p)
-    return Path(path)
+    if isinstance(path, str):
+        if path.startswith("file://"):
+            parsed = urlparse(path)
+            p = unquote(parsed.path)
+            if os.name == "nt" and len(p) > 2 and p[0] == "/" and p[2] == ":":
+                p = p[1:]
+            return Path(p)
+        return Path(path)
+    raise TypeError(
+        f"_resolve_local_path expected str | Path, got {type(path).__name__}"
+    )
 
 
-def _detect_scheme(url: str | Path) -> str:
+def _detect_scheme(url: StoreLike) -> str:
+    """Return the URL scheme of ``url`` lowercased; ``""`` for anything
+    that is not a string with an explicit scheme.
+
+    Tolerates the wider :data:`zarr.storage.StoreLike` type so callers
+    can pass through pre-built ``Store`` / ``StorePath`` / ``FSMap``
+    instances and get ``""`` back (signalling "no URL scheme — treat as
+    a non-URL input"); the caller is expected to handle those branches
+    separately.
+    """
     if isinstance(url, Path):
         return ""
     if not isinstance(url, str):
@@ -213,87 +232,19 @@ def _make_zarr_store_with_session(
 
         return make_icechunk_session(str(path), mode=mode, **kwargs)
 
-    scheme = _detect_scheme(path)
-    if scheme in {"", "file"}:
-        return LocalStore(_resolve_local_path(path)), None
-
-    # Cloud scheme — route through fsspec or obstore.
+    # Resolve byte-level backend name (explicit kwarg → env →
+    # URL-scheme auto-detect).  ``resolve_backend_name`` already prefers
+    # obstore over fsspec when both are installed.
     from zarr_vectors.core.backends import resolve_backend_name
 
     name = resolve_backend_name(str(path), backend)
+    if name == "local":
+        return LocalStore(_resolve_local_path(path)), None
     if name == "obstore":
-        try:
-            store = _make_obstore_zarr_store(str(path), **kwargs)
-            return store, None
-        except StoreError:
-            # Fall back to fsspec if the obstore-zarr bridge isn't
-            # available in the installed obstore version.
-            name = "fsspec"
+        return _make_obstore_zarr_store(str(path), mode=mode, **kwargs)
     if name == "fsspec":
-        return _make_fsspec_zarr_store(str(path), **kwargs), None
-
-    raise StoreError(
-        f"URL scheme {scheme!r} not routable to a Zarr-native store "
-        f"(resolved backend={name!r}). Install zarr-vectors[obstore] "
-        f"or zarr-vectors[fsspec] for cloud schemes."
-    )
-
-
-def _make_fsspec_zarr_store(url: str, **storage_options: Any) -> Any:
-    """Build a :class:`zarr.storage.FsspecStore` from a URL."""
-    try:
-        from zarr.storage import FsspecStore  # type: ignore[import-not-found]
-    except ImportError as e:  # pragma: no cover - exercised in env probes
-        raise StoreError(
-            "FsspecStore unavailable. Install zarr>=3 and "
-            "zarr-vectors[fsspec] for cloud URL support."
-        ) from e
-    try:
-        return FsspecStore.from_url(url, storage_options=storage_options or None)
-    except Exception as e:
-        raise StoreError(
-            f"Failed to build FsspecStore for {url!r}: {e}. "
-            f"Check that the matching fsspec driver "
-            f"(s3fs / gcsfs / adlfs) is installed."
-        ) from e
-
-
-def _make_obstore_zarr_store(url: str, **storage_options: Any) -> Any:
-    """Try the obstore→zarr bridge; raise StoreError if unavailable.
-
-    The obstore→Zarr-store class moved between obstore releases; this
-    helper probes a couple of locations and surfaces a clear
-    ``StoreError`` when none are present so the caller can fall back
-    to fsspec.
-    """
-    try:
-        from obstore.store import from_url as obstore_from_url  # type: ignore[import-not-found]
-    except ImportError as e:
-        raise StoreError(
-            "obstore is not installed. Install zarr-vectors[obstore] "
-            "to enable the obstore route, or fall back to fsspec."
-        ) from e
-
-    # Newer obstore exposes a zarr-compatible store wrapper.  The
-    # symbol name has shifted across releases — try the documented
-    # locations and fall through otherwise.
-    bridge = None
-    try:
-        from obstore.store import ZarrStore as bridge  # type: ignore[import-not-found]
-    except ImportError:
-        try:
-            from obstore.zarr import ObstoreStore as bridge  # type: ignore[import-not-found]
-        except ImportError:
-            bridge = None
-
-    if bridge is None:
-        raise StoreError(
-            "Installed obstore version doesn't expose a Zarr-store "
-            "wrapper; falling back to fsspec."
-        )
-
-    obj_store = obstore_from_url(url, **storage_options)
-    return bridge(obj_store)
+        return _make_fsspec_zarr_store(str(path), mode=mode, **kwargs)
+    raise StoreError(f"Unknown backend: {name!r}")
 
 
 def _make_zarr_store(

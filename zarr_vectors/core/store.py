@@ -71,8 +71,91 @@ def _detect_scheme(url: str | Path) -> str:
     return scheme
 
 
+def _make_obstore_zarr_store(
+    url: str,
+    *,
+    mode: str = "r+",
+    **kwargs: Any,
+) -> tuple[Any, Any]:
+    """Build a :class:`zarr.storage.ObjectStore` for ``url`` via obstore.
+
+    Dispatches on URL scheme to the appropriate ``obstore.store.*``
+    backend (S3Store, GCSStore, AzureStore, HTTPStore, LocalStore) and
+    wraps it in Zarr's ``ObjectStore`` adapter.  ``kwargs`` are forwarded
+    verbatim to the obstore constructor (e.g. ``access_key_id``,
+    ``region``, ``anonymous``).
+    """
+    try:
+        from zarr.storage import ObjectStore
+    except ImportError as e:
+        raise StoreError(
+            f"backend='obstore' requires zarr>=3 (have {zarr.__version__})"
+        ) from e
+    try:
+        from obstore.store import (
+            AzureStore,
+            GCSStore,
+            HTTPStore,
+            S3Store,
+        )
+        from obstore.store import LocalStore as ObsLocalStore
+    except ImportError as e:
+        raise StoreError(
+            "obstore is not installed. Install: pip install zarr-vectors[obstore]"
+        ) from e
+
+    scheme = _detect_scheme(url)
+    read_only = mode == "r"
+    if scheme == "s3":
+        obs = S3Store.from_url(url, **kwargs)
+    elif scheme in ("gs", "gcs"):
+        obs = GCSStore.from_url(url, **kwargs)
+    elif scheme in ("az", "azure", "abfs"):
+        obs = AzureStore.from_url(url, **kwargs)
+    elif scheme in ("http", "https"):
+        obs = HTTPStore.from_url(url, **kwargs)
+    elif scheme in ("", "file"):
+        local = _resolve_local_path(url)
+        if not read_only:
+            local.mkdir(parents=True, exist_ok=True)
+        obs = ObsLocalStore(prefix=str(local), **kwargs)
+    else:
+        raise StoreError(
+            f"obstore: unsupported URL scheme {scheme!r} in {url!r}"
+        )
+    return ObjectStore(obs, read_only=read_only), None
+
+
+def _make_fsspec_zarr_store(
+    url: str,
+    *,
+    mode: str = "r+",
+    **kwargs: Any,
+) -> tuple[Any, Any]:
+    """Build a :class:`zarr.storage.FsspecStore` for ``url``.
+
+    ``kwargs`` are forwarded as ``storage_options`` to the underlying
+    fsspec filesystem (e.g. ``key`` / ``secret`` for s3fs,
+    ``token`` for gcsfs).
+    """
+    try:
+        from zarr.storage import FsspecStore
+    except ImportError as e:
+        raise StoreError(
+            f"backend='fsspec' requires zarr>=3 (have {zarr.__version__})"
+        ) from e
+    return (
+        FsspecStore.from_url(
+            str(url),
+            storage_options=(kwargs or None),
+            read_only=(mode == "r"),
+        ),
+        None,
+    )
+
+
 def _make_zarr_store_with_session(
-    path: str | Path,
+    path: str | Path | Any,
     *,
     mode: str = "r+",
     backend: str | None = None,
@@ -85,23 +168,41 @@ def _make_zarr_store_with_session(
     session must be kept alive for the lifetime of the store and is
     flushed via :func:`commit`.
 
-    Backend routing:
+    Dispatch order:
 
-    - ``backend="icechunk"`` → transactional Zarr store from
-      :func:`zarr_vectors.core.backends.icechunk_backend.make_icechunk_session`.
-    - ``backend="fsspec"`` (or auto-detected from a cloud URL when
-      ``fsspec`` is installed) → :class:`zarr.storage.FsspecStore`
-      built from the URL.  ``**kwargs`` are forwarded as
-      ``storage_options`` (credentials, region, etc.).
-    - ``backend="obstore"`` (or auto-detected when ``obstore`` is
-      installed) → uses ``obstore.store.from_url(...)`` wrapped in
-      :class:`zarr.storage.ObjectStore` if available; falls back to
-      ``FsspecStore`` otherwise.
-    - Local / ``file://`` URLs → :class:`zarr.storage.LocalStore`.
-
-    Raises :class:`StoreError` for cloud schemes when neither
-    ``obstore`` nor ``fsspec`` is installed, with an install hint.
+    1. If ``path`` is already a :class:`zarr.abc.store.Store`, return it
+       as-is (ome-zarr-py-style pass-through for caller-built stores).
+       Honors ``mode="r"`` by switching the store to read-only when
+       supported.
+    2. If ``path`` is a bare :class:`obstore.store.ObjectStore` instance,
+       wrap it in :class:`zarr.storage.ObjectStore`.
+    3. ``backend="icechunk"`` routes through
+       :func:`zarr_vectors.core.backends.icechunk_backend.make_icechunk_session`.
+    4. Otherwise, resolve the byte-level backend name via
+       :func:`zarr_vectors.core.backends.resolve_backend_name` (explicit
+       kwarg → ``ZARR_VECTORS_BACKEND`` env → URL-scheme auto-detect)
+       and dispatch to ``LocalStore``, :func:`_make_obstore_zarr_store`,
+       or :func:`_make_fsspec_zarr_store`.
     """
+    from zarr.abc.store import Store as _ZStore
+
+    # 1. Pre-built Zarr store: pass through.
+    if isinstance(path, _ZStore):
+        if mode == "r" and not path.read_only and hasattr(path, "with_read_only"):
+            path = path.with_read_only(True)
+        return path, None
+
+    # 2. Pre-built obstore object: wrap in ObjectStore.
+    try:
+        import obstore.store as _obs_store_mod
+    except ImportError:
+        _obs_store_mod = None
+    if _obs_store_mod is not None and isinstance(path, _obs_store_mod.ObjectStore):
+        from zarr.storage import ObjectStore as _ZarrObjStore
+
+        return _ZarrObjStore(path, read_only=(mode == "r")), None
+
+    # 3. icechunk — transactional, explicit only.
     if backend == "icechunk":
         from zarr_vectors.core.backends.icechunk_backend import (
             make_icechunk_session,
@@ -248,7 +349,7 @@ class FsGroup(Group):
 
 
 def create_store(
-    path: str | Path,
+    path: str | Path | Any,
     root_metadata: RootMetadata | None = None,
     *,
     bounds: tuple[list[float], list[float]] | None = None,
@@ -347,8 +448,9 @@ def create_store(
     if geometry_types is None:
         geometry_types = []
 
+    from zarr.abc.store import Store as _ZStore
     local_root: Path | None = None
-    if backend != "icechunk":
+    if backend != "icechunk" and not isinstance(path, _ZStore):
         scheme = _detect_scheme(path)
         if scheme in {"", "file"}:
             local_root = _resolve_local_path(path)
@@ -765,6 +867,14 @@ def _create_or_open_store(
             )
         except StoreError:
             return open_store(path, mode="r+", backend=backend, **backend_kwargs)
+    from zarr.abc.store import Store as _ZStore
+    if isinstance(path, _ZStore):
+        # Pre-built stores can't be cheaply probed for emptiness; try to
+        # open first, fall back to create.  Mirrors the icechunk pattern.
+        try:
+            return open_store(path, mode="r+", backend=backend, **backend_kwargs)
+        except StoreError:
+            return create_store(path, backend=backend, **backend_kwargs)
     scheme = _detect_scheme(path)
     if scheme in {"", "file"}:
         local_root = _resolve_local_path(path)
@@ -790,9 +900,8 @@ def _finalize_write(root: Group, message: str) -> str | None:
     """
     return commit(root, message)
 
-
 def open_store(
-    path: str | Path,
+    path: str | Path | Any,
     mode: str = "r",
     *,
     backend: str | None = None,
@@ -821,8 +930,11 @@ def open_store(
         MetadataError: If root metadata cannot be parsed.
     """
     # Local-FS existence check; transactional backends (icechunk) verify
-    # repository existence inside their own session factory.
-    if backend != "icechunk":
+    # repository existence inside their own session factory.  Pre-built
+    # Store objects and cloud schemes skip the local check and rely on
+    # ``zarr.open_group`` below to raise ``GroupNotFoundError``.
+    from zarr.abc.store import Store as _ZStore
+    if backend != "icechunk" and not isinstance(path, _ZStore):
         scheme = _detect_scheme(path)
         if scheme in {"", "file"}:
             local_root = _resolve_local_path(path)

@@ -213,6 +213,16 @@ def _make_zarr_store_with_session(
 
         return make_icechunk_session(str(path), mode=mode, **kwargs)
 
+    # After the Store / obstore short-circuits, the remaining supported
+    # StoreLike variants are `str` (URL or local path) and `Path`.
+    # `StorePath`, `FSMap`, and `dict[str, Buffer]` aren't routed here.
+    if not isinstance(path, (str, Path)):
+        raise StoreError(
+            f"Unsupported StoreLike variant for backend dispatch: "
+            f"{type(path).__name__}. Pass a URL string, a pathlib.Path, "
+            f"or a pre-built zarr.abc.store.Store / obstore.store.ObjectStore."
+        )
+
     scheme = _detect_scheme(path)
     if scheme in {"", "file"}:
         return LocalStore(_resolve_local_path(path)), None
@@ -453,7 +463,11 @@ def create_store(
 
     from zarr.abc.store import Store as _ZStore
     local_root: Path | None = None
-    if backend != "icechunk" and not isinstance(path, _ZStore):
+    if (
+        backend != "icechunk"
+        and not isinstance(path, _ZStore)
+        and isinstance(path, (str, Path))
+    ):
         scheme = _detect_scheme(path)
         if scheme in {"", "file"}:
             local_root = _resolve_local_path(path)
@@ -878,11 +892,12 @@ def _create_or_open_store(
             return open_store(path, mode="r+", backend=backend, **backend_kwargs)
         except StoreError:
             return create_store(path, backend=backend, **backend_kwargs)
-    scheme = _detect_scheme(path)
-    if scheme in {"", "file"}:
-        local_root = _resolve_local_path(path)
-        if local_root.exists() and local_root.is_dir() and any(local_root.iterdir()):
-            return open_store(path, mode="r+", backend=backend, **backend_kwargs)
+    if isinstance(path, (str, Path)):
+        scheme = _detect_scheme(path)
+        if scheme in {"", "file"}:
+            local_root = _resolve_local_path(path)
+            if local_root.exists() and local_root.is_dir() and any(local_root.iterdir()):
+                return open_store(path, mode="r+", backend=backend, **backend_kwargs)
     return create_store(
         path, backend=backend, **creator_kwargs, **backend_kwargs,
     )
@@ -937,7 +952,11 @@ def open_store(
     # Store objects and cloud schemes skip the local check and rely on
     # ``zarr.open_group`` below to raise ``GroupNotFoundError``.
     from zarr.abc.store import Store as _ZStore
-    if backend != "icechunk" and not isinstance(path, _ZStore):
+    if (
+        backend != "icechunk"
+        and not isinstance(path, _ZStore)
+        and isinstance(path, (str, Path))
+    ):
         scheme = _detect_scheme(path)
         if scheme in {"", "file"}:
             local_root = _resolve_local_path(path)

@@ -1,14 +1,16 @@
 """Multi-resolution pyramid construction orchestrator.
 
-Supports two modes:
+Two entry points (use one):
 
-1. **Automatic**: ``build_pyramid(store)`` auto-plans levels using
-   target volume reduction and sparsity weight.
-2. **Manual**: ``coarsen_level(store, source, target, bin_ratio, sparsity)``
-   creates a single coarsened level with explicit control.
+* ``build_pyramid(store, factors=[(cf_1, sf_1), ...])`` builds every
+  coarser level in sequence, optionally emitting cross-level link
+  arrays (``cross_level_storage="implicit"`` or ``"explicit"``).
+* ``coarsen_level(store, source, target, coarsen_factor=..., sparsity_factor=...)``
+  writes a single coarser level for callers that want manual control.
 
-Both modes handle vertex coarsening (via metanodes) and object
-sparsity (via object selection strategies).
+Both use the per-object pyramid: each surviving object's vertices are
+aggregated into bin centroids (metavertices) that may be shared
+between objects, and per-object OIDs are preserved across levels.
 """
 
 from __future__ import annotations
@@ -23,15 +25,13 @@ from zarr_vectors.constants import (
     CAP_MULTISCALE_LINKS,
     CAP_PRESERVED_OBJECT_IDS,
     CAP_SHARED_VERTEX_GROUPS,
-    COARSEN_CROSS_OBJECT_METANODE,
-    COARSEN_GRID_METANODE,
     COARSEN_PER_OBJECT,
     DEFAULT_CROSS_LEVEL_DEPTH,
     DEFAULT_CROSS_LEVEL_STORAGE,
+    LINKS,
     OBJECT_ATTRIBUTES,
     VERTICES,
     XLEVEL_EXPLICIT,
-    XLEVEL_IMPLICIT,
     XLEVEL_NONE,
     VALID_XLEVEL_STORAGE,
 )
@@ -43,46 +43,32 @@ from zarr_vectors.core.arrays import (
     create_vertices_array,
     list_chunk_keys,
     read_all_object_manifests,
+    read_chunk_links,
     read_chunk_vertices,
     read_cross_chunk_links,
     read_object_attributes,
-    read_vertex_group,
     write_chunk_links,
     write_chunk_vertices,
     write_cross_chunk_links,
     write_object_attributes,
     write_object_index,
 )
-from zarr_vectors.core.metadata import (
-    LevelMetadata,
-    compute_bin_shape,
-    validate_bin_shape_divides_chunk,
-)
+from zarr_vectors.core.metadata import LevelMetadata
 from zarr_vectors.core.store import (
-    add_resolution_level,
     create_resolution_level,
     get_resolution_level,
     list_resolution_levels,
     open_store,
     read_root_metadata,
 )
-from zarr_vectors.multiresolution.layers import (
-    LevelReductionSpec,
-    compute_level_specs,
-    plan_pyramid_with_sparsity,
-)
-from zarr_vectors.multiresolution.metanodes import generate_metanodes
-from zarr_vectors.multiresolution.object_selection import (
-    apply_sparsity,
-    compute_polyline_lengths,
-    compute_representative_points,
-)
+from zarr_vectors.exceptions import ArrayError
+from zarr_vectors.multiresolution.object_selection import apply_sparsity
 from zarr_vectors.spatial.boundary import (
     build_vertex_chunk_mapping,
     partition_cross_level_edges,
 )
-from zarr_vectors.spatial.chunking import assign_bins, assign_chunks
-from zarr_vectors.typing import ChunkCoords, CrossChunkLink
+from zarr_vectors.spatial.chunking import assign_chunks
+from zarr_vectors.typing import ChunkCoords
 
 
 # ===================================================================
@@ -93,200 +79,50 @@ def coarsen_level(
     store_path: str | Path,
     source_level: int,
     target_level: int,
-    bin_ratio: tuple[int, ...] | None = None,
     *,
-    coarsen_factor: float | None = None,
-    sparsity_factor: float | None = None,
-    method: str = COARSEN_PER_OBJECT,
-    object_sparsity: float = 1.0,
+    coarsen_factor: float = 1.0,
+    sparsity_factor: float = 1.0,
     sparsity_strategy: str = "random",
     sparsity_seed: int | None = None,
-    agg_mode: str = "mean",
+    cross_level_storage: str = XLEVEL_NONE,
 ) -> dict[str, Any]:
     """Coarsen a single level and write it to the store.
 
-    Two interfaces are supported (use one):
-
-    * **Factor-based** (preferred): pass ``coarsen_factor`` and/or
-      ``sparsity_factor``.  Defaults to ``method="per_object"`` —
-      per-object vertex aggregation with stable OIDs across levels.
-      A metavertex's source vertices may come from multiple source
-      objects; the resulting metavertex appears in each of those
-      objects' manifests at the coarser level.
-    * **Legacy `bin_ratio`**: passing ``bin_ratio`` (with optional
-      ``object_sparsity``) routes through the original cross-object
-      ``grid_metanode`` path which produces a fresh OID space at the
-      coarser level.  Kept for back-compat.
+    Per-object vertex aggregation with stable OIDs across levels.  A
+    metavertex's source vertices may come from multiple source objects;
+    the resulting metavertex appears in each of those objects' manifests
+    at the coarser level.
 
     Args:
         store_path: Path to the zarr vectors store.
         source_level: Level to read from.
         target_level: Level to write to (must not exist).
-        bin_ratio: Legacy interface — per-axis fold change.  Implies
-            ``method="cross_object_metanode"`` unless ``method`` is
-            given explicitly.
         coarsen_factor: Per-object vertex aggregation factor (≥ 1).
             ``1.0`` is the identity (no aggregation).
         sparsity_factor: Object-dropping factor (≥ 1).  Survivors keep
             their OIDs; dropped objects leave empty manifest slots.
             ``1.0`` is the identity (no drop).
-        method: ``"per_object"`` (default for the factor interface) or
-            ``"cross_object_metanode"`` / ``"grid_metanode"`` for the
-            legacy aggregation.
-        object_sparsity: Legacy keep-fraction.  Mapped to
-            ``sparsity_factor = 1.0 / object_sparsity`` when present.
         sparsity_strategy: Object selection strategy.
         sparsity_seed: Random seed.
-        agg_mode: Metanode attribute aggregation.
+        cross_level_storage: When called via ``build_pyramid`` this is
+            threaded through to enable inline ``±1`` cross-level link
+            emission.  Standalone callers should leave it at the
+            ``"none"`` default.
 
     Returns:
         Summary dict.  Always includes ``method``,
         ``preserves_object_ids``, ``vertex_count``.
     """
-    # Reconcile the two interfaces.  ``bin_ratio`` is the legacy entry
-    # and implies the cross-object metanode path unless the caller
-    # explicitly opted into per-object via ``method``.
-    legacy_used = bin_ratio is not None
-    factor_used = coarsen_factor is not None or sparsity_factor is not None
-    if legacy_used and not factor_used and method == COARSEN_PER_OBJECT:
-        method = COARSEN_CROSS_OBJECT_METANODE
-    if coarsen_factor is None:
-        coarsen_factor = 1.0
-    if sparsity_factor is None:
-        # Map legacy object_sparsity → sparsity_factor.
-        sparsity_factor = (
-            1.0 / object_sparsity if 0.0 < object_sparsity < 1.0 else 1.0
-        )
-
-    if method in (COARSEN_CROSS_OBJECT_METANODE, COARSEN_GRID_METANODE):
-        return _cross_object_metanode_coarsen(
-            store_path=store_path,
-            source_level=source_level,
-            target_level=target_level,
-            bin_ratio=bin_ratio,
-            coarsen_factor=coarsen_factor,
-            object_sparsity=(1.0 / sparsity_factor),
-            sparsity_strategy=sparsity_strategy,
-            sparsity_seed=sparsity_seed,
-            agg_mode=agg_mode,
-        )
-    if method == COARSEN_PER_OBJECT:
-        return _per_object_coarsen(
-            store_path=store_path,
-            source_level=source_level,
-            target_level=target_level,
-            coarsen_factor=coarsen_factor,
-            sparsity_factor=sparsity_factor,
-            sparsity_strategy=sparsity_strategy,
-            sparsity_seed=sparsity_seed,
-        )
-    raise ValueError(f"Unknown coarsen method: {method!r}")
-
-
-def _cross_object_metanode_coarsen(
-    *,
-    store_path: str | Path,
-    source_level: int,
-    target_level: int,
-    bin_ratio: tuple[int, ...] | None,
-    coarsen_factor: float,
-    object_sparsity: float,
-    sparsity_strategy: str,
-    sparsity_seed: int | None,
-    agg_mode: str,
-) -> dict[str, Any]:
-    """Legacy cross-object aggregation (produces fresh OIDs)."""
-    root = open_store(str(store_path), mode="r+")
-    meta = read_root_metadata(root)
-    ndim = meta.sid_ndim
-    chunk_shape = meta.chunk_shape
-    base_bin = meta.effective_bin_shape
-
-    if bin_ratio is None:
-        # Derive isotropic ratio from coarsen_factor.
-        bin_ratio = tuple(max(1, int(round(coarsen_factor))) for _ in range(ndim))
-
-    # Compute target bin shape
-    bin_shape = compute_bin_shape(base_bin, bin_ratio)
-    validate_bin_shape_divides_chunk(chunk_shape, bin_shape)
-
-    # Read source level vertices
-    source_group = get_resolution_level(root, source_level)
-    positions = _read_all_vertices(source_group, ndim)
-
-    if len(positions) == 0:
-        return {
-            "vertex_count": 0,
-            "object_count": 0,
-            "reduction_ratio": 0,
-            "method": COARSEN_CROSS_OBJECT_METANODE,
-            "preserves_object_ids": False,
-        }
-
-    n_source = len(positions)
-
-    # Generate metanodes
-    meta_result = generate_metanodes(positions, bin_shape, agg_mode=agg_mode)
-    meta_positions = meta_result["metanode_positions"]
-    children = meta_result["children"]
-    n_metanodes = len(meta_positions)
-
-    # Apply object sparsity (on metanodes)
-    n_objects = n_metanodes
-    if object_sparsity < 1.0 and n_metanodes > 1:
-        kept = apply_sparsity(
-            n_metanodes, object_sparsity, sparsity_strategy,
-            seed=sparsity_seed,
-            representative_points=meta_positions,
-            bin_shape=bin_shape,
-        )
-        meta_positions = meta_positions[kept]
-        children = [children[i] for i in kept]
-        n_objects = len(meta_positions)
-
-    if n_objects == 0:
-        return {
-            "vertex_count": 0,
-            "object_count": 0,
-            "reduction_ratio": 0,
-            "method": COARSEN_CROSS_OBJECT_METANODE,
-            "preserves_object_ids": False,
-        }
-
-    # Create the level
-    level_group = add_resolution_level(
-        root, target_level, bin_ratio,
-        object_sparsity=object_sparsity,
-        coarsening_method=COARSEN_GRID_METANODE,
-        parent_level=source_level,
+    return _per_object_coarsen(
+        store_path=store_path,
+        source_level=source_level,
+        target_level=target_level,
+        coarsen_factor=coarsen_factor,
+        sparsity_factor=sparsity_factor,
+        sparsity_strategy=sparsity_strategy,
+        sparsity_seed=sparsity_seed,
+        cross_level_storage=cross_level_storage,
     )
-
-    # Update vertex count in metadata
-    level_group.attrs.update({
-        "zarr_vectors_level": {
-            **level_group.attrs.to_dict().get("zarr_vectors_level", {}),
-            "vertex_count": n_objects,
-        }
-    })
-
-    create_vertices_array(level_group, dtype="float32")
-
-    # Assign to chunks and write
-    chunk_assignments = assign_chunks(meta_positions, chunk_shape)
-    for chunk_coords, global_indices in sorted(chunk_assignments.items()):
-        write_chunk_vertices(
-            level_group, chunk_coords, [meta_positions[global_indices]],
-            dtype=np.float32,
-        )
-
-    return {
-        "vertex_count": n_objects,
-        "source_count": n_source,
-        "reduction_ratio": n_source / max(n_objects, 1),
-        "object_sparsity": object_sparsity,
-        "method": COARSEN_CROSS_OBJECT_METANODE,
-        "preserves_object_ids": False,
-    }
 
 
 def _per_object_coarsen(
@@ -298,6 +134,7 @@ def _per_object_coarsen(
     sparsity_factor: float,
     sparsity_strategy: str,
     sparsity_seed: int | None,
+    cross_level_storage: str = XLEVEL_NONE,
 ) -> dict[str, Any]:
     """Per-object pyramid: aggregate within-bin source vertices into
     shared metavertices, preserving each surviving object's OID and
@@ -317,7 +154,29 @@ def _per_object_coarsen(
     src_group = get_resolution_level(root, source_level)
 
     # --- Step 0: read source manifests + vertex positions ----------------
-    src_manifests = read_all_object_manifests(src_group)
+    # Read source vertex positions, indexed by (chunk_coords, vg_idx).
+    src_vg_positions: dict[tuple[ChunkCoords, int], npt.NDArray] = {}
+    for cc in list_chunk_keys(src_group, VERTICES):
+        try:
+            vgs = read_chunk_vertices(src_group, cc, dtype=np.float32, ndim=ndim)
+        except ArrayError:
+            continue
+        for vg_idx, vg in enumerate(vgs):
+            src_vg_positions[(cc, vg_idx)] = vg
+
+    src_has_objects = "object_index" in src_group
+    if src_has_objects:
+        src_manifests = read_all_object_manifests(src_group)
+    else:
+        # No object_index — treat the level as one implicit object whose
+        # manifest enumerates every vg in chunk-major order.
+        implicit: list[tuple[ChunkCoords, int]] = []
+        for cc in list_chunk_keys(src_group, VERTICES):
+            vg_idx = 0
+            while (cc, vg_idx) in src_vg_positions:
+                implicit.append((cc, vg_idx))
+                vg_idx += 1
+        src_manifests = [implicit] if implicit else []
     n_src_objects = len(src_manifests)
     if n_src_objects == 0:
         return {
@@ -327,16 +186,6 @@ def _per_object_coarsen(
             "method": COARSEN_PER_OBJECT,
             "preserves_object_ids": True,
         }
-
-    # Read source vertex positions, indexed by (chunk_coords, vg_idx).
-    src_vg_positions: dict[tuple[ChunkCoords, int], npt.NDArray] = {}
-    for cc in list_chunk_keys(src_group, VERTICES):
-        try:
-            vgs = read_chunk_vertices(src_group, cc, dtype=np.float32, ndim=ndim)
-        except Exception:
-            continue
-        for vg_idx, vg in enumerate(vgs):
-            src_vg_positions[(cc, vg_idx)] = vg
 
     # --- Step 1: drop a fraction of source objects ----------------------
     keep_oids: list[int]
@@ -433,22 +282,24 @@ def _per_object_coarsen(
             )
 
     # --- Step 6: write per-chunk vertex groups --------------------------
+    arrays_present = [VERTICES, "object_index"] if src_has_objects else [VERTICES]
     level_meta_initial = LevelMetadata(
         level=target_level,
         vertex_count=int(n_metavertices),
-        arrays_present=[VERTICES, "object_index"],
+        arrays_present=arrays_present,
         bin_shape=target_bin_shape,
         bin_ratio=tuple(max(1, int(round(coarsen_factor))) for _ in range(ndim)),
         object_sparsity=(1.0 / sparsity_factor),
         coarsening_method=COARSEN_PER_OBJECT,
         parent_level=source_level,
-        preserves_object_ids=True,
-        inherited_num_objects=n_src_objects,
+        preserves_object_ids=src_has_objects,
+        inherited_num_objects=n_src_objects if src_has_objects else 0,
         shared_vertex_groups=True,
     )
     level_group = create_resolution_level(root, target_level, level_meta_initial)
     create_vertices_array(level_group, dtype="float32")
-    create_object_index_array(level_group)
+    if src_has_objects:
+        create_object_index_array(level_group)
 
     for cc, groups in sorted(per_chunk_groups.items()):
         write_chunk_vertices(level_group, cc, groups, dtype=np.float32)
@@ -477,22 +328,23 @@ def _per_object_coarsen(
         new_manifests[oid] = manifest
 
     # --- Step 9: emit object_index (gap-fill for dropped OIDs) ----------
-    write_object_index(
-        level_group, new_manifests, sid_ndim=ndim,
-        total_objects=n_src_objects,
-    )
+    if src_has_objects:
+        write_object_index(
+            level_group, new_manifests, sid_ndim=ndim,
+            total_objects=n_src_objects,
+        )
 
     # --- Step 10: per-object attributes with present_mask ---------------
     src_obj_attr_group_name = f"{OBJECT_ATTRIBUTES}"
-    try:
+    if src_obj_attr_group_name in src_group:
         src_obj_attr_group = src_group[src_obj_attr_group_name]
         attr_names = [n for n in src_obj_attr_group]
-    except Exception:
+    else:
         attr_names = []
     for attr_name in attr_names:
         try:
             src_data = read_object_attributes(src_group, attr_name)
-        except Exception:
+        except ArrayError:
             continue
         # Dense (O, C) or (O,) padded to the inherited OID space, with
         # rows for survivors copied over.  Layout matches the source's
@@ -508,8 +360,23 @@ def _per_object_coarsen(
         write_object_attributes(level_group, attr_name, out_data, present_mask=mask)
 
     # --- Step 12: stamp root capability tokens --------------------------
-    _stamp_root_capability(root, CAP_PRESERVED_OBJECT_IDS)
+    if src_has_objects:
+        _stamp_root_capability(root, CAP_PRESERVED_OBJECT_IDS)
     _stamp_root_capability(root, CAP_SHARED_VERTEX_GROUPS)
+
+    # --- Step 13: emit inline ±1 cross-level link arrays ----------------
+    if cross_level_storage != XLEVEL_NONE and n_metavertices > 0:
+        _emit_inline_cross_level_links(
+            root,
+            src_group=src_group,
+            level_group=level_group,
+            source_level=source_level,
+            ndim=ndim,
+            bin_shape_arr=bin_shape_arr,
+            bin_keys=bin_keys,
+            coarse_chunk_assignments_mv=chunk_assignments,
+            storage=cross_level_storage,
+        )
 
     return {
         "vertex_count": int(n_metavertices),
@@ -520,6 +387,89 @@ def _per_object_coarsen(
         "preserves_object_ids": True,
         "shared_vertex_groups": True,
     }
+
+
+def _emit_inline_cross_level_links(
+    root,
+    *,
+    src_group,
+    level_group,
+    source_level: int,
+    ndim: int,
+    bin_shape_arr: npt.NDArray[np.float64],
+    bin_keys: npt.NDArray,
+    coarse_chunk_assignments_mv: dict[ChunkCoords, npt.NDArray[np.int64]],
+    storage: str,
+) -> None:
+    """Emit ``±1`` link/cross_chunk_link arrays for one coarsen step.
+
+    Re-walks the source level in chunk-major order, re-bins each
+    vertex against ``bin_shape_arr``, and looks up the matching
+    metavertex via the ``bin_key`` ↔ ``mv_idx`` map implicit in
+    ``np.unique(bin_keys, return_inverse=inverse)``.  Translates
+    metavertex IDs to chunk-major-flat coarse indices via the
+    just-written coarse-level chunks, then dispatches to
+    :func:`_write_cross_level_edges`.
+    """
+    # bin_key_bytes → mv_idx (bin-key-ordered, matches np.unique output).
+    unique_keys = np.unique(bin_keys)
+    bin_key_to_mv: dict[bytes, int] = {
+        bytes(k): i for i, k in enumerate(unique_keys)
+    }
+
+    # mv_idx → chunk-major-flat coarse index.
+    coarse_chunk_assignments, n_coarse = _reconstruct_chunk_assignments(
+        level_group, ndim,
+    )
+    mv_to_coarse_global: dict[int, int] = {}
+    for cc, mv_indices_for_chunk in sorted(coarse_chunk_assignments_mv.items()):
+        for local_vg, mv_idx in enumerate(mv_indices_for_chunk.tolist()):
+            mv_to_coarse_global[int(mv_idx)] = int(
+                coarse_chunk_assignments[cc][local_vg]
+            )
+
+    # Build fine→coarse parent[] by re-walking source in chunk-major order.
+    fine_chunk_assignments, n_fine = _reconstruct_chunk_assignments(
+        src_group, ndim,
+    )
+    parent = np.full(n_fine, -1, dtype=np.int64)
+    cursor = 0
+    key_dtype = np.dtype((
+        np.void, int(bin_shape_arr.shape[0]) * np.dtype(np.int64).itemsize,
+    ))
+    for cc in list_chunk_keys(src_group, VERTICES):
+        try:
+            vgs = read_chunk_vertices(
+                src_group, cc, dtype=np.float32, ndim=ndim,
+            )
+        except ArrayError:
+            continue
+        for vg in vgs:
+            n_local = int(vg.shape[0])
+            if n_local == 0:
+                continue
+            local_bins = np.floor(
+                np.asarray(vg, dtype=np.float32) / bin_shape_arr,
+            ).astype(np.int64)
+            local_keys = np.ascontiguousarray(local_bins).view(key_dtype).ravel()
+            for j in range(n_local):
+                mv = bin_key_to_mv.get(bytes(local_keys[j]))
+                if mv is not None:
+                    parent[cursor + j] = mv_to_coarse_global[int(mv)]
+            cursor += n_local
+
+    _write_cross_level_edges(
+        root,
+        fine_level=source_level,
+        delta=1,
+        fine_chunk_assignments=fine_chunk_assignments,
+        coarse_chunk_assignments=coarse_chunk_assignments,
+        n_fine=n_fine,
+        n_coarse=n_coarse,
+        parent=parent,
+        sid_ndim=ndim,
+        storage=storage,
+    )
 
 
 def _write_empty_preserve_level(
@@ -600,7 +550,7 @@ def _reconstruct_chunk_assignments(
     for cc in chunk_keys:
         try:
             vgs = read_chunk_vertices(level_group, cc, dtype=np.float32, ndim=ndim)
-        except Exception:
+        except ArrayError:
             continue
         n = sum(int(vg.shape[0]) for vg in vgs)
         if n == 0:
@@ -610,34 +560,54 @@ def _reconstruct_chunk_assignments(
     return assignments, cursor
 
 
-def _reconstruct_parent_from_metanode_children(
-    coarse_level_group, n_fine: int,
+def _decode_parent_from_plus_one(
+    fine_lg,
+    *,
+    fine_assn: dict[ChunkCoords, npt.NDArray[np.int64]],
+    coarse_assn: dict[ChunkCoords, npt.NDArray[np.int64]],
+    n_fine: int,
 ) -> npt.NDArray[np.int64] | None:
-    """Build a fine→coarse ``parent`` array from
-    ``cross_chunk_links/<delta=-1>/`` on the coarse level.
+    """Decode a fine→coarse ``parent`` array from already-written ``+1`` arrays.
 
-    Each record in that array is a 2-endpoint link
-    ``((coarse_chunk, coarse_vi), (fine_chunk, fine_vi))`` recording
-    that fine vertex ``fine_vi`` (at chunk ``fine_chunk``) was
-    aggregated into coarse metanode ``coarse_vi``.  We invert the
-    records into a flat ``parent`` array of length ``n_fine``.
-
-    Returns ``None`` when no such array exists or when the fine→global
-    index mapping cannot be reconstructed.  This is currently a
-    best-effort hook: pyramid coarsening writes provenance inline
-    rather than going through this post-hoc reconstruction path.
+    Reads ``links/<+1>/<chunk_key>`` (intra-chunk edges) and
+    ``cross_chunk_links/<+1>/`` (cross-chunk edges) at the fine level
+    and converts each ``(chunk, local_idx)`` pair to global flat indices
+    via the supplied chunk-assignment dicts.  Returns ``None`` when
+    neither array exists.
     """
+    parent = np.full(n_fine, -1, dtype=np.int64)
+    found_any = False
+
+    # Aligned (intra-chunk) edges: read each chunk in links/+1/.
     try:
-        records = read_cross_chunk_links(coarse_level_group, delta=-1)
-    except Exception:
-        return None
-    if not records:
-        return None
-    # We do not have a fine-level chunk_offsets map here; the post-hoc
-    # finalize path is unable to translate (fine_chunk, fine_vi) into
-    # a flat fine index.  Return None to signal "no usable provenance"
-    # so the caller skips cross-level emission for this level pair.
-    return None
+        chunk_keys = list_chunk_keys(fine_lg, f"{LINKS}/+1")
+    except (ArrayError, KeyError):
+        chunk_keys = []
+    for cc in chunk_keys:
+        try:
+            link_groups = read_chunk_links(fine_lg, cc, delta=1)
+        except ArrayError:
+            continue
+        for rows in link_groups:
+            if rows is None or len(rows) == 0:
+                continue
+            local_src = rows[:, 0].astype(np.int64)
+            local_tgt = rows[:, 1].astype(np.int64)
+            fine_global = fine_assn[cc][local_src]
+            coarse_global = coarse_assn[cc][local_tgt]
+            parent[fine_global] = coarse_global
+            found_any = True
+
+    # Cross-chunk edges.
+    try:
+        records = read_cross_chunk_links(fine_lg, delta=1)
+    except (ArrayError, KeyError):
+        records = []
+    for (cc_s, vi_s), (cc_t, vi_t) in records:
+        parent[int(fine_assn[cc_s][vi_s])] = int(coarse_assn[cc_t][vi_t])
+        found_any = True
+
+    return parent if found_any else None
 
 
 def _finalize_cross_level_for_store(
@@ -646,12 +616,14 @@ def _finalize_cross_level_for_store(
     cross_level_depth: int,
     cross_level_storage: str,
 ) -> None:
-    """Persist root cross-level metadata and emit cross-level link arrays.
+    """Persist root cross-level metadata and emit ``±N`` (N ≥ 2) link arrays.
 
-    Driven post-hoc from on-disk state: enumerates every adjacent
-    (fine, coarse) level pair, reconstructs the fine→parent map from
-    the coarse level's ``cross_chunk_links/<delta=-1>/`` array, and writes
-    ``±delta`` link arrays up to ``cross_level_depth``.
+    Adjacent ``±1`` arrays are emitted inline during coarsening (see
+    :func:`_emit_inline_cross_level_links`).  This finalize pass walks
+    every adjacent (fine, coarse) level pair, decodes the on-disk
+    ``+1`` parent map back into a flat fine→coarse array, then composes
+    step-by-step to produce ``+N``/``-N`` link arrays for N ≥ 2 up to
+    ``cross_level_depth``.
 
     ``cross_level_depth=-1`` means "walk all available level pairs".
     """
@@ -681,46 +653,52 @@ def _finalize_cross_level_for_store(
         if cross_level_depth == -1
         else int(cross_level_depth)
     )
+    if max_delta < 2:
+        return  # +1/-1 was already emitted inline
 
-    for fine_idx, fine_level in enumerate(levels[:-1]):
+    # Cache each adjacent (fine_level, fine_level+1) parent array.
+    adjacent_parent: dict[int, npt.NDArray[np.int64]] = {}
+    for fine_level in levels[:-1]:
+        coarse_level = fine_level + 1
+        if coarse_level not in per_level:
+            continue
         fine_assn, n_fine = per_level[fine_level]
+        coarse_assn, _ = per_level[coarse_level]
         if n_fine == 0:
             continue
-        # parent_step[k] holds fine→level(fine+k+1) parent at each step.
-        parent = None
-        prev_n = n_fine
-        prev_assn = fine_assn
-        for step in range(1, max_delta + 1):
+        fine_lg = get_resolution_level(root, fine_level)
+        parent = _decode_parent_from_plus_one(
+            fine_lg,
+            fine_assn=fine_assn,
+            coarse_assn=coarse_assn,
+            n_fine=n_fine,
+        )
+        if parent is not None:
+            adjacent_parent[fine_level] = parent
+
+    # Compose deeper-delta parents and emit.
+    for fine_level in levels[:-1]:
+        if fine_level not in adjacent_parent:
+            continue
+        fine_assn, n_fine = per_level[fine_level]
+        parent = adjacent_parent[fine_level].copy()
+        for step in range(2, max_delta + 1):
             coarse_level = fine_level + step
             if coarse_level not in per_level:
                 break
-            coarse_lg = get_resolution_level(root, coarse_level)
+            inter_level = coarse_level - 1
+            if inter_level not in adjacent_parent:
+                break
+            inter_parent = adjacent_parent[inter_level]
             coarse_assn, n_coarse = per_level[coarse_level]
             if n_coarse == 0:
                 break
 
-            if step == 1:
-                parent = _reconstruct_parent_from_metanode_children(
-                    coarse_lg, n_fine=n_fine,
-                )
-            else:
-                # Compose: parent_at_step = parent_at_(step-1)_from_(coarse-1)
-                # → grandparent via that coarser level's cross_chunk_links/<delta=-1>.
-                inter_lg = get_resolution_level(root, coarse_level - 1)
-                inter_n = per_level[coarse_level - 1][1]
-                inter_parent = _reconstruct_parent_from_metanode_children(
-                    coarse_lg, n_fine=inter_n,
-                )
-                if inter_parent is None or parent is None:
-                    parent = None
-                else:
-                    composed = np.full(n_fine, -1, dtype=np.int64)
-                    valid = parent >= 0
-                    composed[valid] = inter_parent[parent[valid]]
-                    parent = composed
-            if parent is None:
-                # No provenance info — skip this and all larger
-                # deltas for this fine level.
+            composed = np.full(n_fine, -1, dtype=np.int64)
+            valid = parent >= 0
+            composed[valid] = inter_parent[parent[valid]]
+            parent = composed
+            if not np.any(parent >= 0):
                 break
 
             _write_cross_level_edges(
@@ -735,7 +713,6 @@ def _finalize_cross_level_for_store(
                 sid_ndim=ndim,
                 storage=cross_level_storage,
             )
-            prev_n, prev_assn = n_coarse, coarse_assn
 
 
 def _write_cross_level_edges(
@@ -765,6 +742,13 @@ def _write_cross_level_edges(
         return
     coarse_level = fine_level + delta
 
+    # Drop orphaned fine vertices (parent < 0) before building edges.
+    valid_mask = parent >= 0
+    if not np.any(valid_mask):
+        return
+    fine_global = np.flatnonzero(valid_mask).astype(np.int64)
+    parent_valid = parent[valid_mask].astype(np.int64)
+
     # Build chunk-mapping tables for both levels.
     fine_chunk_list = sorted(fine_chunk_assignments.keys())
     fine_vchunks, fine_vlocal, fine_chunk_list = build_vertex_chunk_mapping(
@@ -776,10 +760,7 @@ def _write_cross_level_edges(
     )
 
     # Trivial fine→parent edge list.
-    edges = np.stack(
-        [np.arange(n_fine, dtype=np.int64), parent.astype(np.int64)],
-        axis=1,
-    )
+    edges = np.stack([fine_global, parent_valid], axis=1)
     aligned, cross = partition_cross_level_edges(
         edges,
         fine_vchunks, fine_vlocal, fine_chunk_list,
@@ -801,10 +782,7 @@ def _write_cross_level_edges(
         # Re-partition from the coarse side so chunk-alignment is
         # evaluated against the coarse chunk grid (intra/cross split
         # may differ from the fine-side view when grids don't align).
-        rev_edges = np.stack(
-            [parent.astype(np.int64), np.arange(n_fine, dtype=np.int64)],
-            axis=1,
-        )
+        rev_edges = np.stack([parent_valid, fine_global], axis=1)
         rev_aligned, rev_cross = partition_cross_level_edges(
             rev_edges,
             coarse_vchunks, coarse_vlocal, coarse_chunk_list,
@@ -828,15 +806,7 @@ def _write_cross_level_edges(
 def build_pyramid(
     store_path: str | Path,
     *,
-    factors: list[tuple[float, float]] | None = None,
-    method: str = COARSEN_PER_OBJECT,
-    level_configs: list[dict] | None = None,
-    target_volume_reduction: float = 8.0,
-    sparsity_weight: float = 0.0,
-    reduction_factor: int = 8,
-    max_levels: int = 10,
-    min_vertices: int = 8,
-    agg_mode: str = "mean",
+    factors: list[tuple[float, float]],
     sparsity_strategy: str = "random",
     sparsity_seed: int | None = None,
     cross_level_depth: int = DEFAULT_CROSS_LEVEL_DEPTH,
@@ -844,41 +814,23 @@ def build_pyramid(
 ) -> dict[str, Any]:
     """Build a multi-resolution pyramid for an existing store.
 
-    Preferred interface — pass ``factors=[(coarsen_2, sparsity_3),
-    ...]`` where ``factors[i]`` is applied to produce level ``i+1``
-    from level ``i``.  Either factor at ``1.0`` opts out of that axis.
-    Method defaults to ``"per_object"`` (per-object pyramid with stable
-    OIDs; metavertices may be shared between objects).  Pass
-    ``method="cross_object_metanode"`` (or the legacy
-    ``"grid_metanode"``) to fall back to the original aggregation that
-    produces a fresh OID space per level.
-
-    Legacy interface (kept for back-compat):
-
-    1. **Explicit**: provide ``level_configs`` — a list of dicts, each
-       with ``"bin_ratio"`` and optionally ``"object_sparsity"``.
-    2. **Auto**: auto-plan using ``target_volume_reduction`` and
-       ``sparsity_weight``.
-
-    When ``factors`` is None and ``level_configs`` is None and
-    ``sparsity_weight`` is 0.0 (default), behaviour matches the
-    original pyramid builder (backward compatible).
+    Pass ``factors=[(coarsen_2, sparsity_3), ...]`` where ``factors[i]``
+    is applied to produce level ``i+1`` from level ``i``.  Either factor
+    at ``1.0`` opts out of that axis.  Uses the per-object pyramid:
+    each surviving object's vertices are aggregated into bin centroids
+    (metavertices); metavertices may be shared between objects and OIDs
+    are preserved across levels.
 
     Args:
         store_path: Path to the store with level 0.
-        level_configs: Explicit per-level configs.
-        target_volume_reduction: Per-level target for auto mode.
-        sparsity_weight: 0.0=all binning, 1.0=all sparsity.
-        reduction_factor: Legacy threshold for old auto mode.
-        max_levels: Maximum levels.
-        min_vertices: Stop below this.
-        agg_mode: Metanode aggregation.
+        factors: List of ``(coarsen_factor, sparsity_factor)`` tuples,
+            one per coarser level.
         sparsity_strategy: Object selection strategy.
         sparsity_seed: Random seed.
         cross_level_depth: Maximum absolute level delta for materialized
-            cross-pyramid-level link arrays (0.4 multiscale links).
-            ``0`` = none, ``N`` = up to ``±N`` per pair (or ``+N`` only
-            when ``cross_level_storage='implicit'``), ``-1`` = walk all
+            cross-pyramid-level link arrays.  ``0`` = none, ``N`` = up
+            to ``±N`` per pair (or ``+N`` only when
+            ``cross_level_storage='implicit'``), ``-1`` = walk all
             available level pairs.  Default ``1``.
         cross_level_storage: ``"none"`` / ``"implicit"`` / ``"explicit"``.
             ``"explicit"`` materializes both ``+N`` (at the finer level)
@@ -898,185 +850,29 @@ def build_pyramid(
             f"cross_level_depth must be ≥ -1 (got {cross_level_depth})"
         )
 
-    # Factor-based interface (preferred).  Each entry produces one
-    # coarser level; routed through coarsen_level which knows both
-    # methods.  Returns early; the legacy paths below remain available
-    # for callers that pass ``level_configs`` or ``sparsity_weight``.
-    if factors is not None:
-        summaries: list[dict[str, Any]] = []
-        for i, fac in enumerate(factors):
-            if isinstance(fac, (tuple, list)) and len(fac) == 2:
-                cf, sf = float(fac[0]), float(fac[1])
-            else:
-                raise ValueError(
-                    f"factors[{i}] must be a (coarsen_factor, sparsity_factor) "
-                    f"tuple; got {fac!r}"
-                )
-            summaries.append(coarsen_level(
-                store_path,
-                source_level=i,
-                target_level=i + 1,
-                coarsen_factor=cf,
-                sparsity_factor=sf,
-                method=method,
-                sparsity_strategy=sparsity_strategy,
-                sparsity_seed=sparsity_seed,
-                agg_mode=agg_mode,
-            ))
-        # Persist + emit cross-level edges (writes use the on-disk
-        # vertex chunk assignments — no re-derivation needed here).
-        _finalize_cross_level_for_store(
+    summaries: list[dict[str, Any]] = []
+    for i, fac in enumerate(factors):
+        if isinstance(fac, (tuple, list)) and len(fac) == 2:
+            cf, sf = float(fac[0]), float(fac[1])
+        else:
+            raise ValueError(
+                f"factors[{i}] must be a (coarsen_factor, sparsity_factor) "
+                f"tuple; got {fac!r}"
+            )
+        summaries.append(coarsen_level(
             store_path,
-            cross_level_depth=cross_level_depth,
+            source_level=i,
+            target_level=i + 1,
+            coarsen_factor=cf,
+            sparsity_factor=sf,
+            sparsity_strategy=sparsity_strategy,
+            sparsity_seed=sparsity_seed,
             cross_level_storage=cross_level_storage,
-        )
-        return {
-            "levels_created": len(summaries),
-            "level_specs": summaries,
-            "method": method,
-            "cross_level_depth": cross_level_depth,
-            "cross_level_storage": cross_level_storage,
-        }
+        ))
 
-    root = open_store(str(store_path), mode="r+")
-    meta = read_root_metadata(root)
-    ndim = meta.sid_ndim
-    chunk_shape = meta.chunk_shape
-    base_bin = meta.effective_bin_shape
-
-    # Read all level-0 vertices
-    level0 = get_resolution_level(root, 0)
-    positions = _read_all_vertices(level0, ndim)
-
-    if len(positions) == 0:
-        return {"levels_created": 0, "level_specs": []}
-
-    n_full = len(positions)
-
-    # Count objects at level 0 (approximate: try reading object_index)
-    try:
-        manifests = read_all_object_manifests(level0)
-        n_objects = len(manifests)
-    except Exception:
-        n_objects = 0
-
-    # Plan levels
-    if level_configs is not None:
-        # Explicit configs → use plan_pyramid_with_sparsity
-        specs = plan_pyramid_with_sparsity(
-            n_full, max(n_objects, 1), base_bin, chunk_shape,
-            level_configs=level_configs,
-        )
-    elif sparsity_weight > 0.0:
-        # Auto with sparsity
-        specs = plan_pyramid_with_sparsity(
-            n_full, max(n_objects, 1), base_bin, chunk_shape,
-            target_volume_reduction=target_volume_reduction,
-            sparsity_weight=sparsity_weight,
-            max_levels=max_levels,
-            min_vertices=min_vertices,
-        )
-    else:
-        # Legacy auto mode (backward compatible)
-        specs = _legacy_plan(
-            n_full, ndim, base_bin, chunk_shape,
-            reduction_factor, max_levels, min_vertices,
-        )
-
-    if not specs:
-        return {"levels_created": 0, "level_specs": []}
-
-    # Build each level
-    current_positions = positions
-    levels_created = 0
-
-    for spec in specs:
-        if isinstance(spec, LevelReductionSpec):
-            bin_ratio = spec.bin_ratio
-            bin_shape = spec.bin_shape or compute_bin_shape(base_bin, bin_ratio)
-            object_sparsity = spec.object_sparsity
-        else:
-            # Legacy LevelSpec
-            bin_shape = tuple(spec.bin_size for _ in range(ndim))
-            bin_ratio = None
-            object_sparsity = 1.0
-
-        # Generate metanodes
-        result = generate_metanodes(
-            current_positions, bin_shape, agg_mode=agg_mode,
-        )
-        meta_positions = result["metanode_positions"]
-        children = result["children"]
-        n_metanodes = len(meta_positions)
-
-        if n_metanodes == 0:
-            break
-
-        # Check reduction (skip if too small, except on first level)
-        actual_ratio = len(current_positions) / max(n_metanodes, 1)
-        if actual_ratio < 2 and levels_created > 0:
-            continue
-
-        # Apply object sparsity
-        if object_sparsity < 1.0 and n_metanodes > 1:
-            kept = apply_sparsity(
-                n_metanodes, object_sparsity, sparsity_strategy,
-                seed=sparsity_seed,
-                representative_points=meta_positions,
-                bin_shape=bin_shape,
-            )
-            meta_positions = meta_positions[kept]
-            children = [children[i] for i in kept]
-            n_metanodes = len(meta_positions)
-
-        if n_metanodes == 0:
-            break
-
-        # Create level
-        actual_level = levels_created + 1
-        level_meta = LevelMetadata(
-            level=actual_level,
-            vertex_count=n_metanodes,
-            arrays_present=[VERTICES],
-            bin_shape=bin_shape,
-            bin_ratio=bin_ratio,
-            object_sparsity=object_sparsity,
-            coarsening_method="grid_metanode",
-            parent_level=actual_level - 1,
-        )
-        level_group = create_resolution_level(root, actual_level, level_meta)
-        create_vertices_array(level_group, dtype="float32")
-
-        # Write
-        chunk_assignments = assign_chunks(meta_positions, chunk_shape)
-        for chunk_coords, global_indices in sorted(chunk_assignments.items()):
-            write_chunk_vertices(
-                level_group, chunk_coords,
-                [meta_positions[global_indices]],
-                dtype=np.float32,
-            )
-
-        levels_created += 1
-        current_positions = meta_positions
-
-    spec_summaries = []
-    for i, spec in enumerate(specs[:levels_created]):
-        if isinstance(spec, LevelReductionSpec):
-            spec_summaries.append({
-                "level": i + 1,
-                "bin_ratio": list(spec.bin_ratio),
-                "object_sparsity": spec.object_sparsity,
-                "expected_volume_reduction": spec.expected_volume_reduction,
-            })
-        else:
-            spec_summaries.append({
-                "level": i + 1,
-                "bin_size": spec.bin_size,
-                "expected_vertices": spec.expected_vertex_count,
-            })
-
-    # Persist root cross-level metadata and emit cross-level link
-    # arrays for every adjacent pair we just built.
+    # Compose deeper-delta cross-level links from the inline-emitted +1
+    # arrays.  Also stamps root cross-level metadata + the multiscale
+    # links capability.
     _finalize_cross_level_for_store(
         store_path,
         cross_level_depth=cross_level_depth,
@@ -1084,50 +880,9 @@ def build_pyramid(
     )
 
     return {
-        "levels_created": levels_created,
-        "level_specs": spec_summaries,
+        "levels_created": len(summaries),
+        "level_specs": summaries,
+        "method": COARSEN_PER_OBJECT,
         "cross_level_depth": cross_level_depth,
         "cross_level_storage": cross_level_storage,
     }
-
-
-# ===================================================================
-# Helpers
-# ===================================================================
-
-def _read_all_vertices(
-    level_group: Any, ndim: int,
-) -> npt.NDArray[np.float32]:
-    """Read all vertices from a level, concatenated."""
-    chunk_keys = list_chunk_keys(level_group)
-    parts: list[npt.NDArray] = []
-    for ck in chunk_keys:
-        try:
-            groups = read_chunk_vertices(level_group, ck, dtype=np.float32, ndim=ndim)
-            for vg in groups:
-                if len(vg) > 0:
-                    parts.append(vg)
-        except Exception:
-            continue
-    if not parts:
-        return np.zeros((0, ndim), dtype=np.float32)
-    return np.concatenate(parts, axis=0)
-
-
-def _legacy_plan(
-    n_full: int,
-    ndim: int,
-    base_bin: tuple[float, ...],
-    chunk_shape: tuple[float, ...],
-    reduction_factor: int,
-    max_levels: int,
-    min_vertices: int,
-) -> list:
-    """Plan using the old LevelSpec-based approach (backward compat)."""
-    base_bin_scalar = min(base_bin)
-    return compute_level_specs(
-        n_full, base_bin_scalar,
-        reduction_factor=reduction_factor,
-        max_levels=max_levels,
-        min_vertices=min_vertices,
-    )

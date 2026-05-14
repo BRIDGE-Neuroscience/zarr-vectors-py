@@ -148,7 +148,7 @@ class TestShardedPyramid:
             rng.uniform(0, 1000, size=(10000, 3)).astype(np.float32),
             chunk_shape=(100., 100., 100.),
         )
-        build_pyramid(store)
+        build_pyramid(store, factors=[(2.0, 1.0), (2.0, 1.0)])
         levels_before = list_resolution_levels(open_store(store))
 
         # Shard
@@ -355,5 +355,5 @@ class TestBackwardCompat:
         s = str(tmp_path / "pyr.zv")
         write_points(s, rng.uniform(0, 1000, size=(10000, 3)).astype(np.float32),
                      chunk_shape=(100., 100., 100.))
-        build_pyramid(s)
+        build_pyramid(s, factors=[(2.0, 1.0)])
         assert validate(s, level=5).ok

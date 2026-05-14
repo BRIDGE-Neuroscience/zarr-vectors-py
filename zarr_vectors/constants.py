@@ -25,8 +25,10 @@ version bump (consumers should pin to a specific point release):
 - ``attributes/<name>/<key>_offsets`` sibling blobs removed.
   Attribute groups align 1:1 with vertex groups; per-group byte
   offsets are computed at read time.
-- ``metanode_children/`` removed.  Pyramid drill-down uses
-  ``cross_chunk_links/<delta=-1>/`` records.
+- ``metanode_children/`` removed.  Pyramid drill-down uses the
+  ``links/<+1>/`` + ``cross_chunk_links/<+1>/`` arrays emitted inline
+  during coarsening (mirrored as ``-1`` on the coarse side under
+  ``cross_level_storage="explicit"``).
 - ``cross_chunk_faces/`` removed.  Cross-chunk face identity uses
   ``cross_chunk_links/<delta>/`` with ``link_width=3``.  The
   ``cross_chunk_links`` array carries a ``link_width`` metadata
@@ -254,7 +256,7 @@ DEFAULT_REDUCTION_FACTOR: int = 8
 DEFAULT_BIN_RATIO: tuple[int, ...] = (1, 1, 1)
 """Bin ratio at level 0 (no downsampling)."""
 
-DEFAULT_COARSENING_METHOD: str = "grid_metanode"
+DEFAULT_COARSENING_METHOD: str = "per_object"
 
 # Valid values for LevelMetadata.coarsening_method.  Open-set: future
 # strategies (e.g. mesh edge-collapse decimation) may add tokens here.
@@ -263,22 +265,11 @@ COARSEN_PER_OBJECT: str = "per_object"
 into bin centroids (metavertices).  Metavertices may be shared between
 objects; OIDs are preserved across levels."""
 
-COARSEN_CROSS_OBJECT_METANODE: str = "cross_object_metanode"
-"""Legacy aggregation that merges vertices across objects, producing a
-fresh OID space at each level.  No provenance back to the source
-objects."""
-
-COARSEN_GRID_METANODE: str = "grid_metanode"
-"""Alias for the legacy cross-object metanode aggregation; kept for
-historical level metadata read-back."""
-
 COARSEN_MANUAL: str = "manual"
 COARSEN_NONE: str = "none"
 
 VALID_COARSENING_METHODS: frozenset[str] = frozenset({
     COARSEN_PER_OBJECT,
-    COARSEN_CROSS_OBJECT_METANODE,
-    COARSEN_GRID_METANODE,
     COARSEN_MANUAL,
     COARSEN_NONE,
 })

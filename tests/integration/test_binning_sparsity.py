@@ -81,12 +81,11 @@ class TestStreamlinesWithSparsity:
             bin_shape=(50., 50., 50.),
         )
 
-        summary = build_pyramid(store, level_configs=[
-            {"bin_ratio": (2, 2, 2), "object_sparsity": 0.5},
-        ])
+        summary = build_pyramid(store, factors=[(2.0, 2.0)])
         assert summary["levels_created"] == 1
-        assert summary["level_specs"][0]["object_sparsity"] == 0.5
-        assert summary["level_specs"][0]["expected_volume_reduction"] == 16.0
+        # sparsity_factor=2.0 → keep_frac=0.5 ≈ object_sparsity=0.5.
+        # Approximate check: at least one object was dropped.
+        assert summary["level_specs"][0]["objects_kept"] < summary["level_specs"][0]["source_objects"]
 
         assert validate(store, level=5).ok
 
@@ -111,7 +110,7 @@ class TestMeshBinning:
             bin_shape=(50., 50., 50.),
         )
 
-        summary = coarsen_level(store, 0, 1, (2, 2, 2))
+        summary = coarsen_level(store, 0, 1, coarsen_factor=2.0)
         assert summary["vertex_count"] > 0
         assert summary["vertex_count"] < n_verts
 
@@ -145,8 +144,8 @@ class TestSkeletonManualLevels:
         )
 
         # Add levels at ratios (2,2,2) and (6,6,6) — 6 divides 12 per axis
-        coarsen_level(store, 0, 1, (2, 2, 2))
-        coarsen_level(store, 0, 2, (6, 6, 6))
+        coarsen_level(store, 0, 1, coarsen_factor=2.0)
+        coarsen_level(store, 0, 2, coarsen_factor=6.0)
 
         ratios = list_available_ratios(open_store(store))
         assert (1, 1, 1) in ratios
@@ -184,7 +183,7 @@ class TestBackwardCompat:
         positions = rng.uniform(0, 1000, size=(10000, 3)).astype(np.float32)
 
         write_points(store, positions, chunk_shape=(100., 100., 100.))
-        summary = build_pyramid(store)
+        summary = build_pyramid(store, factors=[(2.0, 1.0)])
         assert summary["levels_created"] >= 1
         assert validate(store, level=5).ok
 
@@ -225,10 +224,7 @@ class TestOMEZarrMetadata:
             chunk_shape=(200., 200., 200.),
             bin_shape=(50., 50., 50.),
         )
-        build_pyramid(store, level_configs=[
-            {"bin_ratio": (2, 2, 2), "object_sparsity": 1.0},
-            {"bin_ratio": (4, 4, 4), "object_sparsity": 1.0},
-        ])
+        build_pyramid(store, factors=[(2.0, 1.0), (4.0, 1.0)])
 
         root = open_store(store, mode="r+")
         ms = write_multiscale_metadata(root)

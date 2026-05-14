@@ -109,7 +109,7 @@ def _make_level_meta(level: int = 0, **overrides) -> LevelMetadata:
     )
     if level > 0:
         defaults["bin_shape"] = (200.0, 200.0, 200.0)
-        defaults["coarsening_method"] = "grid_metanode"
+        defaults["coarsening_method"] = "per_object"
         defaults["parent_level"] = level - 1
     defaults.update(overrides)
     return LevelMetadata(**defaults)

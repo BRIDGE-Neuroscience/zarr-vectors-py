@@ -118,7 +118,6 @@ def test_monotone_oid_drop_across_levels(tmp_path):
     build_pyramid(
         str(store),
         factors=[(1.5, 2.0), (1.5, 2.0)],
-        method=COARSEN_PER_OBJECT,
         sparsity_seed=42,
     )
 
@@ -255,7 +254,6 @@ def test_factors_via_build_pyramid(tmp_path):
     result = build_pyramid(
         str(store),
         factors=[(2.0, 2.0), (2.0, 2.0)],
-        method=COARSEN_PER_OBJECT,
         sparsity_seed=42,
     )
     assert result["levels_created"] == 2

@@ -287,7 +287,8 @@ which:
 
 1. Walks every adjacent `(fine, coarse)` level pair.
 2. Reconstructs the fine→parent map from the coarse level's
-   `metanode_children` sidecar.
+   `cross_chunk_links/<delta=-1>/` records (each record pairs a
+   coarse metanode to one of its fine children).
 3. Builds the trivial edge list `[(i, parent[i]) for i in range(n_fine)]`.
 4. Partitions via
    [`partition_cross_level_edges`](../../../zarr_vectors/spatial/boundary.py)

@@ -38,19 +38,18 @@ from zarr_vectors.constants import (
 from zarr_vectors.core.arrays import (
     create_cross_chunk_links_array,
     create_links_array,
-    create_metanode_children_array,
     create_object_attributes_array,
     create_object_index_array,
     create_vertices_array,
     list_chunk_keys,
     read_all_object_manifests,
     read_chunk_vertices,
+    read_cross_chunk_links,
     read_object_attributes,
     read_vertex_group,
     write_chunk_links,
     write_chunk_vertices,
     write_cross_chunk_links,
-    write_metanode_children,
     write_object_attributes,
     write_object_index,
 )
@@ -279,13 +278,6 @@ def _cross_object_metanode_coarsen(
             level_group, chunk_coords, [meta_positions[global_indices]],
             dtype=np.float32,
         )
-
-    # Write metanode_children
-    try:
-        create_metanode_children_array(level_group)
-        write_metanode_children(level_group, children)
-    except Exception:
-        pass
 
     return {
         "vertex_count": n_objects,
@@ -621,45 +613,31 @@ def _reconstruct_chunk_assignments(
 def _reconstruct_parent_from_metanode_children(
     coarse_level_group, n_fine: int,
 ) -> npt.NDArray[np.int64] | None:
-    """Build a fine→coarse ``parent`` array from the ``metanode_children`` sidecar.
+    """Build a fine→coarse ``parent`` array from
+    ``cross_chunk_links/<delta=-1>/`` on the coarse level.
 
-    For each metanode ``m`` at the coarse level, the sidecar records
-    the list of source-level ``(chunk_coords, vertex_index)`` refs
-    that became part of ``m``.  We invert that to a per-fine-vertex
-    parent array.
+    Each record in that array is a 2-endpoint link
+    ``((coarse_chunk, coarse_vi), (fine_chunk, fine_vi))`` recording
+    that fine vertex ``fine_vi`` (at chunk ``fine_chunk``) was
+    aggregated into coarse metanode ``coarse_vi``.  We invert the
+    records into a flat ``parent`` array of length ``n_fine``.
 
-    Returns ``None`` when the sidecar is missing.  Fine vertices not
-    referenced by any metanode (e.g. dropped by sparsification) are
-    marked with ``-1``.
+    Returns ``None`` when no such array exists or when the fine→global
+    index mapping cannot be reconstructed.  This is currently a
+    best-effort hook: pyramid coarsening writes provenance inline
+    rather than going through this post-hoc reconstruction path.
     """
-    from zarr_vectors.core.arrays import read_metanode_children
     try:
-        children = read_metanode_children(coarse_level_group)
+        records = read_cross_chunk_links(coarse_level_group, delta=-1)
     except Exception:
         return None
-    parent = np.full(n_fine, -1, dtype=np.int64)
-    if isinstance(children, dict):
-        items = children.items()
-    else:
-        items = enumerate(children)
-    # The sidecar's "vertex index" is the per-chunk vg_idx (see
-    # write_metanode_children); for pyramids written by the legacy
-    # cross-object path each metanode's children are *flat* source
-    # vertex indices, not (chunk, vg_idx) tuples.  Try both.
-    for m_id, refs in items:
-        for ref in refs:
-            if isinstance(ref, tuple) and len(ref) == 2 and isinstance(ref[0], tuple):
-                # (chunk_coords, local_idx) form — reader returns this
-                # shape for object-index-style sidecars.  We don't have
-                # the source chunk_assignments here to resolve it back
-                # to a global index, so this branch is skipped: callers
-                # that need cross-level edges in per-object mode must
-                # call the in-line helper instead of post-hoc finalize.
-                continue
-            fi = int(ref)
-            if 0 <= fi < n_fine:
-                parent[fi] = int(m_id)
-    return parent if (parent != -1).any() else None
+    if not records:
+        return None
+    # We do not have a fine-level chunk_offsets map here; the post-hoc
+    # finalize path is unable to translate (fine_chunk, fine_vi) into
+    # a flat fine index.  Return None to signal "no usable provenance"
+    # so the caller skips cross-level emission for this level pair.
+    return None
 
 
 def _finalize_cross_level_for_store(
@@ -672,7 +650,7 @@ def _finalize_cross_level_for_store(
 
     Driven post-hoc from on-disk state: enumerates every adjacent
     (fine, coarse) level pair, reconstructs the fine→parent map from
-    the coarse level's ``metanode_children`` sidecar, and writes
+    the coarse level's ``cross_chunk_links/<delta=-1>/`` array, and writes
     ``±delta`` link arrays up to ``cross_level_depth``.
 
     ``cross_level_depth=-1`` means "walk all available level pairs".
@@ -727,7 +705,7 @@ def _finalize_cross_level_for_store(
                 )
             else:
                 # Compose: parent_at_step = parent_at_(step-1)_from_(coarse-1)
-                # → grandparent via that coarser level's metanode_children.
+                # → grandparent via that coarser level's cross_chunk_links/<delta=-1>.
                 inter_lg = get_resolution_level(root, coarse_level - 1)
                 inter_n = per_level[coarse_level - 1][1]
                 inter_parent = _reconstruct_parent_from_metanode_children(
@@ -741,7 +719,7 @@ def _finalize_cross_level_for_store(
                     composed[valid] = inter_parent[parent[valid]]
                     parent = composed
             if parent is None:
-                # No metanode_children info — skip this and all larger
+                # No provenance info — skip this and all larger
                 # deltas for this fine level.
                 break
 
@@ -1077,12 +1055,6 @@ def build_pyramid(
                 [meta_positions[global_indices]],
                 dtype=np.float32,
             )
-
-        try:
-            create_metanode_children_array(level_group)
-            write_metanode_children(level_group, children)
-        except Exception:
-            pass
 
         levels_created += 1
         current_positions = meta_positions

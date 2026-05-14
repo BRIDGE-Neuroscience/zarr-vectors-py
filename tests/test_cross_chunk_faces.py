@@ -1,14 +1,18 @@
-"""Tests for the cross_chunk_faces format extension (Tier C)."""
+"""Tests for cross-chunk face records.
+
+In 0.6.0 cross-chunk faces are stored as ``link_width=3`` records
+under ``cross_chunk_links/<delta=0>/`` instead of a separate
+``cross_chunk_faces`` array.
+"""
 
 from __future__ import annotations
 
 import numpy as np
 
-from zarr_vectors.core.arrays import read_cross_chunk_faces
+from zarr_vectors.core.arrays import read_cross_chunk_links
 from zarr_vectors.core.store import (
     get_resolution_level,
     open_store,
-    read_root_metadata,
 )
 from zarr_vectors.types.meshes import read_mesh, write_mesh
 
@@ -35,12 +39,6 @@ def _tetra_straddling_chunks(tmp_path):
     return store, verts, faces
 
 
-def test_capability_stamped_when_cross_faces_present(tmp_path):
-    store, _, _ = _tetra_straddling_chunks(tmp_path)
-    rm = read_root_metadata(open_store(str(store)))
-    assert "cross_chunk_faces" in rm.format_capabilities
-
-
 def test_read_mesh_returns_cross_chunk_faces(tmp_path):
     store, _, faces_in = _tetra_straddling_chunks(tmp_path)
     out = read_mesh(str(store))
@@ -48,26 +46,23 @@ def test_read_mesh_returns_cross_chunk_faces(tmp_path):
     assert out["vertex_count"] == 4
 
 
-def test_cross_chunk_faces_array_round_trips(tmp_path):
+def test_cross_chunk_face_records_round_trip(tmp_path):
     store, _, _ = _tetra_straddling_chunks(tmp_path)
     root = open_store(str(store))
     lvl = get_resolution_level(root, 0)
-    records = read_cross_chunk_faces(lvl)
+    records = read_cross_chunk_links(lvl, delta=0)
     # All 4 faces of the tetrahedron span chunks → all 4 appear here.
     assert len(records) == 4
-    # Every face has 3 vertex records (triangle)
+    # Every face has 3 endpoints (triangle, link_width=3).
     for face in records:
         assert len(face) == 3
-        # Each record is (chunk_coords, local_idx)
         for cc, local_idx in face:
             assert len(cc) == 3
-            # Local index is non-negative; exact value depends on
-            # vertex-to-chunk assignment which we don't pin here.
             assert local_idx >= 0
 
 
-def test_legacy_no_cross_chunk_array_when_all_intra(tmp_path):
-    """A mesh wholly inside one chunk should not stamp the capability."""
+def test_intra_chunk_mesh_writes_no_cross_chunk_links(tmp_path):
+    """A mesh wholly inside one chunk should not write cross_chunk_links."""
     verts = np.array([
         [10, 10, 10], [20, 10, 10], [15, 20, 10], [15, 15, 20],
     ], dtype="f4")
@@ -76,9 +71,6 @@ def test_legacy_no_cross_chunk_array_when_all_intra(tmp_path):
     ], dtype=np.int64)
     store = tmp_path / "m.zvr"
     write_mesh(str(store), verts, faces, chunk_shape=(50.0, 50.0, 50.0))
-    rm = read_root_metadata(open_store(str(store)))
-    assert "cross_chunk_faces" not in rm.format_capabilities
-
     root = open_store(str(store))
     lvl = get_resolution_level(root, 0)
-    assert read_cross_chunk_faces(lvl) == []
+    assert read_cross_chunk_links(lvl, delta=0) == []

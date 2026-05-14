@@ -1,4 +1,4 @@
-"""Tests for the ZVRWriter (Tier A + append_vertices + pending sidecars)."""
+"""Tests for the ZVRWriter (Tier A + append_vertices)."""
 
 from __future__ import annotations
 
@@ -7,10 +7,7 @@ import asyncio
 import numpy as np
 import pytest
 
-from zarr_vectors.core.arrays import (
-    compact_object_index,
-    read_all_object_manifests,
-)
+from zarr_vectors.core.arrays import read_all_object_manifests
 from zarr_vectors.core.store import (
     get_resolution_level,
     open_store,
@@ -104,7 +101,7 @@ def test_add_object_attribute(tmp_path):
 
 
 # ===================================================================
-# append_vertices + pending sidecar
+# append_vertices (commits directly into object_index/ in 0.6.0+)
 # ===================================================================
 
 
@@ -125,15 +122,13 @@ def test_append_vertices_grows_store(tmp_path):
     out = read_points(str(store))
     assert out["vertex_count"] == 140
 
-    root = open_store(str(store))
-    rm = read_root_metadata(root)
-    # vertex_count_cache always present; pending should be cleared by
-    # the auto-compact path... actually we only compact on explicit
-    # call.  The capability is still present after the first commit.
-    assert "vertex_count_cache" in rm.format_capabilities
 
+def test_append_then_compact_is_a_no_op(tmp_path):
+    """0.6.0+: compact() is a compatibility shim that just reports counts.
 
-def test_append_then_compact_clears_pending(tmp_path):
+    Pending-sidecar staging was removed; every append commits directly
+    into ``object_index/``.
+    """
     store, _ = _make_store(tmp_path, n=60)
 
     async def go():
@@ -144,10 +139,7 @@ def test_append_then_compact_clears_pending(tmp_path):
             )
 
     _run(go())
-    rm_before = read_root_metadata(open_store(str(store)))
-    assert "object_index_pending" in rm_before.format_capabilities
 
-    # Compact
     async def do_compact():
         zvr = open_zvr(str(store))
         async with zvr[0].writer() as w:
@@ -155,17 +147,12 @@ def test_append_then_compact_clears_pending(tmp_path):
 
     result = _run(do_compact())
     assert result["compacted"] is True
-    assert result["batches_folded"] == 1
     assert result["num_objects"] == 70
 
-    rm_after = read_root_metadata(open_store(str(store)))
-    assert "object_index_pending" not in rm_after.format_capabilities
-
-    # Still readable after compact
     assert read_points(str(store))["vertex_count"] == 70
 
 
-def test_two_pending_batches_unioned_on_read(tmp_path):
+def test_two_sequential_appends_merge_into_object_index(tmp_path):
     store, _ = _make_store(tmp_path, n=30)
 
     async def go():
@@ -174,7 +161,6 @@ def test_two_pending_batches_unioned_on_read(tmp_path):
             await w.append_vertices(
                 np.random.default_rng(5).uniform(0, 100, (5, 3)).astype("f4")
             )
-        # Re-open: each writer commit creates one batch
         zvr = open_zvr(str(store))
         async with zvr[0].writer() as w:
             await w.append_vertices(

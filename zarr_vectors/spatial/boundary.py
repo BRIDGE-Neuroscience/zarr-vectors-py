@@ -381,11 +381,8 @@ def chunk_local_to_global_offsets(
     algorithms that need to map ``(chunk_key, local_idx)`` to a global
     vertex ID without rebuilding the mapping themselves.
 
-    Backed by the ``vertex_counts/<chunk_key>`` sidecar when it exists
-    (capability ``"vertex_count_cache"``), which makes the lookup O(K)
-    chunks of single-int8-byte reads rather than O(N) total vertices
-    of bytes.  Falls back to summing decoded vertex_group_offsets on
-    legacy 0.2 stores — same answer, slower.
+    Per-chunk vertex counts are derived from the size of each
+    ``vertices/<chunk_key>`` blob divided by ``ndim * dtype.itemsize``.
 
     Args:
         level_group: An open :class:`FsGroup` for one resolution level.
@@ -400,45 +397,30 @@ def chunk_local_to_global_offsets(
     """
     # Imported lazily to avoid circular import with core.arrays which
     # depends on this module's other helpers.
-    from zarr_vectors.core.arrays import (
-        list_chunk_keys,
-        read_chunk_vertex_count,
-        _read_vertex_offsets,
-    )
+    from zarr_vectors.core.arrays import list_chunk_keys
 
     chunk_keys = list_chunk_keys(level_group)
     offsets: dict[ChunkCoords, int] = {}
     running = 0
+
+    try:
+        vmeta = level_group.read_array_meta("vertices")
+        dtype_str = vmeta.get("dtype", "float32")
+        itemsize = np.dtype(dtype_str).itemsize
+    except Exception:
+        itemsize = 4  # float32 default
+    ndim_meta = 3  # ndim is not stored; default to 3
+    row_size = ndim_meta * itemsize
+
     for cc in chunk_keys:
-        count = read_chunk_vertex_count(level_group, cc)
-        if count is None:
-            # Legacy fallback: sum the per-vg vertex byte spans / itemsize.
-            # We don't know the dtype here without reading array metadata,
-            # so instead we decode the paired offsets to count vertex groups
-            # and sum group lengths via byte-spans / row size.
-            try:
-                vmeta = level_group.read_array_meta("vertices")
-                ndim_meta = vmeta.get("ndim")
-                dtype_str = vmeta.get("dtype", "float32")
-                itemsize = np.dtype(dtype_str).itemsize
-            except Exception:
-                ndim_meta = None
-                itemsize = 4  # float32 default
-            try:
-                v_offsets, _ = _read_vertex_offsets(level_group, cc)
-            except Exception:
-                v_offsets = np.empty(0, dtype=np.int64)
-            if v_offsets.size <= 1:
-                count = 0
-            else:
-                total_bytes = int(v_offsets[-1] - v_offsets[0])
-                # row size = ndim * itemsize.  If ndim isn't recorded,
-                # infer from the level group's stored bytes / itemsize
-                # divided by something — best effort.
-                if ndim_meta is None:
-                    ndim_meta = 3
-                row = int(ndim_meta) * itemsize
-                count = total_bytes // row if row else 0
+        # Derive total vertex count from the vertices/<key> blob size.
+        from zarr_vectors.core.arrays import _chunk_key  # local: tight loop
+        from zarr_vectors.constants import VERTICES
+        try:
+            raw = level_group.read_bytes(VERTICES, _chunk_key(cc))
+            count = len(raw) // row_size if row_size else 0
+        except Exception:
+            count = 0
         offsets[cc] = running
         running += int(count)
     return offsets, chunk_keys, running

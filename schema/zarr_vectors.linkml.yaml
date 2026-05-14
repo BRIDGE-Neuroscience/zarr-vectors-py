@@ -98,17 +98,11 @@ enums:
 
   FormatCapability:
     description: >
-      Optional 0.3+ feature tokens a store advertises in
+      Optional feature tokens a store advertises in
       :attr:`RootMetadata.format_capabilities`.  Open-set: new tokens
       will be added in future spec revisions; readers must tolerate
       unknown values.
     permissible_values:
-      cross_chunk_faces:
-        description: Store has the ``cross_chunk_faces`` array for boundary faces.
-      vertex_count_cache:
-        description: Per-chunk ``vertex_counts/<chunk_key>`` sidecars are present.
-      object_index_pending:
-        description: One or more uncompacted ``object_index/pending/<batch>`` sidecars exist.
       preserved_object_ids:
         description: >
           At least one level was written with ID-preserving sparsification
@@ -138,15 +132,12 @@ enums:
       links:
       attribute:
       object_index:
-      object_index_pending:
       object_attribute:
       groupings:
       groupings_attribute:
       cross_chunk_links:
-      cross_chunk_faces:
       link_attribute:
       cross_chunk_link_attribute:
-      metanode_children:
 
 # ===================================================================
 # Classes
@@ -269,14 +260,6 @@ classes:
         equals_string: object_index
         required: true
 
-  ObjectIndexPendingMeta:
-    description: "``.zattrs`` for ``object_index/pending/<batch_id>/``."
-    slots: [zv_array, batch_id, num_objects, sid_ndim]
-    slot_usage:
-      zv_array:
-        equals_string: object_index_pending
-        required: true
-
   ObjectAttributeMeta:
     description: "``.zattrs`` for each ``object_attributes/<name>/`` array."
     slots: [zv_array, name, dtype, shape]
@@ -303,23 +286,18 @@ classes:
 
   CrossChunkLinksMeta:
     description: >
-      ``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Under the
-      0.4 multiscale layout, each delta segment carries its own meta
-      block; ``level_delta=0`` is the intra-level array.  Source-side
-      endpoints live at the array's own resolution level; target-side
-      endpoints live at ``this_level + level_delta``.
-    slots: [zv_array, num_links, sid_ndim, level_delta]
+      ``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Each
+      delta segment carries its own meta block; ``level_delta=0`` is
+      the intra-level array.  Each record is ``link_width``
+      ``(chunk_coords, vertex_idx)`` endpoints — ``link_width=2``
+      encodes a cross-chunk edge, ``link_width=3`` a triangle face
+      record, and so on.  Source-side endpoint (endpoint 0) lives at
+      the array's own resolution level; target-side endpoints live at
+      ``this_level + level_delta``.
+    slots: [zv_array, num_links, sid_ndim, level_delta, link_width]
     slot_usage:
       zv_array:
         equals_string: cross_chunk_links
-        required: true
-
-  CrossChunkFacesMeta:
-    description: "``.zattrs`` for ``cross_chunk_faces/`` (0.3 capability ``cross_chunk_faces``)."
-    slots: [zv_array, num_faces, sid_ndim, record_size]
-    slot_usage:
-      zv_array:
-        equals_string: cross_chunk_faces
         required: true
 
   LinkAttributeMeta:
@@ -342,14 +320,6 @@ classes:
     slot_usage:
       zv_array:
         equals_string: cross_chunk_link_attribute
-        required: true
-
-  MetanodeChildrenMeta:
-    description: "``.zattrs`` for the ``metanode_children/`` coarsening sidecar."
-    slots: [zv_array, num_metanodes, sid_ndim]
-    slot_usage:
-      zv_array:
-        equals_string: metanode_children
         required: true
 
 # ===================================================================
@@ -559,9 +529,11 @@ slots:
     range: string
     multivalued: true
   link_width:
-    description: Width of a links row (2 for edges, 3 or 4 for face rows).
+    description: >
+      Width of a links row (1 for parent→child metanode references, 2
+      for edges, 3 for triangle faces, 4 for quads).
     range: integer
-    minimum_value: 2
+    minimum_value: 1
     required: true
   level_delta:
     description: >
@@ -587,35 +559,13 @@ slots:
     range: integer
     minimum_value: 0
     required: true
-  num_faces:
-    description: Total cross-chunk face count.
-    range: integer
-    minimum_value: 0
-    required: true
-  num_metanodes:
-    description: Total metanode count in a coarsening sidecar.
-    range: integer
-    minimum_value: 0
-    required: true
   sid_ndim:
     description: Number of spatial-index dimensions encoded in chunk keys.
     range: integer
     minimum_value: 1
     required: true
-  record_size:
-    description: >
-      Per-face record width in ``cross_chunk_faces/data`` (sid_ndim + 2
-      int64s).
-    range: integer
-    minimum_value: 2
-    required: true
   shape:
     description: Shape of a dense per-object/per-group array.
     range: integer
     multivalued: true
-    required: true
-  batch_id:
-    description: Monotonic batch id for an ``object_index/pending/<batch>`` sidecar.
-    range: integer
-    minimum_value: 0
     required: true

@@ -335,12 +335,11 @@ def test_build_pyramid_depth_zero_emits_no_cross_level(tmp_path: Path) -> None:
 @pytest.mark.xfail(
     reason=(
         "Cross-level link emission (+delta/-delta arrays) is broken end-to-end: "
-        "_per_object_coarsen (the default coarsen path) never writes the "
-        "metanode_children sidecar that _finalize_cross_level_for_store reads, "
-        "and the legacy _cross_object_metanode_coarsen call to "
-        "write_metanode_children is missing the required sid_ndim arg and is "
-        "silently swallowed by an `except Exception: pass`.  See the open "
-        "issue tracking this design gap."
+        "_per_object_coarsen (the default coarsen path) writes no provenance "
+        "records, and _finalize_cross_level_for_store has no usable "
+        "fine→parent reconstruction without them.  Tracking the design gap "
+        "(coarsening would need to emit cross_chunk_links/<delta=-1> records "
+        "in-line) in a separate issue."
     ),
     strict=False,
 )

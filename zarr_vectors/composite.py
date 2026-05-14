@@ -402,9 +402,6 @@ def _write_namespaced_vertices(
         "ndim": ndim,
         "vertex_count": n_verts,
     })
-    # offsets group used downstream by read paths that follow this
-    # function's convention; ensure it exists.
-    level_group.require_group(f"{array_name}_offsets")
 
     chunk_assignments = assign_chunks(positions, chunk_shape)
 
@@ -414,11 +411,6 @@ def _write_namespaced_vertices(
 
         raw = chunk_verts.astype(np.float32).tobytes()
         level_group.write_bytes(array_name, key, raw)
-
-        offsets = np.array([0], dtype=np.int64)
-        level_group.write_bytes(
-            f"{array_name}_offsets", key, offsets.tobytes(),
-        )
 
     return n_verts
 

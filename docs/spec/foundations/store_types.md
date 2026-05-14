@@ -71,7 +71,8 @@ All three entry points accept `backend=` and `**backend_kwargs`:
 from zarr_vectors.core.store import create_store, open_store
 from zarr_vectors.lazy import open_zvr
 
-create_store(path, root_metadata, *, backend=None, **backend_kwargs) -> Group
+create_store(path, *, bounds=None, chunk_shape=None, axes=None,
+              geometry_types=None, ..., backend=None, **backend_kwargs) -> Group
 open_store(path, mode="r", *, backend=None, **backend_kwargs)         -> Group
 open_zvr(path, *, backend=None, **backend_kwargs)                     -> ZVRStore
 ```
@@ -301,5 +302,5 @@ a resolution level).
 The backend layer is independent of the
 [format capability tokens](../layout/root_metadata.md) stamped on
 `RootMetadata.format_capabilities` — backends carry data bytes, not
-format semantics. See the capability list for `CAP_CROSS_CHUNK_FACES`,
-`CAP_VERTEX_COUNT_CACHE`, `CAP_MULTISCALE_LINKS`, etc.
+format semantics. See the capability list for `CAP_MULTISCALE_LINKS`,
+`CAP_PRESERVED_OBJECT_IDS`, `CAP_SHARED_VERTEX_GROUPS`.

@@ -28,14 +28,13 @@ from typing import Any, TYPE_CHECKING
 import numpy as np
 import numpy.typing as npt
 
-from zarr_vectors.constants import CAP_OBJECT_INDEX_PENDING
 from zarr_vectors.core.arrays import (
-    compact_object_index,
     list_chunk_keys,
+    read_all_object_manifests,
     read_chunk_vertices,
     write_chunk_attributes,
     write_chunk_vertices,
-    write_object_index_pending,
+    write_object_index,
 )
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.exceptions import ArrayError
@@ -145,9 +144,10 @@ class ZVRWriter:
         chunk's ``F_local`` faces appear in the same order as the
         decoded ``links/<chunk_key>``.
 
-        Note: face attributes for **cross-chunk** faces require the 0.3
-        ``cross_chunk_faces`` capability and are tracked in a separate
-        path; that path is wired up in step 8.
+        Note: cross-chunk faces are stored in
+        ``cross_chunk_links/<delta>/`` with ``link_width=3`` (0.6.0+);
+        per-face attributes for those records use the parallel
+        ``cross_chunk_link_attributes/<name>/<delta>/`` array.
         """
         await self._write_per_face_attribute(
             name=name, values=values, dtype=dtype,
@@ -482,14 +482,11 @@ class ZVRWriter:
         }
 
     def _current_num_objects(self) -> int:
-        """Inspect existing object_index + pending sidecars for total count."""
-        from zarr_vectors.core.arrays import read_all_object_manifests
+        """Inspect existing object_index for total count."""
         try:
             manifests = read_all_object_manifests(self._group)
         except Exception:
             return 0
-        # Total count counts already-pending entries too so successive
-        # writes don't collide.
         existing_pending = self._pending_manifests
         if existing_pending:
             return max(
@@ -501,31 +498,24 @@ class ZVRWriter:
     # ---------------- lifecycle -----------------------------------------
 
     async def commit(self) -> dict:
-        """Flush pending appends to a new object_index sidecar batch.
+        """Flush pending appends into the main ``object_index/`` array.
 
-        - Writes a pending sidecar at ``object_index/pending/<batch_id>/``
-          if there are staged manifests.
-        - Stamps the ``CAP_OBJECT_INDEX_PENDING`` capability on the root
-          metadata so readers know to fold the sidecar.
-        - Updates the level's recorded ``vertex_count`` to include the
-          appended vertices.
+        Reads the existing main index (if any), merges the staged
+        manifests with last-write-wins on duplicate OIDs, and rewrites
+        ``object_index/``.  Transactional backends (icechunk) make
+        this cheap via copy-on-write; plain LocalStore rewrites the
+        whole index on every commit.
         """
         out: dict[str, int] = {"committed": True}
 
         if not self._pending_manifests:
             self._committed = True
-            return {**out, "batches_written": 0, "objects_committed": 0}
+            return {**out, "objects_committed": 0}
 
         sid_ndim = self._pending_sid_ndim or self._level._root_meta.sid_ndim
-        batch_id = await asyncio.to_thread(
-            write_object_index_pending,
-            self._group, self._pending_manifests, sid_ndim,
-        )
+        await asyncio.to_thread(self._merge_and_write_object_index, sid_ndim)
 
-        # Stamp the pending capability on root metadata (idempotent).
-        await asyncio.to_thread(self._stamp_capability, CAP_OBJECT_INDEX_PENDING)
-
-        # Update level vertex_count from the on-disk per-chunk sidecars.
+        # Update level vertex_count from the on-disk vertices blobs.
         await asyncio.to_thread(self._bump_level_vertex_count)
 
         committed = len(self._pending_manifests)
@@ -534,57 +524,41 @@ class ZVRWriter:
         self._committed = True
         return {
             **out,
-            "batches_written": 1 if batch_id >= 0 else 0,
             "objects_committed": committed,
-            "batch_id": batch_id,
         }
 
     async def compact(self) -> dict:
-        """Fold every pending object_index sidecar into the main index.
-
-        Wraps :func:`zarr_vectors.core.arrays.compact_object_index`.
-        Also clears the ``CAP_OBJECT_INDEX_PENDING`` capability on root
-        metadata once the pending tree is empty.
-        """
+        """Compatibility shim: pending-sidecar staging was removed in
+        0.6.0.  Calls :meth:`commit` (which now directly rewrites the
+        main index) and reports the count for callers that used to
+        rely on the explicit compaction step."""
         if self._pending_manifests:
             await self.commit()
-        result = await asyncio.to_thread(compact_object_index, self._group)
-        await asyncio.to_thread(self._clear_capability, CAP_OBJECT_INDEX_PENDING)
-        return {"compacted": True, **result}
+        manifests = await asyncio.to_thread(
+            read_all_object_manifests, self._group,
+        )
+        return {"compacted": True, "num_objects": len(manifests)}
 
     # ---------------- root-metadata mutators ----------------------------
 
-    def _stamp_capability(self, cap: str) -> None:
-        # The level group is a sub-group; capabilities live on root.
-        from zarr_vectors.core.group import Group
-        root_handle = Group._from_backend(self._group._backend, "")
-        root_attrs = root_handle.attrs.to_dict()
-        zv = root_attrs.get("zarr_vectors", {})
-        caps = list(zv.get("format_capabilities", []))
-        if cap not in caps:
-            caps.append(cap)
-            zv["format_capabilities"] = caps
-            root_attrs["zarr_vectors"] = zv
-            root_handle.attrs.update({"zarr_vectors": zv})
+    def _merge_and_write_object_index(self, sid_ndim: int) -> None:
+        """Merge ``self._pending_manifests`` into the main ``object_index/``.
 
-    def _clear_capability(self, cap: str) -> None:
-        from zarr_vectors.core.group import Group
-        root_handle = Group._from_backend(self._group._backend, "")
-        root_attrs = root_handle.attrs.to_dict()
-        zv = root_attrs.get("zarr_vectors", {})
-        caps = list(zv.get("format_capabilities", []))
-        if cap in caps:
-            caps.remove(cap)
-            zv["format_capabilities"] = caps
-            root_handle.attrs.update({"zarr_vectors": zv})
+        Reads the current index (if any), applies last-write-wins
+        on staged OIDs, and rewrites the index in one call.
+        """
+        try:
+            existing = read_all_object_manifests(self._group)
+        except Exception:
+            existing = []
+        merged: dict[int, ObjectManifest] = {
+            oid: m for oid, m in enumerate(existing)
+        }
+        merged.update(self._pending_manifests)
+        write_object_index(self._group, merged, sid_ndim=sid_ndim)
 
     def _bump_level_vertex_count(self) -> None:
-        """Recompute the level's vertex_count from the actual on-disk data.
-
-        ``append_vertices`` doesn't track per-call totals, so we
-        recount from the per-chunk ``vertex_counts`` sidecars (which
-        ``write_chunk_vertices`` always emits).
-        """
+        """Recompute the level's vertex_count from on-disk data."""
         offsets, _keys, total = chunk_local_to_global_offsets(self._group)
         attrs = self._group.attrs.to_dict()
         lv = attrs.get("zarr_vectors_level", {})
@@ -674,7 +648,10 @@ def _write_custom_subpath(
     """Write attribute bytes to ``<subpath>/<name>/<chunk_key>``.
 
     Mirrors :func:`write_chunk_attributes` but with a configurable
-    top-level subpath (e.g. ``"face_attributes"``).
+    top-level subpath (e.g. ``"face_attributes"``).  Per-group byte
+    offsets are derived at read time from the parallel
+    ``vertex_group_offsets`` table; no ``_offsets`` sibling is
+    written.
     """
     from zarr_vectors.core.arrays import _chunk_key
     from zarr_vectors.encoding.ragged import encode_vertex_groups
@@ -682,6 +659,5 @@ def _write_custom_subpath(
     dtype = np.dtype(dtype)
     key = _chunk_key(chunk_coords)
     full_name = f"{subpath}/{name}"
-    raw_bytes, offsets = encode_vertex_groups(attr_groups, dtype)
+    raw_bytes, _ = encode_vertex_groups(attr_groups, dtype)
     level_group.write_bytes(full_name, key, raw_bytes)
-    level_group.write_bytes(full_name, key + "_offsets", offsets.tobytes())

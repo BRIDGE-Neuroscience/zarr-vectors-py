@@ -101,40 +101,6 @@
         "string"
       ]
     },
-    "CrossChunkFacesMeta": {
-      "additionalProperties": false,
-      "description": "``.zattrs`` for ``cross_chunk_faces/`` (0.3 capability ``cross_chunk_faces``).",
-      "properties": {
-        "num_faces": {
-          "description": "Total cross-chunk face count.",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "record_size": {
-          "description": "Per-face record width in ``cross_chunk_faces/data`` (sid_ndim + 2 int64s).\n",
-          "minimum": 2,
-          "type": "integer"
-        },
-        "sid_ndim": {
-          "description": "Number of spatial-index dimensions encoded in chunk keys.",
-          "minimum": 1,
-          "type": "integer"
-        },
-        "zv_array": {
-          "$ref": "#/$defs/ZvArrayTag",
-          "const": "cross_chunk_faces",
-          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
-        }
-      },
-      "required": [
-        "zv_array",
-        "num_faces",
-        "sid_ndim",
-        "record_size"
-      ],
-      "title": "CrossChunkFacesMeta",
-      "type": "object"
-    },
     "CrossChunkLinkAttributeMeta": {
       "additionalProperties": false,
       "description": "``.zattrs`` for each ``cross_chunk_link_attributes/<name>/<delta>/`` array.  Stored as a flat blob parallel to the ``data`` blob of the matching ``cross_chunk_links/<delta>/`` array; ``num_links`` MUST equal the parallel CCL array's ``num_links``.",
@@ -174,10 +140,15 @@
     },
     "CrossChunkLinksMeta": {
       "additionalProperties": false,
-      "description": "``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Under the 0.4 multiscale layout, each delta segment carries its own meta block; ``level_delta=0`` is the intra-level array.  Source-side endpoints live at the array's own resolution level; target-side endpoints live at ``this_level + level_delta``.",
+      "description": "``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Each delta segment carries its own meta block; ``level_delta=0`` is the intra-level array.  Each record is ``link_width`` ``(chunk_coords, vertex_idx)`` endpoints \u2014 ``link_width=2`` encodes a cross-chunk edge, ``link_width=3`` a triangle face record, and so on.  Source-side endpoint (endpoint 0) lives at the array's own resolution level; target-side endpoints live at ``this_level + level_delta``.",
       "properties": {
         "level_delta": {
           "description": "Pyramid-level delta between the source side (the level that owns this array) and the target side of the edges.  ``0`` for intra-level arrays (the only kind written pre-0.4), ``+N`` for edges from this level to ``this_level + N`` (coarser), ``-N`` for edges to ``this_level - N`` (finer).\n",
+          "type": "integer"
+        },
+        "link_width": {
+          "description": "Width of a links row (1 for parent\u2192child metanode references, 2 for edges, 3 for triangle faces, 4 for quads).\n",
+          "minimum": 1,
           "type": "integer"
         },
         "num_links": {
@@ -200,7 +171,8 @@
         "zv_array",
         "num_links",
         "sid_ndim",
-        "level_delta"
+        "level_delta",
+        "link_width"
       ],
       "title": "CrossChunkLinksMeta",
       "type": "object"
@@ -235,11 +207,8 @@
       "type": "string"
     },
     "FormatCapability": {
-      "description": "Optional 0.3+ feature tokens a store advertises in :attr:`RootMetadata.format_capabilities`.  Open-set: new tokens will be added in future spec revisions; readers must tolerate unknown values.",
+      "description": "Optional feature tokens a store advertises in :attr:`RootMetadata.format_capabilities`.  Open-set: new tokens will be added in future spec revisions; readers must tolerate unknown values.",
       "enum": [
-        "cross_chunk_faces",
-        "vertex_count_cache",
-        "object_index_pending",
         "preserved_object_ids",
         "shared_vertex_groups",
         "multiscale_links"
@@ -494,8 +463,8 @@
           "type": "integer"
         },
         "link_width": {
-          "description": "Width of a links row (2 for edges, 3 or 4 for face rows).",
-          "minimum": 2,
+          "description": "Width of a links row (1 for parent\u2192child metanode references, 2 for edges, 3 for triangle faces, 4 for quads).\n",
+          "minimum": 1,
           "type": "integer"
         },
         "zv_array": {
@@ -511,34 +480,6 @@
         "level_delta"
       ],
       "title": "LinksMeta",
-      "type": "object"
-    },
-    "MetanodeChildrenMeta": {
-      "additionalProperties": false,
-      "description": "``.zattrs`` for the ``metanode_children/`` coarsening sidecar.",
-      "properties": {
-        "num_metanodes": {
-          "description": "Total metanode count in a coarsening sidecar.",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sid_ndim": {
-          "description": "Number of spatial-index dimensions encoded in chunk keys.",
-          "minimum": 1,
-          "type": "integer"
-        },
-        "zv_array": {
-          "$ref": "#/$defs/ZvArrayTag",
-          "const": "metanode_children",
-          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
-        }
-      },
-      "required": [
-        "zv_array",
-        "num_metanodes",
-        "sid_ndim"
-      ],
-      "title": "MetanodeChildrenMeta",
       "type": "object"
     },
     "ObjectAttributeMeta": {
@@ -610,40 +551,6 @@
         "sid_ndim"
       ],
       "title": "ObjectIndexMeta",
-      "type": "object"
-    },
-    "ObjectIndexPendingMeta": {
-      "additionalProperties": false,
-      "description": "``.zattrs`` for ``object_index/pending/<batch_id>/``.",
-      "properties": {
-        "batch_id": {
-          "description": "Monotonic batch id for an ``object_index/pending/<batch>`` sidecar.",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "num_objects": {
-          "description": "Total object count this array carries.",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sid_ndim": {
-          "description": "Number of spatial-index dimensions encoded in chunk keys.",
-          "minimum": 1,
-          "type": "integer"
-        },
-        "zv_array": {
-          "$ref": "#/$defs/ZvArrayTag",
-          "const": "object_index_pending",
-          "description": "Discriminator slot identifying the kind of per-array ``.zattrs`` block.  Each writer in ``core/arrays.py`` stamps the corresponding token from :class:`ZvArrayTag`.\n"
-        }
-      },
-      "required": [
-        "zv_array",
-        "batch_id",
-        "num_objects",
-        "sid_ndim"
-      ],
-      "title": "ObjectIndexPendingMeta",
       "type": "object"
     },
     "RootMetadata": {
@@ -776,15 +683,12 @@
         "links",
         "attribute",
         "object_index",
-        "object_index_pending",
         "object_attribute",
         "groupings",
         "groupings_attribute",
         "cross_chunk_links",
-        "cross_chunk_faces",
         "link_attribute",
-        "cross_chunk_link_attribute",
-        "metanode_children"
+        "cross_chunk_link_attribute"
       ],
       "title": "ZvArrayTag",
       "type": "string"
@@ -793,7 +697,7 @@
   "$id": "https://w3id.org/zarr-vectors/schema/0.5",
   "$schema": "https://json-schema.org/draft/2019-09/schema",
   "additionalProperties": true,
-  "metamodel_version": "1.7.0",
+  "metamodel_version": "1.11.0",
   "title": "zarr_vectors",
   "type": "object",
   "version": null

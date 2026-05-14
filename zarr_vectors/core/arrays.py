@@ -19,17 +19,14 @@ import numpy.typing as npt
 
 from zarr_vectors.constants import (
     ATTRIBUTES,
-    CROSS_CHUNK_FACES,
     CROSS_CHUNK_LINK_ATTRIBUTES,
     CROSS_CHUNK_LINKS,
     GROUPINGS,
     GROUPINGS_ATTRIBUTES,
     LINK_ATTRIBUTES,
     LINKS,
-    METANODE_CHILDREN,
     OBJECT_ATTRIBUTES,
     OBJECT_INDEX,
-    VERTEX_COUNTS,
     VERTEX_GROUP_OFFSETS,
     VERTICES,
 )
@@ -44,20 +41,21 @@ from zarr_vectors.core.paths import (
 from zarr_vectors.core.store import FsGroup
 from zarr_vectors.encoding.ragged import (
     decode_object_index,
-    decode_paired_offsets,
+    decode_ragged_blob,
     decode_ragged_ints,
     decode_vertex_groups,
+    decode_vertex_offsets,
     encode_object_index,
-    encode_paired_offsets,
+    encode_ragged_blob,
     encode_ragged_ints,
     encode_vertex_groups,
+    encode_vertex_offsets,
 )
 from zarr_vectors.exceptions import ArrayError
 from zarr_vectors.typing import (
     ChunkCoords,
     CrossChunkLink,
     ObjectManifest,
-    VertexGroupRef,
 )
 
 
@@ -250,17 +248,26 @@ def create_cross_chunk_links_array(
     level_group: FsGroup,
     *,
     delta: int = 0,
+    link_width: int = 2,
 ) -> None:
     """Create a ``cross_chunk_links/<delta>/`` array.
 
     Source-side endpoints live at the owning resolution level;
     target-side endpoints live at ``this_level + delta``.
+
+    Args:
+        level_group: Resolution level group.
+        delta: Level delta (0 for intra-level, ±N for cross-level).
+        link_width: Number of vertex refs per record.  2 for edges
+            (the default — chunk pairs straddling a boundary), 3 for
+            triangle faces, 1 for parent→child metanode references.
     """
     full_name = cross_chunk_links_path(delta)
     _ensure_array_dir(level_group, full_name)
     level_group.write_array_meta(full_name, {
         "zv_array": "cross_chunk_links",
         "level_delta": int(delta),
+        "link_width": int(link_width),
     })
 
 
@@ -306,14 +313,6 @@ def create_cross_chunk_link_attributes_array(
     })
 
 
-def create_metanode_children_array(level_group: FsGroup) -> None:
-    """Create the ``metanode_children/`` array (for levels > 0)."""
-    _ensure_array_dir(level_group, METANODE_CHILDREN)
-    level_group.write_array_meta(METANODE_CHILDREN, {
-        "zv_array": "metanode_children",
-    })
-
-
 # ===================================================================
 # Writing data
 # ===================================================================
@@ -326,10 +325,9 @@ def write_chunk_vertices(
 ) -> npt.NDArray[np.int64]:
     """Write vertex groups to a spatial chunk.
 
-    Encodes the groups as a contiguous byte buffer in ``vertices/``,
-    and writes the K×2 byte offsets to ``vertex_group_offsets/``.
-    The link_offset column is set to -1 (no links); callers that also
-    write links should update via :func:`write_chunk_links`.
+    Encodes the groups as a contiguous byte buffer in ``vertices/`` and
+    writes the ``(K,)`` int64 vertex byte offsets to
+    ``vertex_group_offsets/``.
 
     Args:
         level_group: Resolution level group.
@@ -338,46 +336,17 @@ def write_chunk_vertices(
         dtype: Numpy dtype for serialisation.
 
     Returns:
-        ``(K,)`` int64 array of vertex byte offsets (for external use).
+        ``(K,)`` int64 array of vertex byte offsets.
     """
     dtype = np.dtype(dtype)
     key = _chunk_key(chunk_coords)
 
     raw_bytes, vertex_offsets = encode_vertex_groups(groups, dtype)
     level_group.write_bytes(VERTICES, key, raw_bytes)
-
-    # Build paired offsets: vertex offsets + placeholder link offsets (-1)
-    link_offsets = np.full_like(vertex_offsets, -1)
-    paired_bytes = encode_paired_offsets(vertex_offsets, link_offsets)
-    level_group.write_bytes(VERTEX_GROUP_OFFSETS, key, paired_bytes)
-
-    # Sidecar: total vertex count for this chunk (one int64).  Lets
-    # ``chunk_local_to_global_offsets`` build the per-chunk → global
-    # mapping in O(chunks) bytes of I/O instead of streaming every
-    # vertex blob to discover its length.
-    n_verts = int(sum(len(g) for g in groups))
     level_group.write_bytes(
-        VERTEX_COUNTS, key, np.int64(n_verts).tobytes(),
+        VERTEX_GROUP_OFFSETS, key, encode_vertex_offsets(vertex_offsets),
     )
-
     return vertex_offsets
-
-
-def read_chunk_vertex_count(
-    level_group: FsGroup,
-    chunk_coords: ChunkCoords,
-) -> int | None:
-    """Read the per-chunk vertex count sidecar.
-
-    Returns ``None`` when the sidecar is absent (legacy 0.2 stores).
-    Callers should fall back to summing vertex_group_offsets in that
-    case.
-    """
-    key = _chunk_key(chunk_coords)
-    if not level_group.chunk_exists(VERTEX_COUNTS, key):
-        return None
-    raw = level_group.read_bytes(VERTEX_COUNTS, key)
-    return int(np.frombuffer(raw, dtype=np.int64)[0])
 
 
 def write_chunk_links(
@@ -390,15 +359,14 @@ def write_chunk_links(
 ) -> npt.NDArray[np.int64]:
     """Write link groups to a spatial chunk under ``links/<delta>/``.
 
-    For ``delta=0`` (intra-level links) the per-chunk link byte offsets
-    are paired with the existing ``vertex_group_offsets`` table so
-    readers can look up a link group by its vertex-group index.
+    For ``delta=0`` link groups are 1:1 aligned with the chunk's
+    vertex groups; readers derive per-group link byte offsets from the
+    cumulative sizes of each group's link bytes (see
+    :func:`read_chunk_links`).
 
     For ``delta != 0`` (cross-pyramid-level links) the source vertex
-    groups and link groups live at *different* levels, so the
-    ``vertex_group_offsets`` pairing is meaningless and skipped — the
-    on-disk paired-offsets table continues to reference only the
-    ``delta=0`` link array.
+    groups and link groups live at different levels and there is
+    typically one link group spanning the chunk.
 
     Args:
         level_group: Resolution level group.
@@ -414,22 +382,23 @@ def write_chunk_links(
     key = _chunk_key(chunk_coords)
     full_name = links_path(delta)
 
-    raw_bytes, link_offsets = encode_ragged_ints(link_groups, dtype)
-    level_group.write_bytes(full_name, key, raw_bytes)
-
-    # Pair link byte offsets with vertex byte offsets only for the
-    # intra-level (delta=0) array — see docstring above.
     if delta == 0 and level_group.chunk_exists(VERTEX_GROUP_OFFSETS, key):
         existing = level_group.read_bytes(VERTEX_GROUP_OFFSETS, key)
-        vertex_offsets, _ = decode_paired_offsets(existing)
-        if len(vertex_offsets) != len(link_offsets):
+        vertex_offsets = decode_vertex_offsets(existing)
+        if len(vertex_offsets) != len(link_groups):
             raise ArrayError(
-                f"Link group count ({len(link_offsets)}) != "
+                f"Link group count ({len(link_groups)}) != "
                 f"vertex group count ({len(vertex_offsets)}) in chunk {key}"
             )
-        paired_bytes = encode_paired_offsets(vertex_offsets, link_offsets)
-        level_group.write_bytes(VERTEX_GROUP_OFFSETS, key, paired_bytes)
 
+    # Self-describing blob: per-group byte offsets are packed in an
+    # inline header followed by the concatenated link data.
+    blob = encode_ragged_blob(link_groups, dtype)
+    level_group.write_bytes(full_name, key, blob)
+
+    # Recover the per-group byte offsets (relative to the data section)
+    # for the return value.
+    _, link_offsets = encode_ragged_ints(link_groups, dtype)
     return link_offsets
 
 
@@ -441,6 +410,10 @@ def write_chunk_attributes(
     dtype: np.dtype | str = np.float32,
 ) -> None:
     """Write vertex attribute data for groups in a spatial chunk.
+
+    Attribute groups align 1:1 with vertex groups, so per-group byte
+    offsets are derived at read time from ``vertex_group_offsets`` and
+    the attribute dtype/ncols.  No sibling ``_offsets`` blob is written.
 
     Args:
         level_group: Resolution level group.
@@ -454,9 +427,8 @@ def write_chunk_attributes(
     dtype = np.dtype(dtype)
     key = _chunk_key(chunk_coords)
     full_name = f"{ATTRIBUTES}/{attr_name}"
-    raw_bytes, offsets = encode_vertex_groups(attr_groups, dtype)
+    raw_bytes, _ = encode_vertex_groups(attr_groups, dtype)
     level_group.write_bytes(full_name, key, raw_bytes)
-    level_group.write_bytes(full_name, key + "_offsets", offsets.tobytes())
 
 
 def write_chunk_link_attributes(
@@ -646,51 +618,84 @@ def write_groupings_attributes(
 
 def write_cross_chunk_links(
     level_group: FsGroup,
-    links: list[CrossChunkLink],
+    links: list[list[tuple[ChunkCoords, int]]] | list[CrossChunkLink],
     sid_ndim: int,
     *,
     delta: int = 0,
+    link_width: int | None = None,
 ) -> None:
-    """Write cross-chunk link pairs under ``cross_chunk_links/<delta>/``.
+    """Write cross-chunk link records under ``cross_chunk_links/<delta>/``.
 
-    Each link is ``((chunk_A, vertex_A), (chunk_B, vertex_B))``.
-    Endpoint A is interpreted at the owning resolution level; endpoint B
-    is interpreted at ``this_level + delta`` (the level delta is
-    encoded in the array path).
+    Each record is ``link_width`` ``(chunk_coords, vertex_idx)``
+    endpoints.  ``link_width=2`` (the default) encodes the classic
+    cross-chunk edge ``((chunk_A, vi_A), (chunk_B, vi_B))``;
+    ``link_width=3`` encodes a triangle face spanning chunks;
+    ``link_width=1`` encodes a single parent→child reference used by
+    pyramid metanode drill-down.
 
-    Source and target levels are assumed to share ``sid_ndim`` (the
-    spatial-index dimensionality is uniform per store), even when their
-    chunk grids differ in spacing.
+    Records may be passed either as legacy 2-tuples (compatibility
+    with the pre-0.6.0 edge-only API) or as a list of endpoint lists
+    when ``link_width`` is supplied explicitly.
+
+    Endpoint 0 is at the owning resolution level; endpoint k (k>0)
+    is at ``this_level + delta``.  For ``link_width=1`` (metanode
+    drill-down) the single endpoint is at ``this_level + delta`` and
+    is paired with an implicit source defined by the writer (the
+    record stores only the child reference).
 
     Args:
         level_group: Resolution level group.
-        links: List of CrossChunkLink tuples.
+        links: List of records; each record is a list of
+            ``(chunk_coords, vertex_idx)`` tuples of length
+            ``link_width``.  Legacy 2-tuple form is accepted when
+            ``link_width`` is 2 (or omitted).
         sid_ndim: Number of spatial index dimensions.
         delta: Level delta; see :mod:`zarr_vectors.core.paths`.
+        link_width: Endpoints per record.  Defaults to 2 (or to the
+            arity of the first record if it's a list).
     """
     if not links:
         return
 
+    # Normalise input to a list-of-lists shape; resolve link_width.
+    normalised: list[list[tuple[ChunkCoords, int]]] = []
+    for rec in links:
+        if isinstance(rec, tuple) and len(rec) == 2 and isinstance(rec[0], tuple) and not isinstance(rec[0][0], tuple):
+            # Legacy CrossChunkLink: ((chunk_a, vi_a), (chunk_b, vi_b))
+            normalised.append([rec[0], rec[1]])
+        else:
+            normalised.append(list(rec))
+
+    if link_width is None:
+        link_width = len(normalised[0])
+    for rec in normalised:
+        if len(rec) != link_width:
+            raise ArrayError(
+                f"cross_chunk_links/{format_delta(delta)}: record arity "
+                f"{len(rec)} != link_width {link_width}"
+            )
+
     full_name = cross_chunk_links_path(delta)
     flat: list[int] = []
-    for (chunk_a, vi_a), (chunk_b, vi_b) in links:
-        if len(chunk_a) != sid_ndim or len(chunk_b) != sid_ndim:
-            raise ArrayError(
-                f"chunk coords arity mismatch in cross_chunk_links/{format_delta(delta)}: "
-                f"sid_ndim={sid_ndim}, got len(a)={len(chunk_a)}, len(b)={len(chunk_b)}"
-            )
-        flat.extend(chunk_a)
-        flat.append(vi_a)
-        flat.extend(chunk_b)
-        flat.append(vi_b)
+    for rec in normalised:
+        for chunk, vi in rec:
+            if len(chunk) != sid_ndim:
+                raise ArrayError(
+                    f"chunk coords arity mismatch in cross_chunk_links/"
+                    f"{format_delta(delta)}: sid_ndim={sid_ndim}, "
+                    f"got len(chunk)={len(chunk)}"
+                )
+            flat.extend(int(c) for c in chunk)
+            flat.append(int(vi))
 
     arr = np.array(flat, dtype=np.int64)
     level_group.write_bytes(full_name, "data", arr.tobytes())
     level_group.write_array_meta(full_name, {
         "zv_array": "cross_chunk_links",
-        "num_links": len(links),
+        "num_links": len(normalised),
         "sid_ndim": sid_ndim,
         "level_delta": int(delta),
+        "link_width": int(link_width),
     })
 
 
@@ -735,36 +740,6 @@ def write_cross_chunk_link_attributes(
         "level_delta": int(delta),
         "num_links": int(num_links),
         "shape": list(attr_data.shape),
-    })
-
-
-def write_metanode_children(
-    level_group: FsGroup,
-    children: dict[int, list[VertexGroupRef]],
-    sid_ndim: int,
-) -> None:
-    """Write metanode → child vertex references for drill-down.
-
-    Args:
-        level_group: Resolution level group.
-        children: ``{metanode_id: [(chunk_coords, vertex_index), ...], ...}``.
-        sid_ndim: Number of spatial index dimensions.
-    """
-    if not children:
-        return
-
-    max_id = max(children.keys())
-    child_list: list[list[tuple[tuple[int, ...], int]]] = []
-    for mid in range(max_id + 1):
-        child_list.append(children.get(mid, []))
-
-    raw_bytes, offsets = encode_object_index(child_list, sid_ndim)
-    level_group.write_bytes(METANODE_CHILDREN, "data", raw_bytes)
-    level_group.write_bytes(METANODE_CHILDREN, "offsets", offsets.tobytes())
-    level_group.write_array_meta(METANODE_CHILDREN, {
-        "zv_array": "metanode_children",
-        "num_metanodes": max_id + 1,
-        "sid_ndim": sid_ndim,
     })
 
 
@@ -881,16 +856,7 @@ def read_chunk_links(
             f"Cannot read links chunk {key} (delta={format_delta(delta)}): {e}"
         ) from e
 
-    # ``vertex_group_offsets`` only paths link offsets for delta=0;
-    # cross-level arrays write one link group per chunk, so the group
-    # offset table is trivially [0] (single group spanning the whole
-    # chunk blob).
-    if delta == 0:
-        link_offsets = _read_link_offsets(level_group, chunk_coords)
-    else:
-        link_offsets = np.array([0], dtype=np.int64)
-
-    return decode_ragged_ints(raw, link_offsets, dtype, ncols=link_width)
+    return decode_ragged_blob(raw, dtype, ncols=link_width)
 
 
 def read_chunk_attributes(
@@ -899,15 +865,29 @@ def read_chunk_attributes(
     chunk_coords: ChunkCoords,
     dtype: np.dtype | str = np.float32,
     ncols: int = 1,
+    *,
+    vert_dtype: np.dtype | str | None = None,
+    vert_ndim: int | None = None,
 ) -> list[npt.NDArray]:
     """Read vertex attribute data for a chunk.
+
+    Per-group byte offsets are derived from ``vertex_group_offsets``:
+    group ``k`` has ``n_k = (vert_offsets[k+1] - vert_offsets[k]) /
+    (vert_dtype.itemsize * vert_ndim)`` vertices, so its attribute
+    byte offset is ``cumsum(n_k) * dtype.itemsize * ncols``.
 
     Args:
         level_group: Resolution level group.
         attr_name: Attribute name.
         chunk_coords: Spatial chunk coordinates.
-        dtype: Numpy dtype.
+        dtype: Numpy dtype of the attribute.
         ncols: Number of columns (channels). Use 1 for scalars.
+        vert_dtype: Vertex dtype (needed to derive per-group sizes).
+            When ``None`` (default) it is read from the ``vertices/``
+            array metadata.
+        vert_ndim: Vertex coordinate dimensionality.  When ``None``
+            (default) it is read from root metadata via NGFF axes; on
+            failure falls back to 3.
 
     Returns:
         List of arrays aligned with vertex groups.
@@ -916,6 +896,17 @@ def read_chunk_attributes(
     dtype = np.dtype(dtype)
     full_name = f"{ATTRIBUTES}/{attr_name}"
 
+    if vert_dtype is None:
+        try:
+            vmeta = level_group.read_array_meta(VERTICES)
+            vert_dtype = np.dtype(vmeta.get("dtype", "float32"))
+        except Exception:
+            vert_dtype = np.dtype(np.float32)
+    else:
+        vert_dtype = np.dtype(vert_dtype)
+    if vert_ndim is None:
+        vert_ndim = _infer_vert_ndim(level_group)
+
     try:
         raw = level_group.read_bytes(full_name, key)
     except Exception as e:
@@ -923,13 +914,74 @@ def read_chunk_attributes(
             f"Cannot read attribute '{attr_name}' chunk {key}: {e}"
         ) from e
 
-    try:
-        raw_offsets = level_group.read_bytes(full_name, key + "_offsets")
-        attr_offsets = np.frombuffer(raw_offsets, dtype=np.int64)
-    except Exception:
-        attr_offsets = np.array([0], dtype=np.int64)
-
+    attr_offsets = _derive_attribute_offsets(
+        level_group, chunk_coords,
+        vert_dtype=vert_dtype, vert_ndim=vert_ndim,
+        attr_dtype=dtype, attr_ncols=ncols,
+        total_attr_bytes=len(raw),
+    )
     return decode_vertex_groups(raw, attr_offsets, dtype, ncols)
+
+
+def _infer_vert_ndim(level_group: FsGroup) -> int:
+    """Best-effort lookup of the spatial-index dimensionality.
+
+    Reads NGFF ``multiscales[0].axes`` length from root attrs.  Falls
+    back to 3 when unavailable.
+    """
+    try:
+        # Level groups don't carry root attrs; walk up to root via the
+        # backend.  Most levels have an ``_backend`` handle that owns
+        # the root path.
+        from zarr_vectors.core.group import Group
+        root_handle = Group._from_backend(level_group._backend, "")
+        ms = root_handle.attrs.to_dict().get("multiscales") or []
+        if ms and isinstance(ms, list):
+            axes = ms[0].get("axes") or []
+            if axes:
+                return len(axes)
+    except Exception:
+        pass
+    return 3
+
+
+def _derive_attribute_offsets(
+    level_group: FsGroup,
+    chunk_coords: ChunkCoords,
+    *,
+    vert_dtype: np.dtype,
+    vert_ndim: int,
+    attr_dtype: np.dtype,
+    attr_ncols: int,
+    total_attr_bytes: int,
+) -> npt.NDArray[np.int64]:
+    """Compute per-group attribute byte offsets from vertex offsets.
+
+    Attribute groups align 1:1 with vertex groups.  The k-th vertex
+    group spans ``vert_offsets[k+1] - vert_offsets[k]`` bytes of
+    vertex data, which corresponds to ``n_k`` vertices (and therefore
+    ``n_k`` attribute rows).
+    """
+    vert_offsets = _read_vertex_offsets(level_group, chunk_coords)
+    if len(vert_offsets) == 0:
+        return np.empty(0, dtype=np.int64)
+    vert_row_size = vert_dtype.itemsize * vert_ndim
+    if vert_row_size <= 0:
+        return np.empty(0, dtype=np.int64)
+    # Vertex byte size per group → vertex count per group.
+    key = _chunk_key(chunk_coords)
+    vert_total = len(level_group.read_bytes(VERTICES, key))
+    ends = np.empty_like(vert_offsets)
+    if len(vert_offsets) > 1:
+        ends[:-1] = vert_offsets[1:]
+    ends[-1] = vert_total
+    n_per_group = (ends - vert_offsets) // vert_row_size
+    attr_row_size = attr_dtype.itemsize * attr_ncols
+    attr_byte_lengths = n_per_group.astype(np.int64) * int(attr_row_size)
+    attr_offsets = np.empty_like(attr_byte_lengths)
+    attr_offsets[0] = 0
+    np.cumsum(attr_byte_lengths[:-1], out=attr_offsets[1:])
+    return attr_offsets
 
 
 def read_object_manifest(
@@ -938,8 +990,6 @@ def read_object_manifest(
 ) -> ObjectManifest:
     """Read the ordered vertex group reference list for one object.
 
-    Folds pending sidecars on read.
-
     Args:
         level_group: Resolution level group.
         object_id: Object ID.
@@ -947,39 +997,27 @@ def read_object_manifest(
     Returns:
         List of ``(chunk_coords, vg_index)`` tuples.
     """
-    # Cheap path when no pending sidecars exist — preserve the original
-    # bounds check / error semantics.
-    pending_batches = _list_pending_batches(level_group)
     meta = level_group.read_array_meta(OBJECT_INDEX)
     sid_ndim = meta["sid_ndim"]
     num_objects = meta["num_objects"]
 
-    if not pending_batches:
-        if object_id < 0 or object_id >= num_objects:
-            raise ArrayError(
-                f"Object ID {object_id} out of range [0, {num_objects})"
-            )
-        raw = level_group.read_bytes(OBJECT_INDEX, "data")
-        offsets = np.frombuffer(
-            level_group.read_bytes(OBJECT_INDEX, "offsets"),
-            dtype=np.int64,
-        )
-        all_manifests = decode_object_index(raw, offsets, sid_ndim)
-        return all_manifests[object_id]
-
-    # With pending: union and look up.
-    merged = read_all_object_manifests(level_group)
-    if object_id < 0 or object_id >= len(merged):
+    if object_id < 0 or object_id >= num_objects:
         raise ArrayError(
-            f"Object ID {object_id} out of range [0, {len(merged)})"
+            f"Object ID {object_id} out of range [0, {num_objects})"
         )
-    return merged[object_id]
+    raw = level_group.read_bytes(OBJECT_INDEX, "data")
+    offsets = np.frombuffer(
+        level_group.read_bytes(OBJECT_INDEX, "offsets"),
+        dtype=np.int64,
+    )
+    all_manifests = decode_object_index(raw, offsets, sid_ndim)
+    return all_manifests[object_id]
 
 
 def read_all_object_manifests(
     level_group: FsGroup,
 ) -> list[ObjectManifest]:
-    """Read all object manifests at once, folding any pending sidecars.
+    """Read all object manifests at once.
 
     Returns:
         List indexed by object_id, each a list of ``(chunk_coords, vg_index)``.
@@ -992,241 +1030,7 @@ def read_all_object_manifests(
         level_group.read_bytes(OBJECT_INDEX, "offsets"),
         dtype=np.int64,
     )
-    main = list(decode_object_index(raw, offsets, sid_ndim))
-
-    # Fold pending sidecars in batch-id order (later batches overwrite
-    # earlier ones for the same oid).  Capability:
-    # ``CAP_OBJECT_INDEX_PENDING``; absence means no sidecars to merge.
-    pending = read_object_index_pending(level_group)
-    for oid, manifest in pending:
-        while oid >= len(main):
-            main.append([])
-        main[oid] = manifest
-    return main
-
-
-# ---------------- pending sidecars (incremental append) -------------------
-
-
-_PENDING_PREFIX = f"{OBJECT_INDEX}/pending"
-
-
-def _list_pending_batches(level_group: FsGroup) -> list[int]:
-    """List the batch IDs of pending object_index sidecars in order."""
-    if not level_group.array_exists(_PENDING_PREFIX):
-        return []
-    try:
-        pending_grp = level_group[_PENDING_PREFIX]
-    except Exception:
-        return []
-    batches: list[int] = []
-    for name in pending_grp:
-        try:
-            batches.append(int(name))
-        except ValueError:
-            continue
-    return sorted(batches)
-
-
-def next_pending_batch_id(level_group: FsGroup) -> int:
-    """Return the next free batch ID for a pending object_index sidecar."""
-    existing = _list_pending_batches(level_group)
-    return (existing[-1] + 1) if existing else 0
-
-
-def write_object_index_pending(
-    level_group: FsGroup,
-    manifests: dict[int, ObjectManifest],
-    sid_ndim: int,
-    *,
-    batch_id: int | None = None,
-) -> int:
-    """Write a pending object_index sidecar batch.
-
-    Pending sidecars are union-folded by :func:`read_all_object_manifests`
-    and collapsed into the main array by :func:`compact_object_index`.
-
-    Args:
-        level_group: Resolution level group.
-        manifests: ``{object_id: [(chunk_coords, vg_index), ...]}`` —
-            sparse; only the OIDs in the dict are written.
-        sid_ndim: Number of spatial index dimensions (matches the
-            main index's ``sid_ndim``).
-        batch_id: Force a specific batch id.  ``None`` picks the next
-            unused id.
-
-    Returns:
-        The batch id written.
-    """
-    if not manifests:
-        return -1
-    if batch_id is None:
-        batch_id = next_pending_batch_id(level_group)
-
-    oids = sorted(manifests.keys())
-    sparse_list = [manifests[oid] for oid in oids]
-    raw_bytes, offsets = encode_object_index(sparse_list, sid_ndim)
-
-    base = f"{_PENDING_PREFIX}/{batch_id}"
-    level_group.write_bytes(base, "oids", np.asarray(oids, dtype=np.int64).tobytes())
-    level_group.write_bytes(base, "data", raw_bytes)
-    level_group.write_bytes(base, "offsets", offsets.tobytes())
-    level_group.write_array_meta(base, {
-        "zv_array": "object_index_pending",
-        "batch_id": batch_id,
-        "num_objects": len(oids),
-        "sid_ndim": sid_ndim,
-    })
-    return batch_id
-
-
-def read_object_index_pending(
-    level_group: FsGroup,
-) -> list[tuple[int, ObjectManifest]]:
-    """Read every pending sidecar in ascending batch order.
-
-    Returns:
-        Flat list of ``(object_id, manifest)`` pairs.  Same ``oid`` may
-        appear multiple times when the user committed several batches
-        for the same object — caller decides resolution policy (the
-        standard reader uses last-write-wins).
-    """
-    batches = _list_pending_batches(level_group)
-    out: list[tuple[int, ObjectManifest]] = []
-    for batch_id in batches:
-        base = f"{_PENDING_PREFIX}/{batch_id}"
-        try:
-            meta = level_group.read_array_meta(base)
-        except Exception:
-            continue
-        sid_ndim = int(meta["sid_ndim"])
-        oids = np.frombuffer(
-            level_group.read_bytes(base, "oids"), dtype=np.int64,
-        )
-        raw = level_group.read_bytes(base, "data")
-        offsets = np.frombuffer(
-            level_group.read_bytes(base, "offsets"), dtype=np.int64,
-        )
-        decoded = decode_object_index(raw, offsets, sid_ndim)
-        for oid, manifest in zip(oids.tolist(), decoded):
-            out.append((int(oid), manifest))
-    return out
-
-
-def write_cross_chunk_faces(
-    level_group: FsGroup,
-    cross_faces: list[list[tuple[ChunkCoords, int]]],
-    sid_ndim: int,
-) -> None:
-    """Persist face-identity for faces that span multiple chunks.
-
-    Each face is a list of ``L`` ``(chunk_coords, local_vertex_index)``
-    records — ``L = 3`` for triangles, ``L = 4`` for quads, etc.  The
-    on-disk record packs ``ndim + 2`` int64 values: the chunk
-    coordinates, a ``vg_idx`` slot (always 0 today for mesh writers
-    that emit one vertex-group per chunk), and the in-group local
-    vertex index.
-
-    Writers that don't care about face identity can leave the
-    edge-pair decomposition in :data:`CROSS_CHUNK_LINKS` and skip this
-    array entirely — readers that ignore the new array still get
-    connectivity through the existing edges.
-
-    Capability token: :data:`CAP_CROSS_CHUNK_FACES`.
-    """
-    if not cross_faces:
-        return
-    record_size = sid_ndim + 2
-    offsets_list: list[int] = [0]
-    flat: list[int] = []
-    for face in cross_faces:
-        for cc, local_idx in face:
-            if len(cc) != sid_ndim:
-                raise ArrayError(
-                    f"chunk_coords length {len(cc)} != sid_ndim {sid_ndim}"
-                )
-            flat.extend(int(c) for c in cc)
-            flat.append(0)  # vg_idx (forward-compat slot)
-            flat.append(int(local_idx))
-        offsets_list.append(len(flat) // record_size)
-    data = np.asarray(flat, dtype=np.int64)
-    offsets = np.asarray(offsets_list, dtype=np.int64)
-    level_group.write_bytes(CROSS_CHUNK_FACES, "data", data.tobytes())
-    level_group.write_bytes(CROSS_CHUNK_FACES, "offsets", offsets.tobytes())
-    level_group.write_array_meta(CROSS_CHUNK_FACES, {
-        "zv_array": "cross_chunk_faces",
-        "num_faces": len(cross_faces),
-        "sid_ndim": sid_ndim,
-        "record_size": record_size,
-    })
-
-
-def read_cross_chunk_faces(
-    level_group: FsGroup,
-) -> list[list[tuple[ChunkCoords, int]]]:
-    """Read face-identity records for cross-chunk faces.
-
-    Returns ``[]`` when the array is absent (older 0.2 stores or 0.3
-    stores without the :data:`CAP_CROSS_CHUNK_FACES` capability).
-    """
-    if not level_group.array_exists(CROSS_CHUNK_FACES):
-        return []
-    try:
-        meta = level_group.read_array_meta(CROSS_CHUNK_FACES)
-    except Exception:
-        return []
-    sid_ndim = int(meta["sid_ndim"])
-    record_size = int(meta.get("record_size", sid_ndim + 2))
-    data = np.frombuffer(
-        level_group.read_bytes(CROSS_CHUNK_FACES, "data"), dtype=np.int64,
-    )
-    offsets = np.frombuffer(
-        level_group.read_bytes(CROSS_CHUNK_FACES, "offsets"), dtype=np.int64,
-    )
-    n_faces = len(offsets) - 1
-    out: list[list[tuple[ChunkCoords, int]]] = []
-    for i in range(n_faces):
-        start, end = int(offsets[i]), int(offsets[i + 1])
-        face: list[tuple[ChunkCoords, int]] = []
-        for r in range(start, end):
-            record = data[r * record_size:(r + 1) * record_size]
-            cc = tuple(int(x) for x in record[:sid_ndim])
-            local_idx = int(record[sid_ndim + 1])
-            face.append((cc, local_idx))
-        out.append(face)
-    return out
-
-
-def compact_object_index(level_group: FsGroup) -> dict[str, int]:
-    """Fold every pending object_index sidecar into the main array.
-
-    Reads the main index + all pending batches, applies last-write-wins
-    on duplicate oids, rewrites :data:`OBJECT_INDEX`, and deletes the
-    pending sidecars.
-
-    Args:
-        level_group: Resolution level group.
-
-    Returns:
-        Summary dict with ``batches_folded`` and ``num_objects``.
-    """
-    if not level_group.array_exists(_PENDING_PREFIX):
-        return {"batches_folded": 0, "num_objects": 0}
-    batches = _list_pending_batches(level_group)
-    if not batches:
-        return {"batches_folded": 0, "num_objects": 0}
-
-    merged = read_all_object_manifests(level_group)  # already folds pending
-    main_meta = level_group.read_array_meta(OBJECT_INDEX)
-    sid_ndim = int(main_meta["sid_ndim"])
-
-    manifests = {oid: m for oid, m in enumerate(merged)}
-    write_object_index(level_group, manifests, sid_ndim=sid_ndim)
-
-    # Remove pending tree.
-    level_group.delete_subtree(_PENDING_PREFIX)
-
-    return {"batches_folded": len(batches), "num_objects": len(merged)}
+    return list(decode_object_index(raw, offsets, sid_ndim))
 
 
 def read_object_vertices(
@@ -1355,18 +1159,20 @@ def read_cross_chunk_links(
     level_group: FsGroup,
     *,
     delta: int = 0,
-) -> list[CrossChunkLink]:
-    """Read all cross-chunk links from ``cross_chunk_links/<delta>/data``.
+) -> list[tuple[tuple[ChunkCoords, int], ...]]:
+    """Read all cross-chunk link records from ``cross_chunk_links/<delta>/data``.
 
-    Endpoint A is at the owning resolution level; endpoint B is at
-    ``this_level + delta``.
+    Each record is a list of ``(chunk_coords, vertex_idx)`` endpoints.
+    Endpoint 0 lives at the owning resolution level; endpoints k (k>0)
+    live at ``this_level + delta``.
 
-    Returns ``[]`` when the ``<delta>`` array does not exist or was
-    created without any links written to it (a placeholder meta block
-    with no ``num_links`` / ``sid_ndim`` / data blob).
+    Returns ``[]`` when the ``<delta>`` array does not exist or has no
+    records.
 
     Returns:
-        List of ``((chunk_A, vertex_A), (chunk_B, vertex_B))`` tuples.
+        List of records; each record has length ``link_width``.  For
+        the common ``link_width=2`` edge case callers can unpack each
+        record as ``((chunk_A, vi_A), (chunk_B, vi_B))``.
     """
     full_name = cross_chunk_links_path(delta)
     if not level_group.array_exists(full_name):
@@ -1375,13 +1181,11 @@ def read_cross_chunk_links(
         meta = level_group.read_array_meta(full_name)
     except Exception:
         return []
-    # The create_ helper writes a placeholder meta block (no num_links /
-    # sid_ndim) when the array is materialized empty.  Treat that as a
-    # zero-link read.
     if "num_links" not in meta or "sid_ndim" not in meta:
         return []
     num_links = meta["num_links"]
     sid_ndim = meta["sid_ndim"]
+    link_width = int(meta.get("link_width", 2))
     if num_links == 0:
         return []
     if not level_group.chunk_exists(full_name, "data"):
@@ -1390,18 +1194,20 @@ def read_cross_chunk_links(
     raw = level_group.read_bytes(full_name, "data")
     arr = np.frombuffer(raw, dtype=np.int64)
 
-    entry_len = 2 * (sid_ndim + 1)
-    half = sid_ndim + 1
-    links: list[CrossChunkLink] = []
+    endpoint_len = sid_ndim + 1
+    record_len = link_width * endpoint_len
+    records: list[tuple[tuple[ChunkCoords, int], ...]] = []
 
-    for i in range(0, len(arr), entry_len):
-        chunk_a = tuple(int(x) for x in arr[i : i + sid_ndim])
-        vi_a = int(arr[i + sid_ndim])
-        chunk_b = tuple(int(x) for x in arr[i + half : i + half + sid_ndim])
-        vi_b = int(arr[i + half + sid_ndim])
-        links.append(((chunk_a, vi_a), (chunk_b, vi_b)))
+    for i in range(0, len(arr), record_len):
+        endpoints: list[tuple[ChunkCoords, int]] = []
+        for j in range(link_width):
+            base = i + j * endpoint_len
+            chunk = tuple(int(x) for x in arr[base : base + sid_ndim])
+            vi = int(arr[base + sid_ndim])
+            endpoints.append((chunk, vi))
+        records.append(tuple(endpoints))
 
-    return links
+    return records
 
 
 def read_cross_chunk_link_attributes(
@@ -1425,42 +1231,6 @@ def read_cross_chunk_link_attributes(
     shape = tuple(meta.get("shape", [meta["num_links"]]))
     raw = level_group.read_bytes(full_name, "data")
     return np.frombuffer(raw, dtype=dtype).reshape(shape).copy()
-
-
-def read_metanode_children(
-    level_group: FsGroup,
-    metanode_id: int | None = None,
-) -> dict[int, list[VertexGroupRef]] | list[VertexGroupRef]:
-    """Read metanode children references.
-
-    Args:
-        level_group: Resolution level group.
-        metanode_id: If given, return children for this metanode only.
-            If None, return all as a dict.
-
-    Returns:
-        If metanode_id given: list of ``(chunk_coords, vertex_index)``.
-        If None: dict mapping metanode_id → list of refs.
-    """
-    meta = level_group.read_array_meta(METANODE_CHILDREN)
-    sid_ndim = meta["sid_ndim"]
-
-    raw = level_group.read_bytes(METANODE_CHILDREN, "data")
-    offsets = np.frombuffer(
-        level_group.read_bytes(METANODE_CHILDREN, "offsets"),
-        dtype=np.int64,
-    )
-
-    all_children = decode_object_index(raw, offsets, sid_ndim)
-
-    if metanode_id is not None:
-        if metanode_id < 0 or metanode_id >= len(all_children):
-            raise ArrayError(
-                f"Metanode ID {metanode_id} out of range [0, {len(all_children)})"
-            )
-        return all_children[metanode_id]
-
-    return {i: c for i, c in enumerate(all_children)}
 
 
 # ===================================================================
@@ -1617,53 +1387,9 @@ def _read_vertex_offsets(
     level_group: FsGroup,
     chunk_coords: ChunkCoords,
 ) -> npt.NDArray[np.int64]:
-    """Read the vertex byte offsets from vertex_group_offsets for a chunk."""
+    """Read the ``(K,)`` int64 vertex byte offsets for a chunk."""
     key = _chunk_key(chunk_coords)
     raw = level_group.read_bytes(VERTEX_GROUP_OFFSETS, key)
-    vertex_offsets, _ = decode_paired_offsets(raw)
-    return vertex_offsets
+    return decode_vertex_offsets(raw)
 
 
-def _read_link_offsets(
-    level_group: FsGroup,
-    chunk_coords: ChunkCoords,
-) -> npt.NDArray[np.int64]:
-    """Read the link byte offsets from vertex_group_offsets for a chunk."""
-    key = _chunk_key(chunk_coords)
-    raw = level_group.read_bytes(VERTEX_GROUP_OFFSETS, key)
-    _, link_offsets = decode_paired_offsets(raw)
-    return link_offsets
-
-
-def _vertex_group_counts(
-    level_group: FsGroup,
-    chunk_coords: ChunkCoords,
-    vert_dtype: np.dtype,
-) -> list[int]:
-    """Compute vertex count per group from offsets and vertex data size.
-
-    Returns list of vertex counts, one per group.
-    """
-    key = _chunk_key(chunk_coords)
-    raw = level_group.read_bytes(VERTICES, key)
-    total_bytes = len(raw)
-    offsets = _read_vertex_offsets(level_group, chunk_coords)
-
-    # Read ndim from vertex metadata
-    try:
-        vmeta = level_group.read_array_meta(VERTICES)
-        # We don't store ndim explicitly, so infer from first group
-    except Exception:
-        pass
-
-    counts: list[int] = []
-    for i in range(len(offsets)):
-        start = int(offsets[i])
-        end = int(offsets[i + 1]) if i + 1 < len(offsets) else total_bytes
-        nbytes = end - start
-        # Each vertex is vert_dtype.itemsize * ndim bytes
-        # But we don't know ndim here — just count raw elements
-        n_elements = nbytes // vert_dtype.itemsize
-        counts.append(n_elements)
-
-    return counts

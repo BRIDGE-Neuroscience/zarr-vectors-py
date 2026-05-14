@@ -100,21 +100,20 @@ def write_parametric_objects(
 
     # Open or create store
     if create_new_store:
-        from zarr_vectors.core.metadata import RootMetadata
-        kw = store_kwargs or {}
-        if "spatial_index_dims" not in kw:
-            kw["spatial_index_dims"] = [
-                {"name": "x", "type": "space"},
-                {"name": "y", "type": "space"},
-                {"name": "z", "type": "space"},
-            ]
-        if "chunk_shape" not in kw:
-            kw["chunk_shape"] = (1000.0, 1000.0, 1000.0)
-        if "bounds" not in kw:
-            kw["bounds"] = ([0, 0, 0], [1000, 1000, 1000])
-        if "geometry_types" not in kw:
-            kw["geometry_types"] = ["point_cloud"]
-        root = create_store(store_path, RootMetadata(**kw), backend=backend)
+        kw = dict(store_kwargs or {})
+        # Allow callers that still pass ``spatial_index_dims`` (the
+        # in-memory RootMetadata field name) — translate to ``axes``.
+        if "spatial_index_dims" in kw and "axes" not in kw:
+            kw["axes"] = kw.pop("spatial_index_dims")
+        kw.setdefault("axes", [
+            {"name": "x", "type": "space"},
+            {"name": "y", "type": "space"},
+            {"name": "z", "type": "space"},
+        ])
+        kw.setdefault("chunk_shape", (1000.0, 1000.0, 1000.0))
+        kw.setdefault("bounds", ([0, 0, 0], [1000, 1000, 1000]))
+        kw.setdefault("geometry_types", ["point_cloud"])
+        root = create_store(store_path, backend=backend, **kw)
     else:
         root = open_store(store_path, mode="r+", backend=backend)
 

@@ -126,28 +126,30 @@ chunk at the **owning level**, and column 1 is a local vertex index in
 the **same chunk key** at level `owning_level + N`. The reader doesn't
 need any cross-chunk-coords information — both sides share `<chunk_key>`.
 
-**Paired vertex-group offsets:** for `delta == 0` only, the byte
-offset of each link group is paired into the matching
-`vertex_group_offsets/<chunk_key>` table so a reader can fetch one
-vertex group's edges without rescanning the chunk. For `delta != 0`
-the source vertex groups and link groups belong to different levels,
-so the pairing is meaningless and the writer skips it. See the
-guardrail in
-[`write_chunk_links`](../../../zarr_vectors/core/arrays.py).
+**Self-describing blob.** Each `links/<delta>/<chunk_key>` file is a
+self-describing ragged blob: an int64 header with `K` followed by the
+`K` per-group byte offsets, then the concatenated link bytes. Readers
+recover the per-vertex-group partition without consulting any sibling
+table.
 
 ### `cross_chunk_links/<delta>/data` — global flat blob
 
-Each link is `2 * (sid_ndim + 1)` int64s laid out as
+Each record is `link_width * (sid_ndim + 1)` int64s laid out as
+`link_width` back-to-back `(chunk_coords, vertex_idx)` endpoints:
 
 ```
-[chunk_a_0, ..., chunk_a_{ndim-1}, vi_a,
- chunk_b_0, ..., chunk_b_{ndim-1}, vi_b]
+[chunk_0_0, ..., chunk_0_{ndim-1}, vi_0,
+ chunk_1_0, ..., chunk_1_{ndim-1}, vi_1,
+ ...
+ chunk_{L-1}_0, ..., vi_{L-1}]
 ```
 
-— i.e. the two endpoints written back-to-back. `chunk_a` is a chunk
-coordinate at the **owning level**; `chunk_b` is a chunk coordinate at
-the **target level** (`owning_level + level_delta`). `vi_a` and `vi_b`
-are local vertex indices within their respective chunks.
+`link_width=2` (the default) encodes a classic cross-chunk edge;
+`link_width=3` encodes a triangle face spanning chunks (used by mesh
+writers); `link_width=1` encodes a single parent→child reference for
+pyramid metanode drill-down. Endpoint 0 lives at the **owning level**;
+endpoints 1..L-1 live at the **target level** (`owning_level +
+level_delta`).
 
 **`.zattrs` schema** (see
 [`zarr_vectors/core/arrays.py:write_cross_chunk_links`](../../../zarr_vectors/core/arrays.py)):
@@ -157,7 +159,8 @@ are local vertex indices within their respective chunks.
   "zv_array":    "cross_chunk_links",
   "num_links":   12,
   "sid_ndim":    3,
-  "level_delta": 1
+  "level_delta": 1,
+  "link_width":  2
 }
 ```
 
@@ -233,8 +236,9 @@ chunk → bucket into per-chunk `(M_local, link_width)` rows for
 [`_write_cross_level_edges`](../../../zarr_vectors/multiresolution/coarsen.py)
 during pyramid construction. For each adjacent (fine, coarse) pair,
 every fine vertex has exactly one trivial edge to its coarse parent
-metanode (the parent map is reconstructed from `metanode_children`).
-The edges are then partitioned via
+metanode (the parent map is recovered from the coarse level's own
+`cross_chunk_links/<delta=-1>/` records). The edges are then
+partitioned via
 [`partition_cross_level_edges`](../../../zarr_vectors/spatial/boundary.py):
 chunk-aligned edges (source chunk_key == target chunk_key when
 re-evaluated against the coarser grid) become rows in

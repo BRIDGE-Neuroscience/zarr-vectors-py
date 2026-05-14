@@ -15,7 +15,6 @@ from zarr_vectors.constants import (
     GROUPINGS_ATTRIBUTES,
     LINK_ATTRIBUTES,
     LINKS,
-    METANODE_CHILDREN,
     OBJECT_ATTRIBUTES,
     OBJECT_INDEX,
     VERTEX_GROUP_OFFSETS,
@@ -44,7 +43,7 @@ def get_default_compressor(array_type: str) -> dict[str, object]:
         }
 
     # Offsets are monotonically increasing integers — delta + compress
-    if array_type in (VERTEX_GROUP_OFFSETS, OBJECT_INDEX, METANODE_CHILDREN):
+    if array_type in (VERTEX_GROUP_OFFSETS, OBJECT_INDEX):
         return {
             "id": "blosc",
             "cname": "zstd",

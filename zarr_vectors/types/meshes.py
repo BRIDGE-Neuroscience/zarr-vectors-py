@@ -37,13 +37,11 @@ from zarr_vectors.core.arrays import (
     resolve_chunk_keys,
     read_chunk_links,
     read_chunk_vertices,
-    read_cross_chunk_faces,
     read_cross_chunk_links,
     read_object_vertices,
     write_chunk_attributes,
     write_chunk_links,
     write_chunk_vertices,
-    write_cross_chunk_faces,
     write_cross_chunk_links,
     write_object_attributes,
     write_object_index,
@@ -84,17 +82,6 @@ from zarr_vectors.typing import (
     ChunkShape,
     ObjectManifest,
 )
-
-
-def _stamp_root_capability(root_group, cap: str) -> None:
-    """Add ``cap`` to root metadata's ``format_capabilities`` (idempotent)."""
-    attrs = root_group.attrs.to_dict()
-    zv = attrs.get("zarr_vectors", {})
-    caps = list(zv.get("format_capabilities", []))
-    if cap not in caps:
-        caps.append(cap)
-        zv["format_capabilities"] = caps
-        root_group.attrs.update({"zarr_vectors": zv})
 
 
 def write_mesh(
@@ -306,31 +293,26 @@ def write_mesh(
                     level_group, chunk_coords, [intra_faces[chunk_coords]], delta=0,
                 )
 
-    # Write cross-chunk faces
-    # Convert cross-face refs to cross_chunk_links format
-    # Each cross face is a list of (chunk, local_idx) tuples
-    cross_links: list[Any] = []
-    for face_ref in cross_faces:
-        # Store as pairs: each consecutive pair of face vertices
-        for i in range(len(face_ref) - 1):
-            cross_links.append((face_ref[i], face_ref[i + 1]))
-        # Close the face: last vertex to first
-        if len(face_ref) >= 3:
-            cross_links.append((face_ref[-1], face_ref[0]))
-
+    # Write cross-chunk faces as variable-width records under
+    # ``cross_chunk_links/<delta=0>/``.  Each record is a list of L
+    # ``(chunk_coords, local_vertex_idx)`` endpoints where L is the
+    # face arity (3 for triangles).  Faces of different arity are
+    # rejected; meshes are uniform-arity by construction.
     idx_ndim = ndim + 1 if vertex_attr_bins is not None else ndim
-    if cross_links:
-        write_cross_chunk_links(
-            level_group, cross_links, sid_ndim=idx_ndim, delta=0,
-        )
-
-    # Tier C: persist cross-chunk face identity alongside the edge-pair
-    # fallback.  Old readers that ignore the new array still see
-    # connectivity via the existing cross_chunk_links; new readers can
-    # reconstruct boundary faces exactly.
     if cross_faces:
-        write_cross_chunk_faces(level_group, cross_faces, sid_ndim=idx_ndim)
-        _stamp_root_capability(root, "cross_chunk_faces")
+        face_arities = {len(f) for f in cross_faces}
+        if len(face_arities) != 1:
+            raise ArrayError(
+                f"cross-chunk faces have inconsistent arities {face_arities}; "
+                "meshes must be uniform-arity"
+            )
+        write_cross_chunk_links(
+            level_group,
+            [list(face) for face in cross_faces],
+            sid_ndim=idx_ndim,
+            delta=0,
+            link_width=face_arities.pop(),
+        )
 
     # Write object index
     write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
@@ -471,13 +453,14 @@ def read_mesh(
         except ArrayError:
             pass
 
-    # Tier C: emit cross-chunk faces using preserved identity records.
-    # Map each (chunk, local_idx) record into the global vertex index
-    # via ``chunk_offsets`` (built from the chunks we just read).  When
-    # the array is absent (0.2 stores or no boundary faces), reads are
-    # untouched.
-    cross_face_records = read_cross_chunk_faces(level_group)
+    # Cross-chunk faces are stored as variable-width records under
+    # ``cross_chunk_links/<delta=0>/`` (link_width = face arity).  Map
+    # each (chunk, local_idx) endpoint into the global vertex index
+    # via ``chunk_offsets`` built above.
+    cross_face_records = read_cross_chunk_links(level_group, delta=0)
     for face in cross_face_records:
+        if len(face) != link_width:
+            continue  # not a face record (e.g. edge-arity, ignore)
         vertex_ids: list[int] = []
         for cc, local_idx in face:
             if cc not in chunk_offsets:
@@ -552,15 +535,14 @@ def _write_draco_chunk(
 
     # Store as raw bytes in the vertices chunk
     from zarr_vectors.core.arrays import _chunk_key
-    from zarr_vectors.encoding.ragged import encode_paired_offsets
+    from zarr_vectors.encoding.ragged import encode_vertex_offsets
 
     key = _chunk_key(chunk_coords)
     level_group.write_bytes("vertices", key, blob)
 
     # Single vertex group spanning whole chunk
     v_off = np.array([0], dtype=np.int64)
-    l_off = np.array([-1], dtype=np.int64)
     level_group.write_bytes(
         "vertex_group_offsets", key,
-        encode_paired_offsets(v_off, l_off),
+        encode_vertex_offsets(v_off),
     )

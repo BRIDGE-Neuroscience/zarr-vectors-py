@@ -50,9 +50,9 @@ def test_add_attribute_round_trip(tmp_path):
     _run(go())
 
     out = read_points(str(store), attribute_names=["normal"])
-    assert "normal" in out["attributes"]
+    assert "normal" in out["vertex_attributes"]
     # Data flattens via read_points's ncols=1 path; total count matches.
-    assert out["attributes"]["normal"].size == 200 * 3
+    assert out["vertex_attributes"]["normal"].size == 200 * 3
 
 
 def test_add_attribute_sync_mirror(tmp_path):
@@ -65,7 +65,7 @@ def test_add_attribute_sync_mirror(tmp_path):
         w.add_attribute_sync("intensity", intensities)
 
     out = read_points(str(store), attribute_names=["intensity"])
-    assert out["attributes"]["intensity"].size == 120
+    assert out["vertex_attributes"]["intensity"].size == 120
 
 
 def test_add_attribute_length_mismatch_raises(tmp_path):

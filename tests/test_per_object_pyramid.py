@@ -36,7 +36,7 @@ from zarr_vectors.core.store import (
     read_level_metadata,
     read_root_metadata,
 )
-from zarr_vectors.lazy.store import object_levels, open_zvr
+from zarr_vectors.lazy.store import open_zvr
 from zarr_vectors.multiresolution.coarsen import build_pyramid, coarsen_level
 from zarr_vectors.spatial.chunking import neighbouring_chunk_keys
 from zarr_vectors.types.polylines import write_polylines
@@ -129,7 +129,7 @@ def test_monotone_oid_drop_across_levels(tmp_path):
     assert present_sets[2] <= present_sets[1] <= present_sets[0]
     # Object_levels for any surviving level-2 OID is a contiguous prefix.
     for oid in present_sets[2]:
-        visible = object_levels(zvr, oid)
+        visible = zvr.object_levels(oid)
         assert visible == list(range(max(visible) + 1))
 
 

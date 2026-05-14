@@ -74,7 +74,7 @@ def test_points_attr_chunking_round_trip(tmp_path):
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
 
@@ -101,7 +101,7 @@ def test_points_attr_chunking_full_read_returns_all(tmp_path):
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
     out = read_points(str(store))
@@ -115,7 +115,7 @@ def test_points_attr_filter_selectivity(tmp_path):
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
 
@@ -133,7 +133,7 @@ def test_points_attr_filter_unknown_value_returns_empty(tmp_path):
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
     out = read_points(str(store), attribute_filter={"gene": "ZZZ"})
@@ -156,7 +156,7 @@ def test_points_chunk_by_attribute_rejects_float(tmp_path):
         write_points(
             str(tmp_path / "x.zvr"), pos,
             chunk_shape=(10.0, 10.0, 10.0),
-            attributes={"score": np.random.default_rng(0).uniform(0, 1, 50)},
+            vertex_attributes={"score": np.random.default_rng(0).uniform(0, 1, 50)},
             chunk_by_attribute="score",
         )
 
@@ -176,7 +176,7 @@ def test_points_attribute_filter_mismatched_name_raises(tmp_path):
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
     with pytest.raises(ArrayError, match="does not match"):
@@ -265,7 +265,7 @@ def test_zvr_level_attribute_values(tmp_path):
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
     zvr = open_zvr(str(store))
@@ -282,7 +282,7 @@ def test_zvr_level_read_attribute_chunk(tmp_path):
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
     zvr = open_zvr(str(store))
@@ -297,7 +297,7 @@ def test_zvr_level_read_attribute_chunk_unknown_value(tmp_path):
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
     zvr = open_zvr(str(store))
@@ -327,7 +327,7 @@ def test_lines_attr_chunking_line_attribute_round_trip(tmp_path):
         str(store), eps,
         chunk_shape=(50.0, 50.0, 50.0),
         bin_shape=(50.0, 50.0, 50.0),
-        line_attributes={"cat": cat},
+        object_attributes={"cat": cat},
         chunk_by_attribute="cat",
     )
     lm = read_level_metadata(open_store(str(store)), 0)
@@ -351,7 +351,7 @@ def test_lines_per_endpoint_attribute_must_match_per_line(tmp_path):
         write_lines(
             str(tmp_path / "x.zvr"), eps,
             chunk_shape=(50.0, 50.0, 50.0),
-            attributes={"cat": bad},
+            vertex_attributes={"cat": bad},
             chunk_by_attribute="cat",
         )
 
@@ -392,7 +392,7 @@ def test_graph_attr_chunking_round_trip(tmp_path):
         str(store), pos, edges,
         chunk_shape=(50.0, 50.0, 50.0),
         object_ids=obj_ids,
-        node_attributes={"cell_type": cell_type},
+        vertex_attributes={"cell_type": cell_type},
         chunk_by_attribute="cell_type",
     )
     lm = read_level_metadata(open_store(str(store)), 0)
@@ -417,7 +417,7 @@ def test_graph_attr_chunking_rejects_mixed_object(tmp_path):
             str(tmp_path / "x.zvr"), pos, edges,
             chunk_shape=(50.0, 50.0, 50.0),
             object_ids=obj_ids,
-            node_attributes={"cell_type": cell_type},
+            vertex_attributes={"cell_type": cell_type},
             chunk_by_attribute="cell_type",
         )
 
@@ -434,7 +434,7 @@ def test_graph_attr_chunking_default_object_per_node(tmp_path):
     write_graph(
         str(store), pos, edges,
         chunk_shape=(50.0, 50.0, 50.0),
-        node_attributes={"cell_type": cell_type},
+        vertex_attributes={"cell_type": cell_type},
         chunk_by_attribute="cell_type",
     )
     assert read_graph(str(store), attribute_filter={"cell_type": "A"})["node_count"] == 4

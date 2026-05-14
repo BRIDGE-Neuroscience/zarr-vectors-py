@@ -112,7 +112,7 @@ class ZVRWriter:
             dtype: Override the on-disk dtype (default: ``values.dtype``).
         """
         await self._write_per_vertex_attribute(
-            subpath="attributes", name=name, values=values, dtype=dtype,
+            subpath="vertex_attributes", name=name, values=values, dtype=dtype,
         )
 
     async def add_node_attribute(
@@ -240,8 +240,8 @@ class ZVRWriter:
                 cursor += s
             # If the writer is targeting non-default subpath (e.g.
             # face attributes), patch the array name; otherwise the
-            # standard helper writes under "attributes/".
-            if subpath == "attributes":
+            # standard helper writes under "vertex_attributes/".
+            if subpath == "vertex_attributes":
                 await asyncio.to_thread(
                     write_chunk_attributes,
                     self._group, name, cc, attr_groups, arr.dtype,

@@ -205,7 +205,7 @@ def write_parametric_objects(
                 "shape": list(arr.shape),
             })
 
-    # Write groupings
+    # Write groups
     if groups:
         from zarr_vectors.encoding.ragged import encode_ragged_ints
         max_gid = max(groups.keys())
@@ -214,17 +214,17 @@ def write_parametric_objects(
             for gid in range(max_gid + 1)
         ]
         raw, offsets = encode_ragged_ints(group_list)
-        para.write_bytes("groupings", "data", raw)
-        para.write_bytes("groupings", "offsets", offsets.tobytes())
-        para.write_array_meta("groupings", {
+        para.write_bytes("groups", "data", raw)
+        para.write_bytes("groups", "offsets", offsets.tobytes())
+        para.write_array_meta("groups", {
             "num_groups": max_gid + 1,
         })
 
     if group_attributes:
-        para.require_group("groupings_attributes")
+        para.require_group("group_attributes")
         for attr_name, attr_data in group_attributes.items():
             arr = np.asarray(attr_data)
-            full_name = f"groupings_attributes/{attr_name}"
+            full_name = f"group_attributes/{attr_name}"
             para.write_bytes(full_name, "data", arr.tobytes())
             para.write_array_meta(full_name, {
                 "dtype": str(arr.dtype),

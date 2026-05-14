@@ -24,6 +24,7 @@ from zarr_vectors.constants import (
     GEOM_STREAMLINE,
     LINKS_IMPLICIT_SEQUENTIAL,
     OBJIDX_STANDARD,
+    VERTEX_GROUP_OFFSETS,
     VERTICES,
 )
 from zarr_vectors.core.arrays import (
@@ -511,93 +512,111 @@ def read_polylines(
         except Exception:
             manifests = None
 
-    for oid in object_ids:
-        # ------------------------------------------------------------------
-        # Segment-level crop mode (chunks=).
-        # ------------------------------------------------------------------
-        if chunk_whitelist is not None:
-            if manifests is None or oid >= len(manifests):
+    # Prefetch every vertex chunk (and its offsets sidecar) in one async
+    # gather so the per-object read loop hits the cache instead of
+    # paying one round-trip per chunk.  Cache misses fall through to
+    # the sync path, so this is a perf-only optimisation.
+    chunk_key_strs = [
+        ".".join(str(c) for c in cc)
+        for cc in list_chunk_keys(level_group, VERTICES)
+    ]
+    prefetch_plan: list[tuple[str, list[str]]] = [
+        (VERTICES, chunk_key_strs),
+        (VERTEX_GROUP_OFFSETS, chunk_key_strs),
+    ]
+
+    _batched_reads_cm = level_group.batched_reads(prefetch_plan)
+    _batched_reads_cm.__enter__()
+    try:
+        for oid in object_ids:
+            # ------------------------------------------------------------------
+            # Segment-level crop mode (chunks=).
+            # ------------------------------------------------------------------
+            if chunk_whitelist is not None:
+                if manifests is None or oid >= len(manifests):
+                    continue
+                obj_manifest = manifests[oid]
+                if filter_bin is not None:
+                    obj_manifest = [
+                        (cc, vg) for (cc, vg) in obj_manifest
+                        if cc and cc[0] == filter_bin
+                    ]
+
+                # Split the manifest into runs of consecutive entries whose
+                # chunk lies in the whitelist. Each run becomes its own
+                # output polyline.
+                run: list[VertexGroupRef] = []
+                for cc, vg_idx in obj_manifest:
+                    if cc in chunk_whitelist:
+                        run.append((cc, vg_idx))
+                    else:
+                        if run:
+                            vg_list = _read_manifest_run(
+                                level_group, run, dtype, ndim,
+                            )
+                            if vg_list:
+                                result_polylines.append(vg_list)
+                                total_verts += sum(len(vg) for vg in vg_list)
+                            run = []
+                if run:
+                    vg_list = _read_manifest_run(
+                        level_group, run, dtype, ndim,
+                    )
+                    if vg_list:
+                        result_polylines.append(vg_list)
+                        total_verts += sum(len(vg) for vg in vg_list)
                 continue
-            obj_manifest = manifests[oid]
+
+            # ------------------------------------------------------------------
+            # Existing whole-object paths (attribute_filter, bbox, no filter).
+            # ------------------------------------------------------------------
             if filter_bin is not None:
-                obj_manifest = [
+                if manifests is None or oid >= len(manifests):
+                    continue
+                obj_manifest = manifests[oid]
+                matching = [
                     (cc, vg) for (cc, vg) in obj_manifest
                     if cc and cc[0] == filter_bin
                 ]
-
-            # Split the manifest into runs of consecutive entries whose
-            # chunk lies in the whitelist. Each run becomes its own
-            # output polyline.
-            run: list[VertexGroupRef] = []
-            for cc, vg_idx in obj_manifest:
-                if cc in chunk_whitelist:
-                    run.append((cc, vg_idx))
-                else:
-                    if run:
-                        vg_list = _read_manifest_run(
-                            level_group, run, dtype, ndim,
-                        )
-                        if vg_list:
-                            result_polylines.append(vg_list)
-                            total_verts += sum(len(vg) for vg in vg_list)
-                        run = []
-            if run:
-                vg_list = _read_manifest_run(
-                    level_group, run, dtype, ndim,
-                )
-                if vg_list:
-                    result_polylines.append(vg_list)
-                    total_verts += sum(len(vg) for vg in vg_list)
-            continue
-
-        # ------------------------------------------------------------------
-        # Existing whole-object paths (attribute_filter, bbox, no filter).
-        # ------------------------------------------------------------------
-        if filter_bin is not None:
-            if manifests is None or oid >= len(manifests):
-                continue
-            obj_manifest = manifests[oid]
-            matching = [
-                (cc, vg) for (cc, vg) in obj_manifest
-                if cc and cc[0] == filter_bin
-            ]
-            if not matching:
-                continue
-            vg_list = []
-            for cc, vg_idx in matching:
+                if not matching:
+                    continue
+                vg_list = []
+                for cc, vg_idx in matching:
+                    try:
+                        vg_list.append(read_vertex_group(
+                            level_group, cc, vg_idx, dtype=dtype, ndim=ndim,
+                        ))
+                    except ArrayError:
+                        continue
+            else:
                 try:
-                    vg_list.append(read_vertex_group(
-                        level_group, cc, vg_idx, dtype=dtype, ndim=ndim,
-                    ))
+                    vg_list = read_object_vertices(
+                        level_group, oid, dtype=dtype, ndim=ndim
+                    )
                 except ArrayError:
                     continue
-        else:
-            try:
-                vg_list = read_object_vertices(
-                    level_group, oid, dtype=dtype, ndim=ndim
-                )
-            except ArrayError:
+
+            if not vg_list:
                 continue
 
-        if not vg_list:
-            continue
-
-        # If bbox filter, check if any segment is in a target chunk
-        if target_chunks is not None:
-            try:
-                manifest = read_all_object_manifests(level_group)
-                obj_manifest = manifest[oid] if oid < len(manifest) else []
-                has_match = any(
-                    chunk_coords in target_chunks
-                    for chunk_coords, _ in obj_manifest
-                )
-                if not has_match:
+            # If bbox filter, check if any segment is in a target chunk
+            if target_chunks is not None:
+                try:
+                    manifest = read_all_object_manifests(level_group)
+                    obj_manifest = manifest[oid] if oid < len(manifest) else []
+                    has_match = any(
+                        chunk_coords in target_chunks
+                        for chunk_coords, _ in obj_manifest
+                    )
+                    if not has_match:
+                        continue
+                except Exception:
                     continue
-            except Exception:
-                continue
 
-        result_polylines.append(vg_list)
-        total_verts += sum(len(vg) for vg in vg_list)
+            result_polylines.append(vg_list)
+            total_verts += sum(len(vg) for vg in vg_list)
+    finally:
+        _batched_reads_cm.__exit__(None, None, None)
 
     return {
         "polylines": result_polylines,

@@ -65,7 +65,7 @@ def test_batched_writes_via_write_points_memory_store():
     mem = MemoryStore()
     positions = np.random.default_rng(0).uniform(0, 100, (200, 3)).astype(np.float32)
     intensity = np.random.default_rng(1).uniform(0, 1, 200).astype(np.float32)
-    write_points(mem, positions, attributes={"intensity": intensity})
+    write_points(mem, positions, vertex_attributes={"intensity": intensity})
 
     result = read_points(mem)
     assert result["vertex_count"] == 200
@@ -76,12 +76,12 @@ def test_batched_writes_via_write_points_localstore(tmp_path):
     """Same end-to-end on a local file store, then re-open via URL."""
     url = str(tmp_path / "batch_points.zarr")
     positions = np.random.default_rng(0).uniform(0, 100, (500, 3)).astype(np.float32)
-    write_points(url, positions, attributes={"score": positions[:, 0].copy()})
+    write_points(url, positions, vertex_attributes={"score": positions[:, 0].copy()})
     # read_points reads attributes only when names are requested explicitly.
     result = read_points(url, attribute_names=["score"])
     assert result["vertex_count"] == 500
-    assert "score" in result["attributes"]
-    assert result["attributes"]["score"].shape == (500,)
+    assert "score" in result["vertex_attributes"]
+    assert result["vertex_attributes"]["score"].shape == (500,)
 
 
 def test_batched_writes_defers_write_array_meta(tmp_store_path):

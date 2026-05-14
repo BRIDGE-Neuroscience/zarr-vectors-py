@@ -468,13 +468,13 @@ def create_store(
     )
 
     # 0/ + empty vertices pair — the "warm" payload.
-    level0 = root.create_group(f"{RESOLUTION_PREFIX}0")
-    level0.attrs.update(
+    level0 = create_resolution_level(
+        root, 0,
         LevelMetadata(
             level=0,
             vertex_count=0,
             arrays_present=[VERTICES],
-        ).to_dict()
+        ),
     )
     # Defer import: arrays.py imports from store.py (FsGroup).
     from zarr_vectors.core.arrays import create_vertices_array
@@ -1129,11 +1129,60 @@ def create_resolution_level(
     level: int,
     level_metadata: LevelMetadata,
 ) -> Group:
-    """Create a new resolution level group within the store."""
+    """Create a new resolution level group within the store.
+
+    The level's spatial transform (``bin_ratio`` → NGFF ``scale``,
+    ``bin_shape`` → NGFF ``translation = bin_shape / 2``) is written to
+    the NGFF ``multiscales[0].datasets`` block via
+    :func:`zarr_vectors.core.multiscale.upsert_level_transform` so the
+    NGFF block stays the **single source of truth** for spatial
+    geometry.  ``bin_shape`` and ``bin_ratio`` are intentionally
+    omitted from the level's own ``zarr_vectors_level`` attrs; readers
+    derive them from the NGFF block (see :func:`read_level_metadata`).
+    """
     level_metadata.validate()
     group_name = f"{RESOLUTION_PREFIX}{level}"
     level_group = root.require_group(group_name)
-    level_group.attrs.update(level_metadata.to_dict())
+    payload = level_metadata.to_dict()
+    payload["zarr_vectors_level"].pop("bin_shape", None)
+    payload["zarr_vectors_level"].pop("bin_ratio", None)
+    level_group.attrs.update(payload)
+
+    # Mirror the spatial transform into the NGFF block.
+    from zarr_vectors.core.multiscale import upsert_level_transform
+    if level == 0:
+        # Level 0: scale = 1.0 per-axis; translation seeded by base_bin/2 if known.
+        try:
+            root_meta = read_root_metadata(root)
+            ndim = root_meta.sid_ndim
+            base_bin = root_meta.effective_bin_shape
+            scale = [1.0] * ndim
+            translation = [bs / 2.0 for bs in base_bin]
+        except Exception:
+            scale = [1.0]
+            translation = None
+        upsert_level_transform(
+            root, level, scale=scale, translation=translation,
+        )
+    elif level_metadata.bin_ratio is not None or level_metadata.bin_shape is not None:
+        try:
+            root_meta = read_root_metadata(root)
+            ndim = root_meta.sid_ndim
+        except Exception:
+            ndim = (
+                len(level_metadata.bin_ratio) if level_metadata.bin_ratio
+                else (len(level_metadata.bin_shape) if level_metadata.bin_shape else 1)
+            )
+        if level_metadata.bin_ratio is not None:
+            scale = [float(r) for r in level_metadata.bin_ratio]
+        else:
+            scale = [1.0] * ndim
+        translation = (
+            [bs / 2.0 for bs in level_metadata.bin_shape]
+            if level_metadata.bin_shape is not None
+            else None
+        )
+        upsert_level_transform(root, level, scale=scale, translation=translation)
     return level_group
 
 
@@ -1184,12 +1233,31 @@ def read_root_metadata(root: Group) -> RootMetadata:
 def read_level_metadata(root: Group, level: int) -> LevelMetadata:
     """Read and parse level metadata.
 
+    ``bin_shape`` and ``bin_ratio`` are read from the NGFF
+    ``multiscales[0].datasets`` block (the authoritative source under
+    0.5+).  Legacy stores that still carry them under
+    ``zarr_vectors_level`` are honoured as a fallback.
+
     Raises:
         StoreError: If the level does not exist.
         MetadataError: If metadata is malformed.
     """
     level_group = get_resolution_level(root, level)
-    return LevelMetadata.from_dict(level_group.attrs.to_dict())
+    lm = LevelMetadata.from_dict(level_group.attrs.to_dict())
+
+    # NGFF takes precedence over the legacy fields when present.
+    from zarr_vectors.core.multiscale import read_level_transform
+    scale, translation = read_level_transform(root, level)
+    if scale is not None:
+        if level == 0:
+            # Level 0 has scale == 1.0 by convention; bin_ratio stays None.
+            lm.bin_ratio = None
+            lm.bin_shape = None
+        else:
+            lm.bin_ratio = tuple(int(round(s)) for s in scale)
+            if translation is not None:
+                lm.bin_shape = tuple(2.0 * t for t in translation)
+    return lm
 
 
 def write_parametric_types(
@@ -1292,10 +1360,10 @@ def add_resolution_level(
         parent_level=parent_level,
     )
     level_meta.validate()
-
-    level_group = root.require_group(group_name)
-    level_group.attrs.update(level_meta.to_dict())
-    return level_group
+    # Route through create_resolution_level so the NGFF block is updated
+    # via :func:`zarr_vectors.core.multiscale.upsert_level_transform` in
+    # the same way as a writer-driven create.
+    return create_resolution_level(root, level_index, level_meta)
 
 
 def remove_resolution_level(root: Group, level_index: int) -> None:

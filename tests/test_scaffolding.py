@@ -85,7 +85,7 @@ class TestFixtures:
         assert pos.dtype == np.float32
         assert np.all(pos >= 0) and np.all(pos < 1000)
 
-        intensity = simple_points_3d["attributes"]["intensity"]
+        intensity = simple_points_3d["vertex_attributes"]["intensity"]
         assert intensity.shape == (100,)
         assert intensity.dtype == np.float32
 

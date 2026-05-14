@@ -115,8 +115,10 @@ def add_geometry(
     edges: npt.NDArray[np.integer] | None = None,
     faces: npt.NDArray[np.integer] | None = None,
     polylines: list[npt.NDArray[np.floating]] | None = None,
-    attributes: dict[str, npt.NDArray] | None = None,
+    vertex_attributes: dict[str, npt.NDArray] | None = None,
     level: int = 0,
+    # Deprecated alias:
+    attributes: dict[str, npt.NDArray] | None = None,
 ) -> dict[str, Any]:
     """Add a geometry type to an existing zarr vectors store.
 
@@ -132,7 +134,8 @@ def add_geometry(
         edges: ``(E, 2)`` edge array (for graphs/skeletons).
         faces: ``(F, L)`` face array (for meshes).
         polylines: List of ``(N_k, D)`` arrays (for streamlines).
-        attributes: Per-vertex attributes ``{name: array}``.
+        vertex_attributes: Per-vertex attributes ``{name: array}``.
+            (Spec name; replaces ``attributes``.)
         level: Resolution level to add to (default 0).
 
     Returns:
@@ -141,6 +144,20 @@ def add_geometry(
     Raises:
         ValueError: If the geometry type requires data not provided.
     """
+    # Back-compat: accept the legacy `attributes` kwarg.
+    if attributes is not None:
+        if vertex_attributes is not None:
+            raise TypeError(
+                "got both `attributes` and `vertex_attributes`; "
+                "pass only `vertex_attributes`."
+            )
+        import warnings
+        warnings.warn(
+            "`attributes` is deprecated; use `vertex_attributes`.",
+            DeprecationWarning, stacklevel=2,
+        )
+        vertex_attributes = attributes
+
     store_path = Path(store_path)
     sample_points: npt.NDArray | None = None
     if positions is not None:

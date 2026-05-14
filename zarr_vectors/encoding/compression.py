@@ -8,15 +8,15 @@ compatible with Zarr v3's codec pipeline specification.
 from __future__ import annotations
 
 from zarr_vectors.constants import (
-    ATTRIBUTES,
     CROSS_CHUNK_LINKS,
     DEFAULT_COMPRESSOR_OPTS,
-    GROUPINGS,
-    GROUPINGS_ATTRIBUTES,
+    GROUP_ATTRIBUTES,
+    GROUPS,
     LINK_ATTRIBUTES,
     LINKS,
     OBJECT_ATTRIBUTES,
     OBJECT_INDEX,
+    VERTEX_ATTRIBUTES,
     VERTEX_GROUP_OFFSETS,
     VERTICES,
 )
@@ -27,7 +27,7 @@ def get_default_compressor(array_type: str) -> dict[str, object]:
 
     Args:
         array_type: One of the canonical array name constants (e.g.
-            ``"vertices"``, ``"links"``, ``"attributes"``).
+            ``"vertices"``, ``"links"``, ``"vertex_attributes"``).
 
     Returns:
         Dict with compressor settings suitable for ``numcodecs`` or
@@ -52,7 +52,7 @@ def get_default_compressor(array_type: str) -> dict[str, object]:
         }
 
     # Vertex positions and attributes — byte shuffle works well on floats
-    if array_type in (VERTICES, ATTRIBUTES):
+    if array_type in (VERTICES, VERTEX_ATTRIBUTES):
         return {
             "id": "blosc",
             "cname": "zstd",
@@ -60,8 +60,8 @@ def get_default_compressor(array_type: str) -> dict[str, object]:
             "shuffle": 1,
         }
 
-    # Dense arrays (object attributes, grouping attributes)
-    if array_type in (OBJECT_ATTRIBUTES, GROUPINGS_ATTRIBUTES):
+    # Dense arrays (object attributes, group attributes)
+    if array_type in (OBJECT_ATTRIBUTES, GROUP_ATTRIBUTES):
         return {
             "id": "blosc",
             "cname": "zstd",

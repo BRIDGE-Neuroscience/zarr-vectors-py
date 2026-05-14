@@ -18,15 +18,15 @@ import numpy as np
 import numpy.typing as npt
 
 from zarr_vectors.constants import (
-    ATTRIBUTES,
     CROSS_CHUNK_LINK_ATTRIBUTES,
     CROSS_CHUNK_LINKS,
-    GROUPINGS,
-    GROUPINGS_ATTRIBUTES,
+    GROUP_ATTRIBUTES,
+    GROUPS,
     LINK_ATTRIBUTES,
     LINKS,
     OBJECT_ATTRIBUTES,
     OBJECT_INDEX,
+    VERTEX_ATTRIBUTES,
     VERTEX_GROUP_OFFSETS,
     VERTICES,
 )
@@ -175,7 +175,7 @@ def create_attribute_array(
         dtype: Numpy dtype string.
         channel_names: Optional list of channel names.
     """
-    full_name = f"{ATTRIBUTES}/{name}"
+    full_name = f"{VERTEX_ATTRIBUTES}/{name}"
     _ensure_array_dir(level_group, full_name)
     meta: dict[str, Any] = {
         "zv_array": "attribute",
@@ -221,9 +221,9 @@ def create_object_attributes_array(
 
 def create_groupings_array(level_group: FsGroup) -> None:
     """Create the ``groupings/`` array."""
-    _ensure_array_dir(level_group, GROUPINGS)
-    level_group.write_array_meta(GROUPINGS, {
-        "zv_array": "groupings",
+    _ensure_array_dir(level_group, GROUPS)
+    level_group.write_array_meta(GROUPS, {
+        "zv_array": "groups",
     })
 
 
@@ -234,7 +234,7 @@ def create_groupings_attributes_array(
     num_channels: int = 1,
 ) -> None:
     """Create a groupings attribute array ``groupings_attributes/<name>/``."""
-    full_name = f"{GROUPINGS_ATTRIBUTES}/{name}"
+    full_name = f"{GROUP_ATTRIBUTES}/{name}"
     _ensure_array_dir(level_group, full_name)
     level_group.write_array_meta(full_name, {
         "zv_array": "groupings_attribute",
@@ -426,7 +426,7 @@ def write_chunk_attributes(
     """
     dtype = np.dtype(dtype)
     key = _chunk_key(chunk_coords)
-    full_name = f"{ATTRIBUTES}/{attr_name}"
+    full_name = f"{VERTEX_ATTRIBUTES}/{attr_name}"
     raw_bytes, _ = encode_vertex_groups(attr_groups, dtype)
     level_group.write_bytes(full_name, key, raw_bytes)
 
@@ -585,10 +585,10 @@ def write_groupings(
         group_list.append(np.array(members, dtype=np.int64))
 
     raw_bytes, offsets = encode_ragged_ints(group_list, dtype=np.dtype(np.int64))
-    level_group.write_bytes(GROUPINGS, "data", raw_bytes)
-    level_group.write_bytes(GROUPINGS, "offsets", offsets.tobytes())
-    level_group.write_array_meta(GROUPINGS, {
-        "zv_array": "groupings",
+    level_group.write_bytes(GROUPS, "data", raw_bytes)
+    level_group.write_bytes(GROUPS, "offsets", offsets.tobytes())
+    level_group.write_array_meta(GROUPS, {
+        "zv_array": "groups",
         "num_groups": max_gid + 1,
     })
 
@@ -605,7 +605,7 @@ def write_groupings_attributes(
         attr_name: Attribute name.
         data: ``(G,)`` or ``(G, C)`` array.
     """
-    full_name = f"{GROUPINGS_ATTRIBUTES}/{attr_name}"
+    full_name = f"{GROUP_ATTRIBUTES}/{attr_name}"
     _ensure_array_dir(level_group, full_name)
     level_group.write_bytes(full_name, "data", data.tobytes())
     level_group.write_array_meta(full_name, {
@@ -894,7 +894,7 @@ def read_chunk_attributes(
     """
     key = _chunk_key(chunk_coords)
     dtype = np.dtype(dtype)
-    full_name = f"{ATTRIBUTES}/{attr_name}"
+    full_name = f"{VERTEX_ATTRIBUTES}/{attr_name}"
 
     if vert_dtype is None:
         try:
@@ -1099,7 +1099,7 @@ def read_group_object_ids(
     Returns:
         List of object ID integers.
     """
-    meta = level_group.read_array_meta(GROUPINGS)
+    meta = level_group.read_array_meta(GROUPS)
     num_groups = meta["num_groups"]
 
     if group_id < 0 or group_id >= num_groups:
@@ -1107,9 +1107,9 @@ def read_group_object_ids(
             f"Group ID {group_id} out of range [0, {num_groups})"
         )
 
-    raw = level_group.read_bytes(GROUPINGS, "data")
+    raw = level_group.read_bytes(GROUPS, "data")
     offsets = np.frombuffer(
-        level_group.read_bytes(GROUPINGS, "offsets"),
+        level_group.read_bytes(GROUPS, "offsets"),
         dtype=np.int64,
     )
 
@@ -1125,11 +1125,11 @@ def read_all_groupings(
     Returns:
         List indexed by group_id, each a list of object_id ints.
     """
-    meta = level_group.read_array_meta(GROUPINGS)
+    meta = level_group.read_array_meta(GROUPS)
 
-    raw = level_group.read_bytes(GROUPINGS, "data")
+    raw = level_group.read_bytes(GROUPS, "data")
     offsets = np.frombuffer(
-        level_group.read_bytes(GROUPINGS, "offsets"),
+        level_group.read_bytes(GROUPS, "offsets"),
         dtype=np.int64,
     )
 
@@ -1143,7 +1143,7 @@ def read_groupings_attributes(
     dtype: np.dtype | str | None = None,
 ) -> npt.NDArray:
     """Read dense G×C groupings attribute data."""
-    full_name = f"{GROUPINGS_ATTRIBUTES}/{attr_name}"
+    full_name = f"{GROUP_ATTRIBUTES}/{attr_name}"
     meta = level_group.read_array_meta(full_name)
     if dtype is None:
         dtype = np.dtype(meta["dtype"])

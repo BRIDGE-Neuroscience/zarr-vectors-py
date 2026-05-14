@@ -105,7 +105,7 @@ def coarsen_points(
 
     out: dict[str, Any] = {
         "positions": meta_positions,
-        "attributes": meta_attrs,
+        "vertex_attributes": meta_attrs,
         "children": children,
         "vertex_count": n_meta,
         "reduction_ratio": n_input / max(n_meta, 1),

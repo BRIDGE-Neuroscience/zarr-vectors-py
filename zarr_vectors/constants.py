@@ -104,11 +104,11 @@ PARAMETRIC_GROUP: str = "parametric"
 VERTICES: str = "vertices"
 VERTEX_GROUP_OFFSETS: str = "vertex_group_offsets"
 LINKS: str = "links"
-ATTRIBUTES: str = "attributes"
+VERTEX_ATTRIBUTES: str = "vertex_attributes"
 OBJECT_INDEX: str = "object_index"
 OBJECT_ATTRIBUTES: str = "object_attributes"
-GROUPINGS: str = "groupings"
-GROUPINGS_ATTRIBUTES: str = "groupings_attributes"
+GROUPS: str = "groups"
+GROUP_ATTRIBUTES: str = "group_attributes"
 CROSS_CHUNK_LINKS: str = "cross_chunk_links"
 LINK_ATTRIBUTES: str = "link_attributes"
 CROSS_CHUNK_LINK_ATTRIBUTES: str = "cross_chunk_link_attributes"
@@ -116,18 +116,18 @@ CROSS_CHUNK_LINK_ATTRIBUTES: str = "cross_chunk_link_attributes"
 # Parametric sub-arrays
 PARAMETRIC_OBJECTS: str = "objects"
 PARAMETRIC_OBJECT_ATTRIBUTES: str = "object_attributes"
-PARAMETRIC_GROUPINGS: str = "groupings"
-PARAMETRIC_GROUPINGS_ATTRIBUTES: str = "groupings_attributes"
+PARAMETRIC_GROUPS: str = "groups"
+PARAMETRIC_GROUP_ATTRIBUTES: str = "group_attributes"
 
 ALL_ARRAY_NAMES: frozenset[str] = frozenset({
     VERTICES,
     VERTEX_GROUP_OFFSETS,
     LINKS,
-    ATTRIBUTES,
+    VERTEX_ATTRIBUTES,
     OBJECT_INDEX,
     OBJECT_ATTRIBUTES,
-    GROUPINGS,
-    GROUPINGS_ATTRIBUTES,
+    GROUPS,
+    GROUP_ATTRIBUTES,
     CROSS_CHUNK_LINKS,
     LINK_ATTRIBUTES,
     CROSS_CHUNK_LINK_ATTRIBUTES,

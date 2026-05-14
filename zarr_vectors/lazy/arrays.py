@@ -331,9 +331,9 @@ def _read_attribute_chunk(
             pass
 
         # Fallback: read raw bytes and decode as flat array
-        from zarr_vectors.constants import ATTRIBUTES
+        from zarr_vectors.constants import VERTEX_ATTRIBUTES
         key = f"{chunk_coords[0]}" + "".join(f".{c}" for c in chunk_coords[1:])
-        raw = group.read_bytes(f"{ATTRIBUTES}/{attr_name}", key)
+        raw = group.read_bytes(f"{VERTEX_ATTRIBUTES}/{attr_name}", key)
         if len(raw) == 0:
             return np.array([], dtype=dtype)
         arr = np.frombuffer(raw, dtype=dtype)

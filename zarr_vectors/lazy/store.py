@@ -129,10 +129,6 @@ class ZVRStore:
             )
         return self._levels_cache[level]
 
-    def level(self, index: int) -> ZVRLevel:
-        """Alias for ``self[index]``."""
-        return self[index]
-
     # ---------------------------------------------------------------
     # Repr
     # ---------------------------------------------------------------
@@ -220,9 +216,3 @@ def open_zvr(
     return ZVRStore(root, meta)
 
 
-def object_levels(zvr: ZVRStore, oid: int) -> list[int]:
-    """Return the levels at which ``oid`` is present.
-
-    Module-level convenience around :meth:`ZVRStore.object_levels`.
-    """
-    return zvr.object_levels(oid)

@@ -26,3 +26,5 @@ Thumbs.db
 .ruff_cache/
 .coverage
 htmlcov/
+.ipynb_checkpoints
+.claude/

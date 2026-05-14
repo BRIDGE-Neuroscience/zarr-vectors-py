@@ -606,7 +606,10 @@ def _ensure_root_metadata_for_write(
         zv.setdefault("cross_chunk_strategy", cross_chunk_strategy)
 
     root.attrs.update({"zarr_vectors": zv})
-    return RootMetadata.from_dict({"zarr_vectors": zv})
+    # Pass the full attrs (including the NGFF ``multiscales`` block
+    # written by :func:`_write_root_attrs`) so strict parsing finds the
+    # axes block under ``multiscales[0].axes``.
+    return RootMetadata.from_dict(root.attrs.to_dict())
 
 
 def _apply_out_of_bounds_policy(

@@ -177,15 +177,16 @@ A practical default for Neuroglancer-style serving:
 shard_shape = (8, 8, 8)   # 512 inner chunks per shard, ~25–200 MB per shard
 ```
 
-### Sharding and the VG index
+### Sharding and the fragment index
 
-The `vertex_group_offsets/` array benefits especially from sharding.
-Unlike `vertices/`, which may have large chunks, `vertex_group_offsets/`
-chunks are small (one per ZVF spatial chunk, `B_per_chunk × 2 × 8` bytes).
-For `B_per_chunk = 64`, each index chunk is only 1 024 bytes. Without
-sharding, this creates millions of tiny files. With sharding, many index
-chunks are packed into a single shard, and a viewer can fetch the entire
-spatial index for a region in a handful of requests.
+The `vertex_fragments/` and `link_fragments/` arrays benefit especially
+from sharding. Unlike `vertices/`, which may have large chunks, fragment-
+index chunks are small (typically tens to a few hundred bytes per ZVF
+spatial chunk — header plus a short range table plus a tiny CSR when
+fragments are explicit). Without sharding, a large store creates millions
+of tiny files for the fragment indices alone. With sharding, many
+fragment-index chunks are packed into a single shard, and a viewer can
+fetch the entire spatial index for a region in a handful of requests.
 
 ### Compatibility
 

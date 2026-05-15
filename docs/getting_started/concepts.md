@@ -34,15 +34,19 @@ scan.zarrvectors/
 ├── .zattrs              ← root metadata (geometry type, bin shape, CRS, …)
 ├── 0/        ← full-resolution level
 │   ├── vertices/
-│   ├── vertex_group_offsets/
+│   ├── vertex_fragments/    ← per-chunk fragment index (locates vertex groups)
 │   ├── links/
+│   ├── link_fragments/      ← per-chunk fragment index for delta-0 links
 │   ├── attributes/
-│   ├── object_index/
+│   ├── object_index/        ← per-object manifest blobs (data + offsets)
 │   └── cross_chunk_links/
 ├── 1/        ← coarser level (bin_ratio = [2,2,2])
 │   └── …
 └── metadata.json
 ```
+
+See [Directory structure](../spec/layout/directory_structure.md) for
+the authoritative tree per geometry type.
 
 Each sub-directory is a Zarr group. Arrays within a group are themselves
 directories containing one file per chunk (or shard). Nothing is binary-
@@ -127,37 +131,49 @@ per-chunk data volume roughly constant across the pyramid.
 
 ---
 
-## Vertex groups (VGs)
+## Vertex groups and fragments
 
-A **vertex group** (VG) is the set of vertices in a given bin within a
-given chunk. The `vertex_group_offsets` array stores the byte offset and
-length of each VG within the flat `vertices` array for that chunk, enabling
-direct random access without scanning all vertices.
+A **vertex group** (VG) is the conceptual unit of ZVF's spatial
+index: the set of vertices in one bin within one chunk. A bbox query
+resolves to a set of `(chunk, bin)` pairs, and `zarr-vectors`
+retrieves each group's vertices without reading the rest of the
+chunk.
 
-In plain terms: when you issue a bbox query, `zarr-vectors` computes which
-chunks intersect the bbox, identifies the specific bins within those chunks,
-looks up the VG offsets, and reads only the relevant vertex slices. No full
-chunk scan occurs.
+On disk, each chunk carries a small binary blob called a **fragment
+index** (`vertex_fragments/<i.j.k>`) that describes where each
+group's vertices live within the chunk's `vertices/` array. At full
+resolution, each non-empty bin corresponds to one fragment; at
+coarsened pyramid levels, a fragment may represent a metavertex
+shared between several objects' manifests. See
+[Fragment-index arrays](../spec/layout/vg_index_arrays.md) for the
+byte layout and
+[Vertex groups and fragments](../spec/object_model/vertex_groups.md)
+for the read/write model.
 
 ---
 
 ## Object model
 
 For geometry types that have discrete *objects* (streamlines, skeletons,
-meshes), ZVF stores an additional `object_index` array that maps each
-object ID to the list of VGs (and therefore chunks) that contain its
-vertices. This enables efficient single-object retrieval:
+meshes), ZVF stores an additional `object_index` group containing a
+per-object **manifest blob** that enumerates every chunk the object
+touches and the fragments within each chunk:
 
 ```python
 result = read_polylines("tracts.zarrvectors", object_ids=[42])
-# Internally: look up object 42 in object_index → fetch only the
-# relevant VG slices from the relevant chunks.
+# Internally: decode object 42's manifest → fetch the named fragments
+# from each named chunk → concatenate vertex rows in manifest order.
 ```
 
-When an object spans multiple chunks (e.g. a streamline that crosses chunk
-boundaries), the segments are linked via `cross_chunk_links`, which stores
-the connecting edges between the last vertex of one segment and the first
-vertex of the next.
+The manifest is self-contained: there is no chain of dependent reads.
+At coarsened pyramid levels, two objects' manifests may name the same
+fragment (a **shared fragment**) — the underlying vertex row is stored
+once. See [Object manifest](../spec/object_model/object_manifest.md).
+
+`cross_chunk_links` still encodes connecting edges between adjacent
+chunks for geometric purposes (e.g. drawing line segments that span a
+chunk boundary). Pre-0.6 it was also used during object retrieval to
+discover continuation chunks; this is no longer required.
 
 ---
 
@@ -254,8 +270,9 @@ scaling.
 | Store | A `.zarrvectors` directory | `store_path` argument |
 | Chunk | I/O unit; one file per chunk | `chunk_shape` |
 | Bin | Spatial query unit within a chunk | `bin_shape` |
-| VG | Vertices in one bin in one chunk | Computed automatically |
-| Object index | Maps object IDs to VGs | Written automatically for applicable types |
+| VG | Vertices in one bin in one chunk (conceptual) | Computed automatically |
+| Fragment | On-disk unit packaging vertex rows; one per VG at level 0 | Computed automatically |
+| Object index | Per-object manifest blobs naming fragments | Written automatically for applicable types |
 | Resolution level | Coarsened copy of the data | `build_pyramid()` |
 | Bin ratio | Coarsening factor per level | `bin_ratio` in `level_configs` |
 | Object sparsity | Object thinning fraction per level | `object_sparsity` in `level_configs` |

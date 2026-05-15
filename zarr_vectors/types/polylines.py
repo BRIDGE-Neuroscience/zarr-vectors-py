@@ -23,6 +23,7 @@ from zarr_vectors.constants import (
     GEOM_POLYLINE,
     GEOM_STREAMLINE,
     LINKS_IMPLICIT_SEQUENTIAL,
+    OBJECT_INDEX,
     OBJIDX_STANDARD,
     VERTEX_FRAGMENTS,
     VERTICES,
@@ -232,18 +233,6 @@ def write_polylines(
         chunk_attribute_values=attr_bin_values,
     )
     level_group = create_resolution_level(root, 0, level_meta)
-    create_vertices_array(level_group, dtype=dtype)
-    create_object_index_array(level_group)
-    create_cross_chunk_links_array(level_group, delta=0)
-
-    # Create attribute arrays
-    if vertex_attributes:
-        for attr_name, attr_list in vertex_attributes.items():
-            sample = attr_list[0]
-            create_attribute_array(
-                level_group, attr_name,
-                dtype=str(sample.dtype),
-            )
 
     # Split each polyline at chunk boundaries and accumulate per-chunk data
     # chunk_data[chunk_coords] = list of (polyline_id, segment_vertices, segment_attrs)
@@ -323,52 +312,69 @@ def write_polylines(
                 if cc_a != cc_b:
                     all_cross_links.append(((cc_a, 0), (cc_b, 0)))
 
-    # Write vertex groups per chunk
-    for chunk_coords in sorted(chunk_data.keys()):
-        entries = chunk_data[chunk_coords]
-        vert_groups = [e[1] for e in entries]
-        write_chunk_vertices(level_group, chunk_coords, vert_groups, dtype=np_dtype)
-
-        # Write attributes per chunk
-        if vertex_attributes:
-            for attr_name in vertex_attributes:
-                attr_groups = [e[2].get(attr_name) for e in entries]
-                # Filter out None (shouldn't happen but be safe)
-                attr_groups = [a for a in attr_groups if a is not None]
-                if attr_groups:
-                    write_chunk_attributes(
-                        level_group, attr_name, chunk_coords, attr_groups,
-                        dtype=attr_groups[0].dtype,
-                    )
-
-    # Write object index — chunk coords gain a leading dim when
-    # attribute-chunked, so widen sid_ndim accordingly.
     idx_ndim = ndim + 1 if per_poly_attr_bins is not None else ndim
-    write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
+    # Collapse all per-array zarr.json + per-chunk byte writes into one
+    # asyncio.gather (mirrors points.py:300).
+    with level_group.batched_writes():
+        create_vertices_array(level_group, dtype=dtype)
+        create_object_index_array(level_group)
+        create_cross_chunk_links_array(level_group, delta=0)
+        if vertex_attributes:
+            for attr_name, attr_list in vertex_attributes.items():
+                sample = attr_list[0]
+                create_attribute_array(
+                    level_group, attr_name,
+                    dtype=str(sample.dtype),
+                )
+        if object_attributes:
+            for name in object_attributes:
+                create_object_attributes_array(level_group, name)
 
-    # Write cross-chunk links
-    if all_cross_links:
-        write_cross_chunk_links(
-            level_group, all_cross_links, sid_ndim=idx_ndim, delta=0,
-        )
+        for chunk_coords in sorted(chunk_data.keys()):
+            entries = chunk_data[chunk_coords]
+            vert_groups = [e[1] for e in entries]
+            write_chunk_vertices(
+                level_group, chunk_coords, vert_groups, dtype=np_dtype,
+            )
 
-    # Write object attributes
-    if object_attributes:
-        for name, data in object_attributes.items():
-            create_object_attributes_array(level_group, name)
-            write_object_attributes(level_group, name, np.asarray(data))
+            # Write attributes per chunk
+            if vertex_attributes:
+                for attr_name in vertex_attributes:
+                    attr_groups = [e[2].get(attr_name) for e in entries]
+                    # Filter out None (shouldn't happen but be safe)
+                    attr_groups = [a for a in attr_groups if a is not None]
+                    if attr_groups:
+                        write_chunk_attributes(
+                            level_group, attr_name, chunk_coords, attr_groups,
+                            dtype=attr_groups[0].dtype,
+                        )
 
-    # Write groupings
-    n_groups = 0
-    if groups:
-        create_groupings_array(level_group)
-        write_groupings(level_group, groups)
-        n_groups = len(groups)
+        # Write object index — chunk coords gain a leading dim when
+        # attribute-chunked, so widen sid_ndim accordingly.
+        write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
 
-    if group_attributes:
-        for name, data in group_attributes.items():
-            create_groupings_attributes_array(level_group, name)
-            write_groupings_attributes(level_group, name, np.asarray(data))
+        # Write cross-chunk links
+        if all_cross_links:
+            write_cross_chunk_links(
+                level_group, all_cross_links, sid_ndim=idx_ndim, delta=0,
+            )
+
+        # Write object attributes
+        if object_attributes:
+            for name, data in object_attributes.items():
+                write_object_attributes(level_group, name, np.asarray(data))
+
+        # Write groupings
+        if groups:
+            create_groupings_array(level_group)
+            write_groupings(level_group, groups)
+
+        if group_attributes:
+            for name, data in group_attributes.items():
+                create_groupings_attributes_array(level_group, name)
+                write_groupings_attributes(level_group, name, np.asarray(data))
+
+    n_groups = len(groups) if groups else 0
 
     _finalize_write(root, "write_polylines")
     return {
@@ -514,19 +520,16 @@ def read_polylines(
     result_polylines: list[list[npt.NDArray]] = []
     total_verts = 0
 
-    # Manifests are needed for both attribute_filter and chunks (segment
-    # crop) paths. Load once.
-    manifests = None
-    if filter_bin is not None or chunk_whitelist is not None:
-        try:
-            manifests = read_all_object_manifests(level_group)
-        except Exception:
-            manifests = None
-
-    # Prefetch every vertex chunk (and its offsets sidecar) in one async
-    # gather so the per-object read loop hits the cache instead of
-    # paying one round-trip per chunk.  Cache misses fall through to
-    # the sync path, so this is a perf-only optimisation.
+    # Prefetch every vertex chunk (and its offsets sidecar) + the
+    # object_index sidecar in one async gather.  Including OBJECT_INDEX
+    # is critical: without it, ``read_all_object_manifests`` would re-
+    # read it for every call, and ``read_object_vertices`` / the bbox
+    # branch below would re-read it once per oid — making the loop
+    # O(N²).  With prefetch, all subsequent decode calls are cache hits.
+    # The OBJECT_INDEX entry serves legacy ``data``/``offsets`` stores;
+    # ``vlen_manifests_v1`` stores read the ragged ``manifests`` array
+    # directly (one chunk per request) and the prefetch is a harmless
+    # no-op for them.
     chunk_key_strs = [
         ".".join(str(c) for c in cc)
         for cc in list_chunk_keys(level_group, VERTICES)
@@ -534,94 +537,116 @@ def read_polylines(
     prefetch_plan: list[tuple[str, list[str]]] = [
         (VERTICES, chunk_key_strs),
         (VERTEX_FRAGMENTS, chunk_key_strs),
+        (OBJECT_INDEX, ["data", "offsets"]),
     ]
 
     _batched_reads_cm = level_group.batched_reads(prefetch_plan)
     _batched_reads_cm.__enter__()
     try:
+        # Read all manifests once.  The per-object loop below indexes
+        # into this list — no per-iteration manifest read.
+        try:
+            manifests = read_all_object_manifests(level_group)
+        except Exception:
+            manifests = []
+
+        # Decode every chunk's vertex groups exactly once.  The per-
+        # object dispatch then slices from this cache — replacing
+        # O(K_per_chunk · N_per_chunk) per-call ``_read_vertex_offsets``
+        # work with O(K_per_chunk) per chunk.
+        chunk_cache: dict[ChunkCoords, list[npt.NDArray]] = {}
+        list_chunks = [
+            tuple(int(c) for c in cc.split("."))
+            for cc in chunk_key_strs
+        ]
+        for cc in list_chunks:
+            try:
+                chunk_cache[cc] = read_chunk_vertices(
+                    level_group, cc, dtype=dtype, ndim=ndim,
+                )
+            except ArrayError:
+                chunk_cache[cc] = []
+
+        def _read_vg(cc: ChunkCoords, vg_idx: int) -> npt.NDArray | None:
+            groups = chunk_cache.get(cc)
+            if groups is None:
+                return None
+            if 0 <= vg_idx < len(groups):
+                return groups[vg_idx]
+            return None
+
         for oid in object_ids:
             # ------------------------------------------------------------------
             # Segment-level crop mode (chunks=).
             # ------------------------------------------------------------------
+            if oid < 0 or oid >= len(manifests):
+                continue
+            obj_manifest = manifests[oid]
+            if not obj_manifest:
+                continue
+
             if chunk_whitelist is not None:
-                if manifests is None or oid >= len(manifests):
-                    continue
-                obj_manifest = manifests[oid]
                 if filter_bin is not None:
                     obj_manifest = [
                         (cc, vg) for (cc, vg) in obj_manifest
                         if cc and cc[0] == filter_bin
                     ]
 
-                # Split the manifest into runs of consecutive entries whose
-                # chunk lies in the whitelist. Each run becomes its own
-                # output polyline.
+                # Split the manifest into runs of consecutive entries
+                # whose chunk lies in the whitelist.  Each surviving run
+                # becomes its own output polyline.
                 run: list[VertexGroupRef] = []
                 for cc, vg_idx in obj_manifest:
                     if cc in chunk_whitelist:
                         run.append((cc, vg_idx))
                     else:
                         if run:
-                            vg_list = _read_manifest_run(
-                                level_group, run, dtype, ndim,
-                            )
+                            vg_list = [
+                                vg for vg in (_read_vg(cc, vgi) for cc, vgi in run)
+                                if vg is not None
+                            ]
                             if vg_list:
                                 result_polylines.append(vg_list)
                                 total_verts += sum(len(vg) for vg in vg_list)
                             run = []
                 if run:
-                    vg_list = _read_manifest_run(
-                        level_group, run, dtype, ndim,
-                    )
+                    vg_list = [
+                        vg for vg in (_read_vg(cc, vgi) for cc, vgi in run)
+                        if vg is not None
+                    ]
                     if vg_list:
                         result_polylines.append(vg_list)
                         total_verts += sum(len(vg) for vg in vg_list)
                 continue
 
-            # ------------------------------------------------------------------
-            # Existing whole-object paths (attribute_filter, bbox, no filter).
-            # ------------------------------------------------------------------
+            # Whole-object paths (attribute_filter, bbox, no filter).
             if filter_bin is not None:
-                if manifests is None or oid >= len(manifests):
-                    continue
-                obj_manifest = manifests[oid]
                 matching = [
                     (cc, vg) for (cc, vg) in obj_manifest
                     if cc and cc[0] == filter_bin
                 ]
                 if not matching:
                     continue
-                vg_list = []
-                for cc, vg_idx in matching:
-                    try:
-                        vg_list.append(read_vertex_group(
-                            level_group, cc, vg_idx, dtype=dtype, ndim=ndim,
-                        ))
-                    except ArrayError:
-                        continue
+                vg_list = [
+                    vg for vg in (_read_vg(cc, vgi) for cc, vgi in matching)
+                    if vg is not None
+                ]
             else:
-                try:
-                    vg_list = read_object_vertices(
-                        level_group, oid, dtype=dtype, ndim=ndim
-                    )
-                except ArrayError:
-                    continue
+                vg_list = [
+                    vg for vg in (_read_vg(cc, vgi) for cc, vgi in obj_manifest)
+                    if vg is not None
+                ]
 
             if not vg_list:
                 continue
 
-            # If bbox filter, check if any segment is in a target chunk
+            # Bbox filter: keep the polyline if any of its segments lives
+            # in a target chunk.
             if target_chunks is not None:
-                try:
-                    manifest = read_all_object_manifests(level_group)
-                    obj_manifest = manifest[oid] if oid < len(manifest) else []
-                    has_match = any(
-                        chunk_coords in target_chunks
-                        for chunk_coords, _ in obj_manifest
-                    )
-                    if not has_match:
-                        continue
-                except Exception:
+                has_match = any(
+                    cc in target_chunks for cc, _ in obj_manifest
+                )
+                if not has_match:
                     continue
 
             result_polylines.append(vg_list)

@@ -153,10 +153,18 @@ print(verts_array.dtype)    # float32
 chunk_verts = verts_array[2, 3, 1]   # chunk at grid coord (2,3,1)
 print(chunk_verts.shape)    # (N_max, 3) — may include fill-value rows
 
-# Access the VG index
-vg_offsets = store.raw_array("vertex_group_offsets", level=0)
-offsets_chunk = vg_offsets[2, 3, 1]   # (B_per_chunk, 2)
+# Access the fragment index for one chunk
+from zarr_vectors.core.arrays import read_fragment_index
+
+fidx = read_fragment_index(store.level_group(0), "vertex_fragments", (2, 3, 1))
+print(fidx.num_fragments)              # F: number of fragments in chunk (2,3,1)
+print(fidx.num_range_fragments)        # R: number of range fragments
+start, count = fidx.range(0)           # first fragment's row range (if it's a range)
+rows = fidx.indices(0)                 # row indices into vertices/<2.3.1>
 ```
+
+See [Fragment-index arrays](../../spec/layout/vg_index_arrays.md) for the
+byte layout and the full `FragmentIndex` API.
 
 ### Accessing object attributes without loading vertices
 

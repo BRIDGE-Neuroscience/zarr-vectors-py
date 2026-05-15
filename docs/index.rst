@@ -99,3 +99,10 @@ Where to start
    how_to/memory_efficient_writes
    how_to/hpc_pipelines
    how_to/cite
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Benchmarks
+   :hidden:
+
+   benchmarks/index

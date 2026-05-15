@@ -173,25 +173,25 @@ write_multiscale_metadata(root)
 
 ### L3 errors
 
-**`vg_offsets_total_count`**
+**`frag_range_in_bounds`**
 
 ```
-ERROR [L3] vg_offsets_total_count [chunk (2,3,1)]
-           sum(vg_counts) = 4092 ≠ vertex_count = 4200
+ERROR [L3] frag_range_in_bounds [chunk (2,3,1)]
+           range fragment 7: start+count = 4200 > vertex_count = 4092
 ```
 
-The total vertex count from the VG index does not match the actual vertex
-count in the chunk. This indicates a bug in the writer's VG offset
-computation — the most common cause is reordering vertices without
-updating the VG index.
+A range fragment's `[start, start + count)` extends past the chunk's
+vertex count. This indicates a bug in the writer — the most common cause
+is reordering vertices without re-encoding the fragment index.
 
-*Repair:* rebuild the VG index by re-sorting vertices and recomputing offsets:
+*Repair:* rebuild the fragment index by re-sorting vertices and recomputing
+fragments:
 
 ```python
 from zarr_vectors.repair import rebuild_vg_index
 
 rebuild_vg_index("scan.zarrvectors", level=0)
-# Reads vertices, re-sorts into bin order, rewrites vertex_group_offsets
+# Reads vertices, re-sorts into bin order, rewrites vertex_fragments
 ```
 
 ---

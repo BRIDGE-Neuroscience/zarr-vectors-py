@@ -106,13 +106,51 @@ Different arrays in a ZVF store may use different codec pipelines. The
 | Array | Default codec | Rationale |
 |-------|---------------|-----------|
 | `vertices/` | `bytes → blosc(zstd, bitshuffle, l5)` | Float32 positions compress well with bitshuffle |
-| `vertex_group_offsets/` | `bytes → blosc(zstd, byteshuffle, l3)` | Int64 offsets; lighter compression |
+| `vertex_fragments/` | none (opaque `uint8` blob) | Pre-packed fragment-index format; see note below |
+| `link_fragments/` | none (opaque `uint8` blob) | Parallel to `vertex_fragments/`; same rationale |
 | `links/<delta>/` | `bytes → blosc(zstd, byteshuffle, l5)` | Int32/Int64 index pairs; same codec for `link_width=2` (graph/poly) and `link_width=3` (mesh faces) — or Draco for mesh `delta=0` if `[draco]` installed |
 | `link_attributes/<name>/<delta>/` | `bytes → blosc(zstd, bitshuffle, l5)` | Varies by dtype; parallel to `links/<delta>/` |
 | `cross_chunk_links/<delta>/` | `bytes → blosc(zstd, byteshuffle, l3)` | Typically small flat blob |
 | `cross_chunk_link_attributes/<name>/<delta>/` | `bytes → blosc(zstd, bitshuffle, l5)` | Parallel to `cross_chunk_links/<delta>/data` (new in 0.4) |
 | `attributes/*` | `bytes → blosc(zstd, bitshuffle, l5)` | Varies by dtype |
-| `object_index/` | `bytes → blosc(zstd, byteshuffle, l3)` | Int64 index pairs |
+| `object_index/manifests` | `vlen-bytes` | One chunk per ~16K objects; random-access read fetches only the chunk holding the requested OID |
+
+```{note}
+**`vertex_fragments/` and `link_fragments/` bypass the Zarr codec
+pipeline.** Each chunk is written as opaque `uint8` bytes via the
+FsGroup `write_bytes` path. The fragment-index format is already a
+packed binary layout (header + bitmap + dense range table +
+uint32/int64 CSR) with little redundancy for a general-purpose
+compressor to exploit, and adding a compression step introduces
+latency on hot decode paths. The arrays' group metadata carries
+`encoding: "fragment_index_v1"` to identify the on-disk format
+independently of any outer compression a backend might apply to the
+bytes themselves.
+
+**`object_index/manifests` uses the `vlen-bytes` codec.** Each entry
+is one object's encoded manifest blob; per-object random access reads
+only the zarr chunk containing the requested OID (~16K objects per
+chunk), not the whole index. The manifest-blob wire format itself is
+unchanged from earlier ZVF versions — only the on-disk container
+changed from a `data` + `offsets` byte-blob pair to a single ragged
+zarr array.
+
+The Zarr V3 specification for variable-length byte arrays is still
+in development (tracked at
+[zarr-extensions](https://github.com/zarr-developers/zarr-extensions/tree/main/data-types));
+ZVF 0.x stores written with `vlen-bytes` may need to be re-encoded if
+the eventual spec lands incompatibly.
+
+Legacy stores written before this layout change have
+`object_index/data` and `object_index/offsets` byte-blob children
+instead of `object_index/manifests`; readers in `zarr_vectors`
+auto-detect and handle both layouts.
+
+See [Fragment-index arrays](../layout/vg_index_arrays.md) for the
+fragment-index byte layout and
+[Object manifest](../object_model/object_manifest.md) for the
+manifest-blob format.
+```
 
 ### Draco codec (mesh geometry)
 

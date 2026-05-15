@@ -57,15 +57,18 @@ Space
  │   │   │   ├─ Bin (0,0,2) ──── VG ──── vertex slice             │
  │   │   │   ├─ Bin (0,0,3) ──── VG ──── vertex slice             │
  │   │   │   └─ … 60 more bins                                     │
- │   │   └── vertex_group_offsets ──── VG index                    │
+ │   │   └── vertex_fragments ─────── fragment index               │
  │   └─────────────────────────────────────────────────────────────┘
  │   ├─ Chunk (0,0,1)
  │   └─ …
 ```
 
-A chunk is fetched as a single I/O operation. Within the chunk, the VG
-index is used to locate exactly which vertices belong to the query bbox.
-No client-side filtering of all vertices in the chunk is required.
+A chunk is fetched as a single I/O operation. Within the chunk, the
+fragment index is used to locate exactly which vertex rows belong to
+each VG (and therefore to the query bbox). No client-side filtering
+of all vertices in the chunk is required. See
+[Fragment-index arrays](../layout/vg_index_arrays.md) for the on-disk
+layout.
 
 ### Worked example: query amplification
 
@@ -104,7 +107,7 @@ total_bins    = 125 × 64 = 8000 bins
 
 This shows why `bin_shape` matters most at chunk boundaries. When a query
 straddles many chunks but intersects only a small number of bins per chunk,
-the VG index prevents loading the entire contents of each chunk.
+the fragment index prevents loading the entire contents of each chunk.
 
 ### The old design and why it was changed
 
@@ -114,7 +117,7 @@ conflict: they wanted large chunks for I/O efficiency but small chunks for
 query precision.
 
 The separator change introduced `bin_shape` as an independent parameter,
-with the VG index providing the sub-chunk spatial resolution. The
+with the fragment index providing the sub-chunk spatial resolution. The
 `chunk_shape` could then be set based solely on I/O considerations (file
 count, cloud request cost, bandwidth utilisation), while `bin_shape` was
 set based solely on query requirements.

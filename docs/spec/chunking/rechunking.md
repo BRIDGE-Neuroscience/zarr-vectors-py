@@ -161,11 +161,12 @@ The `zarr-vectors rechunk` CLI subcommand lives in the companion package
 | Array | Preserved? | Notes |
 |-------|-----------|-------|
 | `vertices/` values | Yes | Same positions, different chunk assignment |
-| `vertex_group_offsets/` | Recomputed | VG layout changes with new bin grid |
+| `vertex_fragments/` | Recomputed | Fragment partition changes with new bin grid |
+| `link_fragments/` | Recomputed | Parallel to `vertex_fragments/` for `links/0/` |
 | `links/<delta>/` | Recomputed | Vertex indices are local to chunks |
 | `cross_chunk_links/` | Recomputed | Chunk boundaries change |
 | `attributes/` values | Yes | Reordered to match new vertex ordering |
-| `object_index/` | Recomputed | Chunk coordinates change |
+| `object_index/` | Recomputed | Chunk coordinates *and* fragment indices change |
 | `object_attributes/` | Preserved | Per-object, not per-chunk |
 | `groupings/` | Preserved | Per-group, not per-chunk |
 | Root `.zattrs` | Updated | `chunk_shape` and `base_bin_shape` updated |
@@ -175,7 +176,7 @@ The `zarr-vectors rechunk` CLI subcommand lives in the companion package
 
 If only `bin_shape` changes (i.e. `chunk_shape` is the same), rechunking
 can be performed more cheaply because vertex positions do not change
-chunk assignment. Only the VG index needs to be recomputed:
+chunk assignment. Only the fragment index needs to be recomputed:
 
 ```python
 from zarr_vectors.core.rechunk import rebin_store
@@ -186,9 +187,11 @@ rebin_store(
 )
 ```
 
-`rebin_store` is an in-place operation (it rewrites `vertex_group_offsets/`
-and re-sorts vertices within each chunk). It does not change
-`cross_chunk_links`, `object_index`, or chunk file paths.
+`rebin_store` is an in-place operation (it rewrites `vertex_fragments/`
+and re-sorts vertices within each chunk). Because the fragment indices
+within a chunk change, the per-object manifests in `object_index/` must
+also be rewritten to reference the new fragment numbering. Chunk file
+paths and `cross_chunk_links/` are unaffected.
 
 ### Validation after rechunking
 

@@ -51,9 +51,10 @@ distinction is semantic and enforced by metadata flags and validation:
 | Array path | Required | Description |
 |-----------|----------|-------------|
 | `vertices/` | Yes | Node positions |
-| `vertex_group_offsets/` | Yes | VG index |
+| `vertex_fragments/` | Yes | Fragment index over `vertices/` rows |
 | `links/<delta>/` | Yes | Vertex pairs; shape `(E, 2)` int32 per chunk |
-| `object_index/` | Yes | Object (component) ID → primary chunk + VG offset |
+| `link_fragments/` | Yes (`<delta>=0`) | Fragment index over `links/0/` rows |
+| `object_index/` | Yes | Per-object manifest blobs naming fragments |
 | `cross_chunk_links/` | Yes* | Inter-chunk edges |
 | `attributes/<name>/` | No | Per-vertex attributes |
 | `object_attributes/<name>/` | No | Per-component attributes |
@@ -177,8 +178,8 @@ result = read_graph("connectome.zarrvectors", object_ids=[42, 107, 318])
 
 ### Validation
 
-L1: `vertices/`, `vertex_group_offsets/`, `links/<delta>/`, `object_index/`
-exist.
+L1: `vertices/`, `vertex_fragments/`, `links/<delta>/`, `link_fragments/`
+(at `<delta>=0`), and `object_index/` exist.
 
 L2:
 - `is_directed` is a boolean.

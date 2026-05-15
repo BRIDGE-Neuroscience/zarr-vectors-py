@@ -312,7 +312,7 @@ streamline, skeleton, mesh). Any `links/<delta != 0>/` or
 - For every `<delta>` walked, all endpoints' chunk coords must be
   decodable (arity = `sid_ndim`).
 - For `delta == 0`: both endpoints' chunks must exist in the level's
-  chunk grid (i.e. be present in `vertex_group_offsets/`).
+  chunk grid (i.e. be present in `vertex_fragments/`).
 - For `delta != 0`: only side A is constrained at the source level —
   side B is validated when the validator reaches the target level
   (`source_level + delta`), where its chunk must exist.

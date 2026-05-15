@@ -53,9 +53,10 @@ seeding strategy, propagation algorithm).
 | Array path | Required | Description |
 |-----------|----------|-------------|
 | `vertices/` | Yes | Vertex positions |
-| `vertex_group_offsets/` | Yes | VG index |
+| `vertex_fragments/` | Yes | Fragment index over `vertices/` rows |
 | `links/<delta>/` | Yes | Intra-chunk consecutive vertex pairs |
-| `object_index/` | Yes | Object ID → primary chunk + VG offset |
+| `link_fragments/` | Yes (`<delta>=0`) | Fragment index over `links/0/` rows |
+| `object_index/` | Yes | Per-object manifest blobs naming fragments |
 | `cross_chunk_links/` | Yes* | Inter-chunk vertex connections |
 | `attributes/<name>/` | No | Per-vertex attributes |
 | `object_attributes/<name>/` | No | Per-polyline attributes |
@@ -171,8 +172,8 @@ as a separate string lookup table in `groupings_attributes/name/`).
 
 ### Validation
 
-L1: `vertices/`, `vertex_group_offsets/`, `links/<delta>/`, `object_index/`
-exist.
+L1: `vertices/`, `vertex_fragments/`, `links/<delta>/`, `link_fragments/`
+(at `<delta>=0`), and `object_index/` exist.
 
 L3:
 - Every object ID in `object_index/` is in `[0, n_objects)`.

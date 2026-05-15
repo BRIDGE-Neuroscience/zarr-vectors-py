@@ -68,7 +68,7 @@ dataset.zarrvectors/
 │   │       ├── 0/0/1            # chunk at grid coord (0,0,1)
 │   │       └── …
 │   │
-│   ├── vertex_group_offsets/    # VG index — shape (B_chunk, 2) per chunk
+│   ├── vertex_fragments/        # fragment index — uint8 blob per chunk
 │   │   ├── zarr.json
 │   │   └── c/ …
 │   │
@@ -104,12 +104,16 @@ tracts.zarrvectors/
     ├── .zattrs
     │
     ├── vertices/                # vertex positions
-    ├── vertex_group_offsets/    # VG index
+    ├── vertex_fragments/        # fragment index over vertices/ rows
     │
     ├── links/                   # connectivity (per spatial chunk)
     │   └── 0/                   # <delta>=0 → intra-level edges
     │       ├── zarr.json        # link_width=2 for streamline/polyline
     │       └── c/ …             # one file per chunk_key
+    │
+    ├── link_fragments/          # fragment index over links/0/ rows (delta=0)
+    │   ├── zarr.json
+    │   └── c/ …
     │
     ├── cross_chunk_links/       # inter-chunk edges (global flat blob)
     │   └── 0/
@@ -130,7 +134,9 @@ tracts.zarrvectors/
     │
     ├── attributes/              # per-vertex attributes (e.g. FA, MD)
     │
-    ├── object_index/            # object ID → (chunk_coords, vg_index)
+    ├── object_index/            # per-object manifest blobs
+    │   ├── data                 # concatenated manifest bytes
+    │   └── offsets              # int64 array of per-object byte offsets
     │
     ├── object_attributes/       # per-object scalars (e.g. mean FA)
     │   ├── mean_fa/
@@ -169,9 +175,10 @@ neuron.zarrvectors/
 ├── metadata.json
 └── 0/
     ├── vertices/
-    ├── vertex_group_offsets/
+    ├── vertex_fragments/
     ├── links/
     │   └── 0/                   # link_width=2 for graphs / skeletons
+    ├── link_fragments/          # fragment index over links/0/ rows
     ├── cross_chunk_links/
     │   └── 0/
     ├── link_attributes/
@@ -194,9 +201,10 @@ brain.zarrvectors/
 ├── metadata.json
 └── 0/
     ├── vertices/
-    ├── vertex_group_offsets/
+    ├── vertex_fragments/
     ├── links/
     │   └── 0/                   # link_width=3 for triangle meshes
+    ├── link_fragments/          # fragment index over links/0/ rows
     ├── cross_chunk_links/
     │   └── 0/
     ├── attributes/
@@ -243,7 +251,8 @@ Per-vertex and per-object custom attributes must be placed under
 | `metadata.json` | All types | Recommended; not read by API |
 | `0/` | All types | At least one level required |
 | `vertices/` | All types | |
-| `vertex_group_offsets/` | All types | Required for spatial queries |
+| `vertex_fragments/` | All types | Required for spatial queries; see [Fragment-index arrays](vg_index_arrays.md) |
+| `link_fragments/` | polyline, streamline, graph, skeleton, mesh | Present at `<delta>=0` whenever `links/0/` is present |
 | `links/<delta>/` | polyline, streamline, graph, skeleton (`link_width=2`); mesh (`link_width=3`) | `<delta>=0` for intra-level edges; `<delta>=±N` for cross-pyramid-level edges (0.4+) |
 | `cross_chunk_links/<delta>/` | Any geometry whose objects can span multiple chunks | `<delta>=0` always; `±N` when `cross_level_depth > 0` |
 | `link_attributes/<name>/<delta>/` | Any geometry that wrote `edge_attributes` | Parallel to `links/<delta>/` |

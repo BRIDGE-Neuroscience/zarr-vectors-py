@@ -173,14 +173,18 @@ def partition_edges(
     cross_src_chunk = src_chunk[cross_mask]
     cross_dst_chunk = dst_chunk[cross_mask]
 
-    cross_links: list[CrossChunkLink] = []
-    for i in range(len(cross_edges)):
-        s, d = int(cross_edges[i, 0]), int(cross_edges[i, 1])
-        chunk_a = chunk_coords_list[int(cross_src_chunk[i])]
-        chunk_b = chunk_coords_list[int(cross_dst_chunk[i])]
-        local_a = int(vertex_local_indices[s])
-        local_b = int(vertex_local_indices[d])
-        cross_links.append(((chunk_a, local_a), (chunk_b, local_b)))
+    # Convert numpy → Python lists in one C-level pass; per-element int()
+    # conversions inside a Python for-loop dominate runtime otherwise.
+    src_chunk_list = cross_src_chunk.tolist()
+    dst_chunk_list = cross_dst_chunk.tolist()
+    local_a_list = vertex_local_indices[cross_edges[:, 0]].tolist()
+    local_b_list = vertex_local_indices[cross_edges[:, 1]].tolist()
+    cross_links: list[CrossChunkLink] = [
+        ((chunk_coords_list[ca], la), (chunk_coords_list[cb], lb))
+        for ca, la, cb, lb in zip(
+            src_chunk_list, local_a_list, dst_chunk_list, local_b_list,
+        )
+    ]
 
     return intra, cross_links
 
@@ -305,16 +309,13 @@ def partition_faces(
 
     # --- Cross-chunk faces ---
     cross_face_indices = np.flatnonzero(~all_same)
-    cross: list[list[tuple[ChunkCoords, int]]] = []
-    for fi in cross_face_indices:
-        face_ref: list[tuple[ChunkCoords, int]] = []
-        for vi in range(l):
-            global_vi = int(faces[fi, vi])
-            chunk_ci = int(vertex_chunks[global_vi])
-            coord = chunk_coords_list[chunk_ci]
-            local_vi = int(vertex_local_indices[global_vi])
-            face_ref.append((coord, local_vi))
-        cross.append(face_ref)
+    cross_faces_global = faces[cross_face_indices]                   # (F_cross, L)
+    cross_chunk_ids = vertex_chunks[cross_faces_global].tolist()     # nested Python ints
+    cross_local_ids = vertex_local_indices[cross_faces_global].tolist()
+    cross: list[list[tuple[ChunkCoords, int]]] = [
+        [(chunk_coords_list[ci], li) for ci, li in zip(row_chunks, row_locals)]
+        for row_chunks, row_locals in zip(cross_chunk_ids, cross_local_ids)
+    ]
 
     return intra, cross
 

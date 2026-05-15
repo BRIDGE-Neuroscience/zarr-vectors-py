@@ -104,9 +104,10 @@ zarr.json                   ← store root group
         c/0/0/0             ← chunk (0,0,0) data bytes
         c/0/0/1             ← chunk (0,0,1) data bytes
         …
-    vertex_group_offsets/
+    vertex_fragments/
         zarr.json
-        c/0/0/0
+        c/0/0/0             ← uint8 fragment-index blob for chunk (0,0,0)
+        c/0/0/1
         …
 ```
 

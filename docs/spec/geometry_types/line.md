@@ -41,8 +41,9 @@ unit is a two-point segment rather than an ordered path.
 | Array path | Required | Description |
 |-----------|----------|-------------|
 | `vertices/` | Yes | Endpoint positions, shape `(N, D)` float32 per chunk |
-| `vertex_group_offsets/` | Yes | VG index |
+| `vertex_fragments/` | Yes | Fragment index over `vertices/` rows |
 | `links/<delta>/` | Yes | Segment pairs, shape `(E, 2)` int32 per chunk |
+| `link_fragments/` | Yes (`<delta>=0`) | Fragment index over `links/0/` rows |
 | `attributes/<name>/` | No | Per-vertex attributes |
 
 No `object_index/`, `cross_chunk_links/`, or `object_attributes/` arrays.
@@ -145,7 +146,8 @@ segment pairs.
 
 ### Validation
 
-L1: `vertices/`, `vertex_group_offsets/`, `links/<delta>/` exist.
+L1: `vertices/`, `vertex_fragments/`, `links/<delta>/`, and `link_fragments/`
+(at `<delta>=0`) exist.
 
 L2: No `object_index/` or `cross_chunk_links/` present.
 

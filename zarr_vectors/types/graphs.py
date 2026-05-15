@@ -26,6 +26,7 @@ from zarr_vectors.constants import (
     CROSS_CHUNK_LINKS,
     GEOM_GRAPH,
     GEOM_SKELETON,
+    LINK_FRAGMENTS,
     LINKS,
     LINKS_EXPLICIT,
     LINKS_IMPLICIT_BRANCHES,
@@ -554,6 +555,7 @@ def read_graph(
         (VERTICES, _chunk_key_strs),
         (VERTEX_FRAGMENTS, _chunk_key_strs),
         (f"{LINKS}/0", _chunk_key_strs),
+        (LINK_FRAGMENTS, _chunk_key_strs),
         (f"{CROSS_CHUNK_LINKS}/0", ["data"]),
     ]
     _batched_reads_cm = level_group.batched_reads(_prefetch_plan)

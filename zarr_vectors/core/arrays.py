@@ -12,6 +12,7 @@ the store or encoding modules directly.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
 
 import numpy as np
@@ -81,6 +82,27 @@ def _parse_chunk_key(key: str) -> ChunkCoords:
     ``"0.1.2"`` → ``(0, 1, 2)``
     """
     return tuple(int(x) for x in key.split("."))
+
+
+@contextmanager
+def _maybe_batched_reads(
+    level_group: FsGroup,
+    plan: list[tuple[str, list[str]]],
+):
+    """Open a single-chunk prefetch unless one is already active.
+
+    Wraps :meth:`FsGroup.batched_reads` for the common "I'm about to
+    read N>1 sibling arrays for one chunk" case: it fans the reads out
+    in one ``asyncio.gather`` instead of paying N sequential
+    round-trips.  When the caller has already entered an outer
+    :meth:`batched_reads` context (i.e. a multi-chunk loop), this is a
+    no-op so the outer plan stays in charge.
+    """
+    if level_group._prefetch_cache is not None:
+        yield
+        return
+    with level_group.batched_reads(plan):
+        yield
 
 
 def _ensure_array_dir(level_group: FsGroup, array_name: str) -> None:
@@ -843,15 +865,19 @@ def read_chunk_vertices(
     key = _chunk_key(chunk_coords)
     dtype = np.dtype(dtype)
 
-    try:
-        raw = level_group.read_bytes(VERTICES, key)
-    except Exception as e:
-        raise ArrayError(f"Cannot read vertices chunk {key}: {e}") from e
+    with _maybe_batched_reads(level_group, [
+        (VERTICES, [key]),
+        (VERTEX_FRAGMENTS, [key]),
+    ]):
+        try:
+            raw = level_group.read_bytes(VERTICES, key)
+        except Exception as e:
+            raise ArrayError(f"Cannot read vertices chunk {key}: {e}") from e
 
-    bytes_per_vertex = int(dtype.itemsize) * int(ndim)
-    offsets = _read_vertex_offsets(
-        level_group, chunk_coords, bytes_per_vertex=bytes_per_vertex,
-    )
+        bytes_per_vertex = int(dtype.itemsize) * int(ndim)
+        offsets = _read_vertex_offsets(
+            level_group, chunk_coords, bytes_per_vertex=bytes_per_vertex,
+        )
     return decode_vertex_groups(raw, offsets, dtype, ndim)
 
 
@@ -877,11 +903,15 @@ def read_vertex_group(
     key = _chunk_key(chunk_coords)
     dtype = np.dtype(dtype)
 
-    raw = level_group.read_bytes(VERTICES, key)
-    bytes_per_vertex = int(dtype.itemsize) * int(ndim)
-    offsets = _read_vertex_offsets(
-        level_group, chunk_coords, bytes_per_vertex=bytes_per_vertex,
-    )
+    with _maybe_batched_reads(level_group, [
+        (VERTICES, [key]),
+        (VERTEX_FRAGMENTS, [key]),
+    ]):
+        raw = level_group.read_bytes(VERTICES, key)
+        bytes_per_vertex = int(dtype.itemsize) * int(ndim)
+        offsets = _read_vertex_offsets(
+            level_group, chunk_coords, bytes_per_vertex=bytes_per_vertex,
+        )
 
     if vg_index < 0 or vg_index >= len(offsets):
         raise ArrayError(
@@ -928,38 +958,45 @@ def read_chunk_links(
         meta = level_group.read_array_meta(full_name)
         link_width = meta.get("link_width", 2)
 
-    try:
-        raw = level_group.read_bytes(full_name, key)
-    except Exception as e:
-        raise ArrayError(
-            f"Cannot read links chunk {key} (delta={format_delta(delta)}): {e}"
-        ) from e
-
+    # delta == 0 needs both the link bytes and the fragment-index sibling;
+    # delta != 0 keeps the v0.5 inline self-describing layout (one blob).
+    plan: list[tuple[str, list[str]]] = [(full_name, [key])]
     if delta == 0:
-        # v0.6 intra-level layout: raw is the flat concatenated link
-        # data; per-group row counts live in link_fragments/<chunk>.
-        fi = read_link_fragment_index(level_group, chunk_coords)
-        groups: list[npt.NDArray[np.integer]] = []
-        row_size = int(dtype.itemsize) * int(link_width)
-        for f in range(fi.num_fragments):
-            if not fi.is_range(f):
-                raise ArrayError(
-                    f"link_fragments/{key} fragment {f} is non-contiguous; "
-                    "read_chunk_links requires every fragment to be a "
-                    "contiguous range over rows of links/0/<chunk>.",
-                )
-            start, count = fi.range(f)
-            byte_lo = int(start) * row_size
-            byte_hi = byte_lo + int(count) * row_size
-            segment = raw[byte_lo:byte_hi]
-            arr = np.frombuffer(segment, dtype=dtype)
-            if link_width > 1:
-                arr = arr.reshape(-1, link_width)
-            groups.append(arr)
-        return groups
+        plan.append((LINK_FRAGMENTS, [key]))
 
-    # Cross-level delta != 0: v0.5 inline self-describing layout.
-    return decode_ragged_blob(raw, dtype, ncols=link_width)
+    with _maybe_batched_reads(level_group, plan):
+        try:
+            raw = level_group.read_bytes(full_name, key)
+        except Exception as e:
+            raise ArrayError(
+                f"Cannot read links chunk {key} (delta={format_delta(delta)}): {e}"
+            ) from e
+
+        if delta == 0:
+            # v0.6 intra-level layout: raw is the flat concatenated link
+            # data; per-group row counts live in link_fragments/<chunk>.
+            fi = read_link_fragment_index(level_group, chunk_coords)
+            groups: list[npt.NDArray[np.integer]] = []
+            row_size = int(dtype.itemsize) * int(link_width)
+            for f in range(fi.num_fragments):
+                if not fi.is_range(f):
+                    raise ArrayError(
+                        f"link_fragments/{key} fragment {f} is non-contiguous; "
+                        "read_chunk_links requires every fragment to be a "
+                        "contiguous range over rows of links/0/<chunk>.",
+                    )
+                start, count = fi.range(f)
+                byte_lo = int(start) * row_size
+                byte_hi = byte_lo + int(count) * row_size
+                segment = raw[byte_lo:byte_hi]
+                arr = np.frombuffer(segment, dtype=dtype)
+                if link_width > 1:
+                    arr = arr.reshape(-1, link_width)
+                groups.append(arr)
+            return groups
+
+        # Cross-level delta != 0: v0.5 inline self-describing layout.
+        return decode_ragged_blob(raw, dtype, ncols=link_width)
 
 
 def read_chunk_attributes(
@@ -1010,19 +1047,23 @@ def read_chunk_attributes(
     if vert_ndim is None:
         vert_ndim = _infer_vert_ndim(level_group)
 
-    try:
-        raw = level_group.read_bytes(full_name, key)
-    except Exception as e:
-        raise ArrayError(
-            f"Cannot read attribute '{attr_name}' chunk {key}: {e}"
-        ) from e
+    with _maybe_batched_reads(level_group, [
+        (full_name, [key]),
+        (VERTEX_FRAGMENTS, [key]),
+    ]):
+        try:
+            raw = level_group.read_bytes(full_name, key)
+        except Exception as e:
+            raise ArrayError(
+                f"Cannot read attribute '{attr_name}' chunk {key}: {e}"
+            ) from e
 
-    attr_offsets = _derive_attribute_offsets(
-        level_group, chunk_coords,
-        vert_dtype=vert_dtype, vert_ndim=vert_ndim,
-        attr_dtype=dtype, attr_ncols=ncols,
-        total_attr_bytes=len(raw),
-    )
+        attr_offsets = _derive_attribute_offsets(
+            level_group, chunk_coords,
+            vert_dtype=vert_dtype, vert_ndim=vert_ndim,
+            attr_dtype=dtype, attr_ncols=ncols,
+            total_attr_bytes=len(raw),
+        )
     return decode_vertex_groups(raw, attr_offsets, dtype, ncols)
 
 
@@ -1114,11 +1155,14 @@ def read_object_manifest(
         raise ArrayError(
             f"Object ID {object_id} out of range [0, {num_objects})"
         )
-    raw = level_group.read_bytes(OBJECT_INDEX, "data")
-    offsets = np.frombuffer(
-        level_group.read_bytes(OBJECT_INDEX, "offsets"),
-        dtype=np.int64,
-    )
+    with _maybe_batched_reads(level_group, [
+        (OBJECT_INDEX, ["data", "offsets"]),
+    ]):
+        raw = level_group.read_bytes(OBJECT_INDEX, "data")
+        offsets = np.frombuffer(
+            level_group.read_bytes(OBJECT_INDEX, "offsets"),
+            dtype=np.int64,
+        )
     return _decode_one_manifest(raw, offsets, sid_ndim, object_id, num_objects)
 
 
@@ -1134,11 +1178,14 @@ def read_all_object_manifests(
     sid_ndim = meta["sid_ndim"]
     num_objects = int(meta.get("num_objects", 0))
 
-    raw = level_group.read_bytes(OBJECT_INDEX, "data")
-    offsets = np.frombuffer(
-        level_group.read_bytes(OBJECT_INDEX, "offsets"),
-        dtype=np.int64,
-    )
+    with _maybe_batched_reads(level_group, [
+        (OBJECT_INDEX, ["data", "offsets"]),
+    ]):
+        raw = level_group.read_bytes(OBJECT_INDEX, "data")
+        offsets = np.frombuffer(
+            level_group.read_bytes(OBJECT_INDEX, "offsets"),
+            dtype=np.int64,
+        )
     return [
         _decode_one_manifest(raw, offsets, sid_ndim, i, num_objects)
         for i in range(num_objects)
@@ -1203,11 +1250,26 @@ def read_object_vertices(
         List of vertex group arrays in reconstruction order.
     """
     manifest = read_object_manifest(level_group, object_id)
-    groups: list[npt.NDArray] = []
-    for chunk_coords, vg_index in manifest:
-        vg = read_vertex_group(level_group, chunk_coords, vg_index,
-                               dtype=dtype, ndim=ndim)
-        groups.append(vg)
+    if not manifest:
+        return []
+
+    # Prefetch every chunk this object touches in one async gather, so
+    # the per-fragment read_vertex_group calls below hit the cache
+    # instead of paying one round-trip per fragment.  Distinct chunks
+    # appear once in the plan; multiple fragments inside the same chunk
+    # share the same cache entry.
+    chunk_keys = sorted({_chunk_key(cc) for cc, _ in manifest})
+    with _maybe_batched_reads(level_group, [
+        (VERTICES, chunk_keys),
+        (VERTEX_FRAGMENTS, chunk_keys),
+    ]):
+        groups: list[npt.NDArray] = []
+        for chunk_coords, vg_index in manifest:
+            vg = read_vertex_group(
+                level_group, chunk_coords, vg_index,
+                dtype=dtype, ndim=ndim,
+            )
+            groups.append(vg)
     return groups
 
 

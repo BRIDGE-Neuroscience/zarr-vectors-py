@@ -23,6 +23,7 @@ from zarr_vectors.constants import (
     ENCODING_DRACO,
     ENCODING_RAW,
     GEOM_MESH,
+    LINK_FRAGMENTS,
     LINKS,
     LINKS_EXPLICIT,
     OBJIDX_STANDARD,
@@ -427,6 +428,7 @@ def read_mesh(
         (VERTICES, chunk_key_strs),
         (VERTEX_FRAGMENTS, chunk_key_strs),
         (f"{LINKS}/0", chunk_key_strs),
+        (LINK_FRAGMENTS, chunk_key_strs),
         (f"{CROSS_CHUNK_LINKS}/0", ["data"]),
     ]
     _batched_reads_cm = level_group.batched_reads(_prefetch_plan)

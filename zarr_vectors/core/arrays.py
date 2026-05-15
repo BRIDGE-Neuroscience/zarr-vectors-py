@@ -23,11 +23,12 @@ from zarr_vectors.constants import (
     GROUP_ATTRIBUTES,
     GROUPS,
     LINK_ATTRIBUTES,
+    LINK_FRAGMENTS,
     LINKS,
     OBJECT_ATTRIBUTES,
     OBJECT_INDEX,
     VERTEX_ATTRIBUTES,
-    VERTEX_GROUP_OFFSETS,
+    VERTEX_FRAGMENTS,
     VERTICES,
 )
 from zarr_vectors.core.paths import (
@@ -39,17 +40,20 @@ from zarr_vectors.core.paths import (
     parse_delta,
 )
 from zarr_vectors.core.store import FsGroup
+from zarr_vectors.encoding.fragments import (
+    FragmentIndex,
+    decode_fragments,
+    decode_object_manifest_blocks,
+    encode_fragments,
+    encode_object_manifest_blocks,
+)
 from zarr_vectors.encoding.ragged import (
-    decode_object_index,
     decode_ragged_blob,
     decode_ragged_ints,
     decode_vertex_groups,
-    decode_vertex_offsets,
-    encode_object_index,
     encode_ragged_blob,
     encode_ragged_ints,
     encode_vertex_groups,
-    encode_vertex_offsets,
 )
 from zarr_vectors.exceptions import ArrayError
 from zarr_vectors.typing import (
@@ -122,11 +126,15 @@ def create_vertices_array(
         encoding: ``"raw"`` or ``"draco"``.
     """
     _ensure_array_dir(level_group, VERTICES)
-    _ensure_array_dir(level_group, VERTEX_GROUP_OFFSETS)
+    _ensure_array_dir(level_group, VERTEX_FRAGMENTS)
     level_group.write_array_meta(VERTICES, {
         "zv_array": "vertices",
         "dtype": dtype,
         "encoding": encoding,
+    })
+    level_group.write_array_meta(VERTEX_FRAGMENTS, {
+        "zv_array": VERTEX_FRAGMENTS,
+        "encoding": "fragment_index_v1",
     })
 
 
@@ -326,8 +334,8 @@ def write_chunk_vertices(
     """Write vertex groups to a spatial chunk.
 
     Encodes the groups as a contiguous byte buffer in ``vertices/`` and
-    writes the ``(K,)`` int64 vertex byte offsets to
-    ``vertex_group_offsets/``.
+    writes a v0.6 fragment-index to ``vertex_fragments/`` describing each
+    group as a contiguous range of vertex rows in source order.
 
     Args:
         level_group: Resolution level group.
@@ -336,17 +344,30 @@ def write_chunk_vertices(
         dtype: Numpy dtype for serialisation.
 
     Returns:
-        ``(K,)`` int64 array of vertex byte offsets.
+        ``(K,)`` int64 array of vertex byte offsets (kept for backwards-
+        compatible signature; callers that need the v0.6 fragment-index
+        should use :func:`read_vertex_fragment_index`).
     """
     dtype = np.dtype(dtype)
     key = _chunk_key(chunk_coords)
 
-    raw_bytes, vertex_offsets = encode_vertex_groups(groups, dtype)
+    raw_bytes, vertex_byte_offsets = encode_vertex_groups(groups, dtype)
     level_group.write_bytes(VERTICES, key, raw_bytes)
+
+    # Express each group as a contiguous (start_row, count) fragment.
+    if len(groups) == 0:
+        fragments: list[tuple[int, int]] = []
+    else:
+        per_group_counts = [int(np.asarray(g).shape[0]) for g in groups]
+        cumulative = 0
+        fragments = []
+        for n in per_group_counts:
+            fragments.append((cumulative, n))
+            cumulative += n
     level_group.write_bytes(
-        VERTEX_GROUP_OFFSETS, key, encode_vertex_offsets(vertex_offsets),
+        VERTEX_FRAGMENTS, key, encode_fragments(fragments),
     )
-    return vertex_offsets
+    return vertex_byte_offsets
 
 
 def write_chunk_links(
@@ -382,24 +403,59 @@ def write_chunk_links(
     key = _chunk_key(chunk_coords)
     full_name = links_path(delta)
 
-    if delta == 0 and level_group.chunk_exists(VERTEX_GROUP_OFFSETS, key):
-        existing = level_group.read_bytes(VERTEX_GROUP_OFFSETS, key)
-        vertex_offsets = decode_vertex_offsets(existing)
-        if len(vertex_offsets) != len(link_groups):
+    if delta == 0 and level_group.chunk_exists(VERTEX_FRAGMENTS, key):
+        existing_fi = decode_fragments(
+            level_group.read_bytes(VERTEX_FRAGMENTS, key),
+        )
+        if existing_fi.num_fragments != len(link_groups):
             raise ArrayError(
                 f"Link group count ({len(link_groups)}) != "
-                f"vertex group count ({len(vertex_offsets)}) in chunk {key}"
+                f"vertex fragment count ({existing_fi.num_fragments}) in chunk {key}"
             )
 
-    # Self-describing blob: per-group byte offsets are packed in an
-    # inline header followed by the concatenated link data.
+    if delta == 0:
+        # v0.6 intra-level: flat concatenated link data + sibling
+        # link_fragments/ describing per-group row ranges.
+        data_bytes, link_byte_offsets = encode_ragged_ints(link_groups, dtype)
+        level_group.write_bytes(full_name, key, data_bytes)
+
+        link_row_size = dtype.itemsize * (
+            int(np.asarray(link_groups[0]).shape[1]) if (
+                link_groups and np.asarray(link_groups[0]).ndim == 2
+            ) else 1
+        )
+        # Fragment per group as a contiguous range of link rows.
+        if len(link_groups) == 0:
+            link_fragments: list[tuple[int, int]] = []
+        else:
+            cumulative = 0
+            link_fragments = []
+            for g in link_groups:
+                n = int(np.asarray(g).shape[0]) if np.asarray(g).ndim >= 1 else 0
+                link_fragments.append((cumulative, n))
+                cumulative += n
+        # Ensure the sibling array group exists.
+        if not level_group.chunk_exists(LINK_FRAGMENTS, key):
+            level_group.require_group(LINK_FRAGMENTS)
+            try:
+                level_group.read_array_meta(LINK_FRAGMENTS)
+            except Exception:
+                level_group.write_array_meta(LINK_FRAGMENTS, {
+                    "zv_array": LINK_FRAGMENTS,
+                    "encoding": "fragment_index_v1",
+                })
+        level_group.write_bytes(
+            LINK_FRAGMENTS, key, encode_fragments(link_fragments),
+        )
+        del link_row_size  # silence unused-variable warning
+        return link_byte_offsets
+
+    # delta != 0: cross-level links keep the v0.5 inline self-describing
+    # layout (out of scope for the v0.6 fragment-index refactor).
     blob = encode_ragged_blob(link_groups, dtype)
     level_group.write_bytes(full_name, key, blob)
-
-    # Recover the per-group byte offsets (relative to the data section)
-    # for the return value.
-    _, link_offsets = encode_ragged_ints(link_groups, dtype)
-    return link_offsets
+    _, link_byte_offsets = encode_ragged_ints(link_groups, dtype)
+    return link_byte_offsets
 
 
 def write_chunk_attributes(
@@ -492,9 +548,26 @@ def write_object_index(
     for oid in range(size):
         manifest_list.append(manifests.get(oid, []))
 
-    raw_bytes, offsets = encode_object_index(manifest_list, sid_ndim)
+    # v0.6 manifest-block encoding.  Each old (chunk, vg_index) tuple
+    # becomes one mode-0 (single fragment) block.  Range / explicit
+    # short-circuits are reserved for writers that know they produce
+    # ranges or fragment-list shapes — to be plumbed through the
+    # higher-level write APIs in a future change.
+    blob_parts: list[bytes] = []
+    offsets_arr = np.empty(len(manifest_list), dtype=np.int64)
+    cur = 0
+    for i, manifest in enumerate(manifest_list):
+        blocks = [
+            (tuple(int(c) for c in chunk_coords), int(vg_index))
+            for chunk_coords, vg_index in manifest
+        ]
+        blob = encode_object_manifest_blocks(blocks, sid_ndim=sid_ndim)
+        blob_parts.append(blob)
+        offsets_arr[i] = cur
+        cur += len(blob)
+    raw_bytes = b"".join(blob_parts)
     level_group.write_bytes(OBJECT_INDEX, "data", raw_bytes)
-    level_group.write_bytes(OBJECT_INDEX, "offsets", offsets.tobytes())
+    level_group.write_bytes(OBJECT_INDEX, "offsets", offsets_arr.tobytes())
     level_group.write_array_meta(OBJECT_INDEX, {
         "zv_array": "object_index",
         "num_objects": size,
@@ -775,7 +848,10 @@ def read_chunk_vertices(
     except Exception as e:
         raise ArrayError(f"Cannot read vertices chunk {key}: {e}") from e
 
-    offsets = _read_vertex_offsets(level_group, chunk_coords)
+    bytes_per_vertex = int(dtype.itemsize) * int(ndim)
+    offsets = _read_vertex_offsets(
+        level_group, chunk_coords, bytes_per_vertex=bytes_per_vertex,
+    )
     return decode_vertex_groups(raw, offsets, dtype, ndim)
 
 
@@ -802,7 +878,10 @@ def read_vertex_group(
     dtype = np.dtype(dtype)
 
     raw = level_group.read_bytes(VERTICES, key)
-    offsets = _read_vertex_offsets(level_group, chunk_coords)
+    bytes_per_vertex = int(dtype.itemsize) * int(ndim)
+    offsets = _read_vertex_offsets(
+        level_group, chunk_coords, bytes_per_vertex=bytes_per_vertex,
+    )
 
     if vg_index < 0 or vg_index >= len(offsets):
         raise ArrayError(
@@ -856,6 +935,30 @@ def read_chunk_links(
             f"Cannot read links chunk {key} (delta={format_delta(delta)}): {e}"
         ) from e
 
+    if delta == 0:
+        # v0.6 intra-level layout: raw is the flat concatenated link
+        # data; per-group row counts live in link_fragments/<chunk>.
+        fi = read_link_fragment_index(level_group, chunk_coords)
+        groups: list[npt.NDArray[np.integer]] = []
+        row_size = int(dtype.itemsize) * int(link_width)
+        for f in range(fi.num_fragments):
+            if not fi.is_range(f):
+                raise ArrayError(
+                    f"link_fragments/{key} fragment {f} is non-contiguous; "
+                    "read_chunk_links requires every fragment to be a "
+                    "contiguous range over rows of links/0/<chunk>.",
+                )
+            start, count = fi.range(f)
+            byte_lo = int(start) * row_size
+            byte_hi = byte_lo + int(count) * row_size
+            segment = raw[byte_lo:byte_hi]
+            arr = np.frombuffer(segment, dtype=dtype)
+            if link_width > 1:
+                arr = arr.reshape(-1, link_width)
+            groups.append(arr)
+        return groups
+
+    # Cross-level delta != 0: v0.5 inline self-describing layout.
     return decode_ragged_blob(raw, dtype, ncols=link_width)
 
 
@@ -962,25 +1065,31 @@ def _derive_attribute_offsets(
     vertex data, which corresponds to ``n_k`` vertices (and therefore
     ``n_k`` attribute rows).
     """
-    vert_offsets = _read_vertex_offsets(level_group, chunk_coords)
-    if len(vert_offsets) == 0:
-        return np.empty(0, dtype=np.int64)
     vert_row_size = vert_dtype.itemsize * vert_ndim
     if vert_row_size <= 0:
         return np.empty(0, dtype=np.int64)
-    # Vertex byte size per group → vertex count per group.
-    key = _chunk_key(chunk_coords)
-    vert_total = len(level_group.read_bytes(VERTICES, key))
-    ends = np.empty_like(vert_offsets)
-    if len(vert_offsets) > 1:
-        ends[:-1] = vert_offsets[1:]
-    ends[-1] = vert_total
-    n_per_group = (ends - vert_offsets) // vert_row_size
+    fi = read_vertex_fragment_index(level_group, chunk_coords)
+    if fi.num_fragments == 0:
+        return np.empty(0, dtype=np.int64)
+    # Per-fragment vertex row count.  Today's writers always emit
+    # range fragments; non-contiguous shapes will need a richer
+    # attribute-alignment story (out of scope for this change).
+    n_per_group = np.empty(fi.num_fragments, dtype=np.int64)
+    for f in range(fi.num_fragments):
+        if not fi.is_range(f):
+            raise ArrayError(
+                f"vertex_fragments fragment {f} is non-contiguous; "
+                "attribute alignment requires every fragment to be a "
+                "contiguous range of vertex rows.",
+            )
+        _start, count = fi.range(f)
+        n_per_group[f] = int(count)
     attr_row_size = attr_dtype.itemsize * attr_ncols
-    attr_byte_lengths = n_per_group.astype(np.int64) * int(attr_row_size)
+    attr_byte_lengths = n_per_group * int(attr_row_size)
     attr_offsets = np.empty_like(attr_byte_lengths)
     attr_offsets[0] = 0
     np.cumsum(attr_byte_lengths[:-1], out=attr_offsets[1:])
+    del total_attr_bytes  # signature retained for caller compat
     return attr_offsets
 
 
@@ -1010,8 +1119,7 @@ def read_object_manifest(
         level_group.read_bytes(OBJECT_INDEX, "offsets"),
         dtype=np.int64,
     )
-    all_manifests = decode_object_index(raw, offsets, sid_ndim)
-    return all_manifests[object_id]
+    return _decode_one_manifest(raw, offsets, sid_ndim, object_id, num_objects)
 
 
 def read_all_object_manifests(
@@ -1024,13 +1132,57 @@ def read_all_object_manifests(
     """
     meta = level_group.read_array_meta(OBJECT_INDEX)
     sid_ndim = meta["sid_ndim"]
+    num_objects = int(meta.get("num_objects", 0))
 
     raw = level_group.read_bytes(OBJECT_INDEX, "data")
     offsets = np.frombuffer(
         level_group.read_bytes(OBJECT_INDEX, "offsets"),
         dtype=np.int64,
     )
-    return list(decode_object_index(raw, offsets, sid_ndim))
+    return [
+        _decode_one_manifest(raw, offsets, sid_ndim, i, num_objects)
+        for i in range(num_objects)
+    ]
+
+
+def _decode_one_manifest(
+    data: bytes,
+    offsets: npt.NDArray[np.int64],
+    sid_ndim: int,
+    object_id: int,
+    num_objects: int,
+) -> ObjectManifest:
+    """Slice + decode one object's manifest from the v0.6 block-encoded
+    ``object_index/data`` blob and expand to the legacy
+    ``[(chunk_coords, vg_index), ...]`` tuple list.
+
+    Mode-1 (range) and mode-2 (explicit list) blocks expand to one
+    tuple per fragment so existing call sites that iterate
+    ``(chunk_coords, vg_index)`` keep working unchanged.  Callers that
+    want the raw block representation can use
+    :func:`zarr_vectors.encoding.fragments.decode_object_manifest_blocks`
+    directly.
+    """
+    start = int(offsets[object_id])
+    end = (
+        int(offsets[object_id + 1])
+        if object_id + 1 < num_objects
+        else len(data)
+    )
+    blocks = decode_object_manifest_blocks(data[start:end], sid_ndim=sid_ndim)
+    out: ObjectManifest = []
+    for chunk_coords, frag_ref in blocks:
+        if isinstance(frag_ref, int):
+            out.append((chunk_coords, int(frag_ref)))
+        elif isinstance(frag_ref, tuple):
+            r_start, r_count = frag_ref
+            for k in range(int(r_count)):
+                out.append((chunk_coords, int(r_start) + k))
+        else:
+            # np.ndarray of explicit indices
+            for idx in frag_ref:
+                out.append((chunk_coords, int(idx)))
+    return out
 
 
 def read_object_vertices(
@@ -1374,22 +1526,81 @@ def count_vertex_groups(
     level_group: FsGroup,
     chunk_coords: ChunkCoords,
 ) -> int:
-    """Count vertex groups in a chunk (from offsets array)."""
-    offsets = _read_vertex_offsets(level_group, chunk_coords)
-    return len(offsets)
+    """Count vertex groups in a chunk by reading the fragment-index header."""
+    return len(read_vertex_fragment_index(level_group, chunk_coords))
 
 
 # ===================================================================
 # Internal helpers
 # ===================================================================
 
+def read_vertex_fragment_index(
+    level_group: FsGroup,
+    chunk_coords: ChunkCoords,
+) -> FragmentIndex:
+    """Read and decode the ``vertex_fragments/<chunk>`` blob.
+
+    Returns the v0.6 :class:`FragmentIndex` view describing how rows of
+    ``vertices/<chunk>`` partition into fragments.
+    """
+    key = _chunk_key(chunk_coords)
+    raw = level_group.read_bytes(VERTEX_FRAGMENTS, key)
+    return decode_fragments(raw)
+
+
+def read_link_fragment_index(
+    level_group: FsGroup,
+    chunk_coords: ChunkCoords,
+) -> FragmentIndex:
+    """Read and decode the ``link_fragments/<chunk>`` blob (delta=0 only)."""
+    key = _chunk_key(chunk_coords)
+    raw = level_group.read_bytes(LINK_FRAGMENTS, key)
+    return decode_fragments(raw)
+
+
 def _read_vertex_offsets(
     level_group: FsGroup,
     chunk_coords: ChunkCoords,
+    *,
+    bytes_per_vertex: int | None = None,
 ) -> npt.NDArray[np.int64]:
-    """Read the ``(K,)`` int64 vertex byte offsets for a chunk."""
-    key = _chunk_key(chunk_coords)
-    raw = level_group.read_bytes(VERTEX_GROUP_OFFSETS, key)
-    return decode_vertex_offsets(raw)
+    """Read the ``(K,)`` int64 vertex byte offsets for a chunk.
+
+    Computed from the v0.6 ``vertex_fragments/<chunk>`` index.  Every
+    fragment must be a contiguous range over rows of ``vertices/<chunk>``
+    — the only shape the existing writer produces.  Stores written by
+    future writers that materialise non-contiguous / shared-row
+    fragments must use the higher-level fragment-index API directly;
+    this helper raises rather than silently lying about a byte offset
+    that doesn't exist.
+
+    Args:
+        level_group: Resolution level group.
+        chunk_coords: Spatial chunk coordinates.
+        bytes_per_vertex: Bytes per vertex row.  When omitted it is
+            inferred from the ``vertices/`` array's ``dtype`` metadata
+            and the root NGFF axes count.
+    """
+    if bytes_per_vertex is None:
+        vmeta = level_group.read_array_meta(VERTICES)
+        vdtype = np.dtype(vmeta.get("dtype", "float32"))
+        ndim = _infer_vert_ndim(level_group)
+        bytes_per_vertex = int(vdtype.itemsize) * int(ndim)
+    fi = read_vertex_fragment_index(level_group, chunk_coords)
+    if fi.num_fragments == 0:
+        return np.empty(0, dtype=np.int64)
+    offsets = np.empty(fi.num_fragments, dtype=np.int64)
+    for i in range(fi.num_fragments):
+        if not fi.is_range(i):
+            raise ArrayError(
+                f"vertex_fragments/{_chunk_key(chunk_coords)} fragment {i} "
+                "is non-contiguous; byte-offset access requires every "
+                "fragment to be a contiguous range over rows of "
+                "vertices/<chunk>.  Use read_vertex_fragment_index() "
+                "directly for non-contiguous fragments.",
+            )
+        start, _count = fi.range(i)
+        offsets[i] = int(start) * int(bytes_per_vertex)
+    return offsets
 
 

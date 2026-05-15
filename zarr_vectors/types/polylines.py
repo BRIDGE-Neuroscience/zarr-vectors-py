@@ -24,7 +24,7 @@ from zarr_vectors.constants import (
     GEOM_STREAMLINE,
     LINKS_IMPLICIT_SEQUENTIAL,
     OBJIDX_STANDARD,
-    VERTEX_GROUP_OFFSETS,
+    VERTEX_FRAGMENTS,
     VERTICES,
 )
 from zarr_vectors.core.arrays import (
@@ -522,7 +522,7 @@ def read_polylines(
     ]
     prefetch_plan: list[tuple[str, list[str]]] = [
         (VERTICES, chunk_key_strs),
-        (VERTEX_GROUP_OFFSETS, chunk_key_strs),
+        (VERTEX_FRAGMENTS, chunk_key_strs),
     ]
 
     _batched_reads_cm = level_group.batched_reads(prefetch_plan)

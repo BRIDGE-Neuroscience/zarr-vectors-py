@@ -26,7 +26,7 @@ from zarr_vectors.constants import (
     LINKS,
     LINKS_EXPLICIT,
     OBJIDX_STANDARD,
-    VERTEX_GROUP_OFFSETS,
+    VERTEX_FRAGMENTS,
     VERTICES,
 )
 from zarr_vectors.core.arrays import (
@@ -425,7 +425,7 @@ def read_mesh(
     chunk_key_strs = [".".join(str(c) for c in cc) for cc in chunk_keys]
     _prefetch_plan: list[tuple[str, list[str]]] = [
         (VERTICES, chunk_key_strs),
-        (VERTEX_GROUP_OFFSETS, chunk_key_strs),
+        (VERTEX_FRAGMENTS, chunk_key_strs),
         (f"{LINKS}/0", chunk_key_strs),
         (f"{CROSS_CHUNK_LINKS}/0", ["data"]),
     ]
@@ -552,15 +552,19 @@ def _write_draco_chunk(
         blob = draco_encode_mesh(positions, faces, quantization_bits=qbits)
 
     # Store as raw bytes in the vertices chunk
+    from zarr_vectors.constants import VERTEX_FRAGMENTS, VERTICES
     from zarr_vectors.core.arrays import _chunk_key
-    from zarr_vectors.encoding.ragged import encode_vertex_offsets
+    from zarr_vectors.encoding.fragments import encode_fragments
 
     key = _chunk_key(chunk_coords)
-    level_group.write_bytes("vertices", key, blob)
+    level_group.write_bytes(VERTICES, key, blob)
 
-    # Single vertex group spanning whole chunk
-    v_off = np.array([0], dtype=np.int64)
+    # Single fragment spanning the whole chunk.  Draco-encoded vertex
+    # blobs aren't row-addressable, so we describe the (start, count)
+    # in vertex *rows* as (0, num_positions) — the read path knows to
+    # treat Draco chunks as a single span.
+    num_positions = int(np.asarray(positions).shape[0])
     level_group.write_bytes(
-        "vertex_group_offsets", key,
-        encode_vertex_offsets(v_off),
+        VERTEX_FRAGMENTS, key,
+        encode_fragments([(0, num_positions)]),
     )

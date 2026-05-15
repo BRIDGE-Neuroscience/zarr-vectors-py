@@ -48,7 +48,7 @@ class TestImports:
             OBJIDX_STANDARD, OBJIDX_IDENTITY,
             VALID_GEOMETRY_TYPES,
         )
-        assert FORMAT_VERSION.startswith("0.5")
+        assert FORMAT_VERSION.startswith("0.6")
         assert len(VALID_GEOMETRY_TYPES) == 7
 
 

@@ -30,7 +30,7 @@ from zarr_vectors.constants import (
     LINKS_EXPLICIT,
     LINKS_IMPLICIT_BRANCHES,
     OBJIDX_STANDARD,
-    VERTEX_GROUP_OFFSETS,
+    VERTEX_FRAGMENTS,
     VERTICES,
 )
 from zarr_vectors.core.arrays import (
@@ -552,7 +552,7 @@ def read_graph(
     _chunk_key_strs = [".".join(str(c) for c in cc) for cc in chunk_keys]
     _prefetch_plan: list[tuple[str, list[str]]] = [
         (VERTICES, _chunk_key_strs),
-        (VERTEX_GROUP_OFFSETS, _chunk_key_strs),
+        (VERTEX_FRAGMENTS, _chunk_key_strs),
         (f"{LINKS}/0", _chunk_key_strs),
         (f"{CROSS_CHUNK_LINKS}/0", ["data"]),
     ]

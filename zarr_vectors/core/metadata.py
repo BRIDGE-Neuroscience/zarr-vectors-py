@@ -301,7 +301,11 @@ class RootMetadata:
         #                 were duplicated under
         #                 ``zarr_vectors.spatial_index_dims``; per-array
         #                 ``.zattrs`` carried a redundant ``dtype`` field.
-        # No shims ship; older stores must be re-written.
+        #   - pre-0.6.0 : ``vertex_group_offsets`` instead of
+        #                 ``vertex_fragments``; links carried an inline
+        #                 self-describing header; ``object_index`` used
+        #                 the flat quad encoding.
+        # No shims ship; older stores must be rewritten from source.
         parts = self.zv_version.split(".")
         try:
             major = int(parts[0])
@@ -311,14 +315,12 @@ class RootMetadata:
             raise MetadataError(
                 f"zv_version {self.zv_version!r} is not a valid X.Y[.Z] string"
             ) from exc
-        if (major, minor, patch) < (0, 5, 0):
+        if (major, minor, patch) < (0, 6, 0):
             raise MetadataError(
                 f"store zv_version is {self.zv_version}; this build "
                 f"requires {FORMAT_VERSION} — no backwards-compat shim. "
-                f"Pre-0.5 stores used the legacy ``format_version`` key "
-                f"and duplicated axes under "
-                f"``zarr_vectors.spatial_index_dims``.  Re-write the "
-                f"store with a {FORMAT_VERSION} writer."
+                f"0.5.x stores used ``vertex_group_offsets`` (byte offsets) "
+                f"and an inline link-blob header; rewrite from source."
             )
 
         if self.cross_level_storage not in VALID_XLEVEL_STORAGE:
@@ -580,7 +582,7 @@ class LevelMetadata:
     """OID-space size inherited from the parent level
     (= ``parent_level.num_objects``).  Lets readers allocate lookup
     arrays without traversing parent metadata."""
-    shared_vertex_groups: bool = False
+    shared_fragments: bool = False
     """True when per-chunk vertex groups represent metavertices that
     may be referenced by multiple objects' manifests (the shared-
     metavertex case)."""
@@ -610,8 +612,8 @@ class LevelMetadata:
             d["preserves_object_ids"] = True
         if self.inherited_num_objects is not None:
             d["inherited_num_objects"] = int(self.inherited_num_objects)
-        if self.shared_vertex_groups:
-            d["shared_vertex_groups"] = True
+        if self.shared_fragments:
+            d["shared_fragments"] = True
         return {"zarr_vectors_level": d}
 
     @classmethod
@@ -654,7 +656,7 @@ class LevelMetadata:
             chunk_attribute_values=list(cav) if cav is not None else None,
             preserves_object_ids=bool(lv.get("preserves_object_ids", False)),
             inherited_num_objects=lv.get("inherited_num_objects"),
-            shared_vertex_groups=bool(lv.get("shared_vertex_groups", False)),
+            shared_fragments=bool(lv.get("shared_fragments", False)),
         )
 
     def validate(self) -> None:

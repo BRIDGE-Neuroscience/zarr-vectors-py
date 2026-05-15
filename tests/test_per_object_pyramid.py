@@ -20,7 +20,7 @@ import pytest
 
 from zarr_vectors.constants import (
     CAP_PRESERVED_OBJECT_IDS,
-    CAP_SHARED_VERTEX_GROUPS,
+    CAP_SHARED_FRAGMENTS,
     COARSEN_PER_OBJECT,
 )
 from zarr_vectors.core.arrays import (
@@ -78,14 +78,14 @@ def test_per_object_level_metadata(tmp_path):
     root = open_store(str(store))
     lm = read_level_metadata(root, 1)
     assert lm.preserves_object_ids is True
-    assert lm.shared_vertex_groups is True
+    assert lm.shared_fragments is True
     assert lm.coarsening_method == COARSEN_PER_OBJECT
     assert lm.inherited_num_objects == 10
     assert lm.parent_level == 0
 
     rm = read_root_metadata(root)
     assert CAP_PRESERVED_OBJECT_IDS in rm.format_capabilities
-    assert CAP_SHARED_VERTEX_GROUPS in rm.format_capabilities
+    assert CAP_SHARED_FRAGMENTS in rm.format_capabilities
 
 
 # ===================================================================

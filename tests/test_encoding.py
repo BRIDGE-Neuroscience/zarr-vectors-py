@@ -5,16 +5,12 @@ from __future__ import annotations
 import numpy as np
 
 from zarr_vectors.encoding.ragged import (
-    decode_object_index,
     decode_ragged_blob,
     decode_ragged_ints,
     decode_vertex_groups,
-    decode_vertex_offsets,
-    encode_object_index,
     encode_ragged_blob,
     encode_ragged_ints,
     encode_vertex_groups,
-    encode_vertex_offsets,
 )
 from zarr_vectors.encoding.compression import (
     get_codec_pipeline,
@@ -148,84 +144,6 @@ class TestRaggedIntEncoding:
 # ---------------------------------------------------------------------------
 # Object index round-trips
 # ---------------------------------------------------------------------------
-
-class TestObjectIndexEncoding:
-
-    def test_basic_3d(self) -> None:
-        manifests = [
-            [((0, 0, 0), 0), ((0, 0, 1), 2)],       # object 0: 2 vertex groups
-            [((1, 1, 1), 0)],                          # object 1: 1 vertex group
-            [((0, 0, 0), 1), ((0, 1, 0), 0), ((1, 0, 0), 3)],  # object 2: 3 vg
-        ]
-        raw, offsets = encode_object_index(manifests, sid_ndim=3)
-        decoded = decode_object_index(raw, offsets, sid_ndim=3)
-        assert len(decoded) == 3
-        assert decoded[0] == manifests[0]
-        assert decoded[1] == manifests[1]
-        assert decoded[2] == manifests[2]
-
-    def test_2d(self) -> None:
-        manifests = [
-            [((0, 1), 0), ((1, 1), 3)],
-        ]
-        raw, offsets = encode_object_index(manifests, sid_ndim=2)
-        decoded = decode_object_index(raw, offsets, sid_ndim=2)
-        assert decoded[0] == manifests[0]
-
-    def test_4d_xyzt(self) -> None:
-        manifests = [
-            [((0, 0, 0, 0), 0), ((0, 0, 0, 1), 0)],
-        ]
-        raw, offsets = encode_object_index(manifests, sid_ndim=4)
-        decoded = decode_object_index(raw, offsets, sid_ndim=4)
-        assert decoded[0] == manifests[0]
-
-    def test_empty_manifest(self) -> None:
-        manifests = [
-            [((0, 0, 0), 0)],
-            [],  # empty object
-            [((1, 1, 1), 0)],
-        ]
-        raw, offsets = encode_object_index(manifests, sid_ndim=3)
-        decoded = decode_object_index(raw, offsets, sid_ndim=3)
-        assert decoded[0] == manifests[0]
-        assert decoded[1] == []
-        assert decoded[2] == manifests[2]
-
-    def test_no_objects(self) -> None:
-        raw, offsets = encode_object_index([], sid_ndim=3)
-        decoded = decode_object_index(raw, offsets, sid_ndim=3)
-        assert decoded == []
-
-    def test_wrong_sid_ndim_raises(self) -> None:
-        manifests = [
-            [((0, 0), 0)],  # 2D coords
-        ]
-        try:
-            encode_object_index(manifests, sid_ndim=3)
-            assert False, "Should have raised ArrayError"
-        except ArrayError:
-            pass
-
-
-# ---------------------------------------------------------------------------
-# Vertex offsets round-trips (K×1 plain int64)
-# ---------------------------------------------------------------------------
-
-class TestVertexOffsets:
-
-    def test_basic(self) -> None:
-        v_off = np.array([0, 36, 108], dtype=np.int64)
-        raw = encode_vertex_offsets(v_off)
-        dec_v = decode_vertex_offsets(raw)
-        np.testing.assert_array_equal(dec_v, v_off)
-
-    def test_empty(self) -> None:
-        raw = encode_vertex_offsets(np.array([], dtype=np.int64))
-        assert raw == b""
-        dec = decode_vertex_offsets(raw)
-        assert len(dec) == 0
-
 
 # ---------------------------------------------------------------------------
 # Self-describing ragged blob (inline offset header) round-trips

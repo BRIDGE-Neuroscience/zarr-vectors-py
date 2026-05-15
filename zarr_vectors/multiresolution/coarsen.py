@@ -24,7 +24,7 @@ import numpy.typing as npt
 from zarr_vectors.constants import (
     CAP_MULTISCALE_LINKS,
     CAP_PRESERVED_OBJECT_IDS,
-    CAP_SHARED_VERTEX_GROUPS,
+    CAP_SHARED_FRAGMENTS,
     COARSEN_PER_OBJECT,
     DEFAULT_CROSS_LEVEL_DEPTH,
     DEFAULT_CROSS_LEVEL_STORAGE,
@@ -241,7 +241,7 @@ def _per_object_coarsen(
             "objects_kept": len(keep_oids),
             "method": COARSEN_PER_OBJECT,
             "preserves_object_ids": True,
-            "shared_vertex_groups": True,
+            "shared_fragments": True,
         }
 
     all_pos = np.concatenate(flat_positions, axis=0)
@@ -294,7 +294,7 @@ def _per_object_coarsen(
         parent_level=source_level,
         preserves_object_ids=src_has_objects,
         inherited_num_objects=n_src_objects if src_has_objects else 0,
-        shared_vertex_groups=True,
+        shared_fragments=True,
     )
     level_group = create_resolution_level(root, target_level, level_meta_initial)
     create_vertices_array(level_group, dtype="float32")
@@ -362,7 +362,7 @@ def _per_object_coarsen(
     # --- Step 12: stamp root capability tokens --------------------------
     if src_has_objects:
         _stamp_root_capability(root, CAP_PRESERVED_OBJECT_IDS)
-    _stamp_root_capability(root, CAP_SHARED_VERTEX_GROUPS)
+    _stamp_root_capability(root, CAP_SHARED_FRAGMENTS)
 
     # --- Step 13: emit inline ±1 cross-level link arrays ----------------
     if cross_level_storage != XLEVEL_NONE and n_metavertices > 0:
@@ -385,7 +385,7 @@ def _per_object_coarsen(
         "source_objects": n_src_objects,
         "method": COARSEN_PER_OBJECT,
         "preserves_object_ids": True,
-        "shared_vertex_groups": True,
+        "shared_fragments": True,
     }
 
 
@@ -496,7 +496,7 @@ def _write_empty_preserve_level(
         parent_level=source_level,
         preserves_object_ids=True,
         inherited_num_objects=inherited_num_objects,
-        shared_vertex_groups=True,
+        shared_fragments=True,
     )
     level_group = create_resolution_level(root, target_level, level_meta)
     create_vertices_array(level_group, dtype="float32")

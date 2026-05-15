@@ -144,11 +144,11 @@ class ZVLevel:
         return False
 
     @property
-    def shared_vertex_groups(self) -> bool:
-        """True when per-chunk vertex groups may be referenced by
+    def shared_fragments(self) -> bool:
+        """True when per-chunk fragments may be referenced by
         multiple objects' manifests (shared metavertices)."""
         if self._level_meta is not None:
-            return bool(self._level_meta.shared_vertex_groups)
+            return bool(self._level_meta.shared_fragments)
         return False
 
     @property

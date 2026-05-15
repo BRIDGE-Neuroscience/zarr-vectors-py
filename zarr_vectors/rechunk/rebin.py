@@ -165,7 +165,7 @@ def rebin_level(
         chunk_attribute_values=level_meta.chunk_attribute_values,
         preserves_object_ids=level_meta.preserves_object_ids,
         inherited_num_objects=level_meta.inherited_num_objects,
-        shared_vertex_groups=level_meta.shared_vertex_groups,
+        shared_fragments=level_meta.shared_fragments,
     )
     level_group.attrs.update(new_level_meta.to_dict())
 

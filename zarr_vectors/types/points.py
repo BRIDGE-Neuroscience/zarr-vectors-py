@@ -26,7 +26,7 @@ from zarr_vectors.constants import (
     OBJIDX_IDENTITY,
     OBJIDX_STANDARD,
     VERTEX_ATTRIBUTES,
-    VERTEX_GROUP_OFFSETS,
+    VERTEX_FRAGMENTS,
     VERTICES,
 )
 from zarr_vectors.core.arrays import (
@@ -592,14 +592,14 @@ def read_points(
     chunk_vg_targets: dict[ChunkCoords, list[int]] | None = None
     chunk_keys_set: set[ChunkCoords] = set()
 
-    # Build the prefetch plan: VERTICES + VERTEX_GROUP_OFFSETS for every
+    # Build the prefetch plan: VERTICES + VERTEX_FRAGMENTS for every
     # chunk we may touch, plus each requested attribute array.  Cache
     # misses fall through to the sync ``read_bytes`` path so this is
     # purely a perf optimisation — correctness is unaffected.
     chunk_key_strs = [".".join(str(c) for c in cc) for cc in chunk_keys]
     prefetch_plan: list[tuple[str, list[str]]] = [
         (VERTICES, chunk_key_strs),
-        (VERTEX_GROUP_OFFSETS, chunk_key_strs),
+        (VERTEX_FRAGMENTS, chunk_key_strs),
     ]
     if attribute_names:
         for attr_name in attribute_names:

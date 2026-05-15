@@ -9,8 +9,20 @@ everywhere in the package.
 # Format version
 # ---------------------------------------------------------------------------
 
-FORMAT_VERSION: str = "0.5.0"
+FORMAT_VERSION: str = "0.6.0"
 """Current ZV specification version.
+
+0.6.0: fragment-index schema.  Replaces ``vertex_group_offsets`` with
+``vertex_fragments`` and splits the v0.5 inline-header link blob into
+a flat ``links/0/<chunk>`` payload plus a sibling
+``link_fragments/<chunk>`` group.  The fragment-index byte layout
+expresses each per-group boundary as either a contiguous index range
+``[start, count)`` or an explicit list of row indices, supporting
+vertex re-use across fragments.  ``object_index/data`` now uses a
+per-chunk manifest-block format with single / range / explicit modes;
+cross-level link arrays (``cross_chunk_links``, ``delta != 0``) are
+unchanged.  Hard break: 0.5.x stores are not readable; rewrite from
+source.
 
 0.5.0: NGFF-alignment cleanup + format simplification.  The 0.5
 series went through several on-disk simplifications without a
@@ -52,10 +64,16 @@ sparsification (``preserves_object_ids=True`` on the level metadata).
 Dropped objects appear as empty manifest slots and zero
 ``present_mask`` bytes; ``parent_level`` carries semantic weight."""
 
-CAP_SHARED_VERTEX_GROUPS: str = "shared_vertex_groups"
-"""At least one resolution level stores per-chunk vertex groups that
-may be referenced by multiple objects' manifests (shared metavertices
-in the per-object pyramid regime)."""
+CAP_SHARED_FRAGMENTS: str = "shared_fragments"
+"""At least one resolution level stores per-chunk fragments that may
+be referenced by multiple objects' manifests (the v0.6 successor to
+``shared_vertex_groups``; the sharing primitive is now a fragment
+rather than a contiguous-byte vertex group)."""
+
+CAP_FRAGMENT_INDEX: str = "fragment_index"
+"""The store uses the v0.6 fragment-index encoding for ``vertex_fragments``
+and ``link_fragments`` (single uint8 blob per chunk; see
+:mod:`zarr_vectors.encoding.fragments`)."""
 
 CAP_MULTISCALE_LINKS: str = "multiscale_links"
 """Store uses the 0.4 multiscale links layout (``links/<delta>/``,
@@ -102,7 +120,16 @@ PARAMETRIC_GROUP: str = "parametric"
 # ---------------------------------------------------------------------------
 
 VERTICES: str = "vertices"
-VERTEX_GROUP_OFFSETS: str = "vertex_group_offsets"
+VERTEX_FRAGMENTS: str = "vertex_fragments"
+"""Per-chunk fragment-index group describing how rows of ``vertices/<chunk>``
+group into fragments.  See :mod:`zarr_vectors.encoding.fragments`."""
+
+LINK_FRAGMENTS: str = "link_fragments"
+"""Per-chunk fragment-index group describing how rows of
+``links/0/<chunk>`` group into fragments.  Exists at ``delta == 0``
+only; cross-level link arrays keep their inline self-describing
+header."""
+
 LINKS: str = "links"
 VERTEX_ATTRIBUTES: str = "vertex_attributes"
 OBJECT_INDEX: str = "object_index"
@@ -121,7 +148,8 @@ PARAMETRIC_GROUP_ATTRIBUTES: str = "group_attributes"
 
 ALL_ARRAY_NAMES: frozenset[str] = frozenset({
     VERTICES,
-    VERTEX_GROUP_OFFSETS,
+    VERTEX_FRAGMENTS,
+    LINK_FRAGMENTS,
     LINKS,
     VERTEX_ATTRIBUTES,
     OBJECT_INDEX,

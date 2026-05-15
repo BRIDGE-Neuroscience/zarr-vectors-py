@@ -550,7 +550,7 @@ class TestStoreCreate:
         # The warm shell already contains the empty ragged-vertex pair.
         res0 = root["0"]
         assert "vertices" in res0
-        assert "vertex_group_offsets" in res0
+        assert "vertex_fragments" in res0
 
     def test_create_store_minimal(self, tmp_store_path: Path) -> None:
         """create_store(path) with no kwargs produces a warm 3D shell
@@ -571,7 +571,7 @@ class TestStoreCreate:
         assert "parametric" not in root
         res0 = root["0"]
         assert "vertices" in res0
-        assert "vertex_group_offsets" in res0
+        assert "vertex_fragments" in res0
 
     def test_create_store_ndim_2d(self, tmp_store_path: Path) -> None:
         """ndim kwarg resolves to a 2D store with default 2D bounds."""
@@ -716,7 +716,7 @@ class TestStoreInfo:
         write_parametric_types(root, [PARAMETRIC_PLANE])
 
         info = store_info(root)
-        assert info["zv_version"].startswith("0.5")
+        assert info["zv_version"].startswith("0.6")
         assert info["geometry_types"] == ["point_cloud", "skeleton"]
         assert info["chunk_shape"] == [100.0, 100.0, 100.0]
         assert len(info["levels"]) == 1

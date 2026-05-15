@@ -301,7 +301,15 @@ class RootMetadata:
         #                 were duplicated under
         #                 ``zarr_vectors.spatial_index_dims``; per-array
         #                 ``.zattrs`` carried a redundant ``dtype`` field.
-        # No shims ship; older stores must be re-written.
+        #   - pre-0.6.0 : ``vertex_group_offsets`` instead of
+        #                 ``vertex_fragments``; links carried an inline
+        #                 self-describing header; ``object_index`` used
+        #                 the flat quad encoding.
+        #   - pre-0.7.0 : ``chunk_shape`` was root-only.  0.7 lets
+        #                 each level override.  Stores using a
+        #                 per-level override could be silently
+        #                 misread by 0.6.x → version cut.
+        # No shims ship; older stores must be rewritten from source.
         parts = self.zv_version.split(".")
         try:
             major = int(parts[0])
@@ -311,14 +319,13 @@ class RootMetadata:
             raise MetadataError(
                 f"zv_version {self.zv_version!r} is not a valid X.Y[.Z] string"
             ) from exc
-        if (major, minor, patch) < (0, 5, 0):
+        if (major, minor, patch) < (0, 7, 0):
             raise MetadataError(
                 f"store zv_version is {self.zv_version}; this build "
                 f"requires {FORMAT_VERSION} — no backwards-compat shim. "
-                f"Pre-0.5 stores used the legacy ``format_version`` key "
-                f"and duplicated axes under "
-                f"``zarr_vectors.spatial_index_dims``.  Re-write the "
-                f"store with a {FORMAT_VERSION} writer."
+                f"Pre-0.7 stores keyed chunk_shape at the root only and "
+                f"could be silently misread under a per-level override; "
+                f"rewrite from source."
             )
 
         if self.cross_level_storage not in VALID_XLEVEL_STORAGE:
@@ -563,6 +570,13 @@ class LevelMetadata:
     arrays_present: list[str]
     bin_shape: tuple[float, ...] | None = None
     bin_ratio: tuple[int, ...] | None = None
+    chunk_shape: tuple[float, ...] | None = None
+    """Per-level physical chunk size override.  ``None`` means the level
+    inherits :attr:`RootMetadata.chunk_shape`.  When set, each axis must
+    be a positive integer multiple of the root chunk_shape (nested chunk
+    grids).  Lets coarser pyramid levels carry larger chunks the way
+    OME-Zarr image pyramids grow physical chunk extent via voxel-size
+    scaling."""
     object_sparsity: float = 1.0
     coarsening_method: str = "none"
     parent_level: int | None = None
@@ -580,7 +594,7 @@ class LevelMetadata:
     """OID-space size inherited from the parent level
     (= ``parent_level.num_objects``).  Lets readers allocate lookup
     arrays without traversing parent metadata."""
-    shared_vertex_groups: bool = False
+    shared_fragments: bool = False
     """True when per-chunk vertex groups represent metavertices that
     may be referenced by multiple objects' manifests (the shared-
     metavertex case)."""
@@ -597,6 +611,8 @@ class LevelMetadata:
             "parent_level": self.parent_level,
             "arrays_present": self.arrays_present,
         }
+        if self.chunk_shape is not None:
+            d["chunk_shape"] = list(self.chunk_shape)
         if self.chunk_dims is not None:
             d["chunk_dims"] = list(self.chunk_dims)
         if self.chunk_attribute_name is not None:
@@ -610,8 +626,8 @@ class LevelMetadata:
             d["preserves_object_ids"] = True
         if self.inherited_num_objects is not None:
             d["inherited_num_objects"] = int(self.inherited_num_objects)
-        if self.shared_vertex_groups:
-            d["shared_vertex_groups"] = True
+        if self.shared_fragments:
+            d["shared_fragments"] = True
         return {"zarr_vectors_level": d}
 
     @classmethod
@@ -638,6 +654,7 @@ class LevelMetadata:
         # Read bin_shape — fall back to legacy bin_size
         bs = lv.get("bin_shape") or lv.get("bin_size")
         br = lv.get("bin_ratio")
+        cs = lv.get("chunk_shape")
         cd = lv.get("chunk_dims")
         cav = lv.get("chunk_attribute_values")
         return cls(
@@ -646,6 +663,7 @@ class LevelMetadata:
             arrays_present=lv["arrays_present"],
             bin_shape=tuple(bs) if bs else None,
             bin_ratio=tuple(int(x) for x in br) if br else None,
+            chunk_shape=tuple(float(x) for x in cs) if cs else None,
             object_sparsity=lv.get("object_sparsity", 1.0),
             coarsening_method=lv.get("coarsening_method", "none"),
             parent_level=lv.get("parent_level"),
@@ -654,7 +672,7 @@ class LevelMetadata:
             chunk_attribute_values=list(cav) if cav is not None else None,
             preserves_object_ids=bool(lv.get("preserves_object_ids", False)),
             inherited_num_objects=lv.get("inherited_num_objects"),
-            shared_vertex_groups=bool(lv.get("shared_vertex_groups", False)),
+            shared_fragments=bool(lv.get("shared_fragments", False)),
         )
 
     def validate(self) -> None:
@@ -695,6 +713,18 @@ class LevelMetadata:
                     raise MetadataError(
                         f"bin_ratio values must be ≥1, got {self.bin_ratio}"
                     )
+
+        # Per-level chunk_shape: self-consistency only.  Cross-level
+        # validation (positive integer multiple of root chunk_shape,
+        # divisibility by per-level bin_shape) lives in
+        # :func:`validate_level_chunk_shape_against_root` since it needs
+        # both metadata objects.
+        if self.chunk_shape is not None:
+            if any(c <= 0 for c in self.chunk_shape):
+                raise MetadataError(
+                    f"Level {self.level} chunk_shape values must be > 0, "
+                    f"got {self.chunk_shape}"
+                )
 
         # Attribute-chunking fields must be coherent.
         attr_fields = (
@@ -961,6 +991,114 @@ def serialise_parametric_types(
             for t in types
         }
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-level chunk_shape helpers (0.7.0+)
+# ---------------------------------------------------------------------------
+
+
+def get_level_chunk_shape(
+    root_meta: RootMetadata,
+    level_meta: LevelMetadata | None,
+) -> tuple[float, ...]:
+    """Return the effective ``chunk_shape`` for a level.
+
+    Resolves the v0.7 per-level override: when ``level_meta`` carries
+    a non-None ``chunk_shape``, that value wins.  Otherwise the level
+    inherits :attr:`RootMetadata.chunk_shape`.  Pass ``level_meta=None``
+    to get the root chunk_shape (useful when only the level index is
+    known but the LevelMetadata hasn't been read yet).
+    """
+    if level_meta is not None and level_meta.chunk_shape is not None:
+        return level_meta.chunk_shape
+    return root_meta.chunk_shape
+
+
+def chunk_scale_factor(
+    root_meta: RootMetadata,
+    level_meta: LevelMetadata | None,
+) -> tuple[int, ...]:
+    """Return the per-axis integer multiple of root ``chunk_shape``.
+
+    For a level whose ``chunk_shape`` is ``r_i × root_chunk_shape[i]``
+    along axis ``i``, returns ``(r_0, r_1, ..., r_{ndim-1})``.  A level
+    that inherits root returns all-ones.  Raises :class:`MetadataError`
+    when the per-level chunk_shape isn't an integer multiple of root
+    along some axis (nesting violation).
+    """
+    eff = get_level_chunk_shape(root_meta, level_meta)
+    root_cs = root_meta.chunk_shape
+    if len(eff) != len(root_cs):
+        raise MetadataError(
+            f"Level chunk_shape rank {len(eff)} != root chunk_shape rank "
+            f"{len(root_cs)}"
+        )
+    ratios: list[int] = []
+    for axis, (e, r) in enumerate(zip(eff, root_cs)):
+        if r <= 0:
+            raise MetadataError(
+                f"root chunk_shape axis {axis} = {r}; must be > 0"
+            )
+        ratio_f = float(e) / float(r)
+        ratio_i = int(round(ratio_f))
+        if ratio_i < 1 or abs(ratio_f - ratio_i) > 1e-9:
+            raise MetadataError(
+                f"Level chunk_shape axis {axis} = {e} is not a positive "
+                f"integer multiple of root chunk_shape axis {axis} = {r} "
+                f"(ratio {ratio_f}); nested chunk grids are required."
+            )
+        ratios.append(ratio_i)
+    return tuple(ratios)
+
+
+def validate_level_chunk_shape_against_root(
+    root_meta: RootMetadata,
+    level_meta: LevelMetadata,
+) -> None:
+    """Cross-level invariants for a per-level ``chunk_shape`` override.
+
+    Validates:
+
+    1. Per-axis positive integer multiple of root ``chunk_shape``
+       (nested chunk grids).
+    2. Per-axis divisibility by the effective per-level ``bin_shape``
+       so bins still tile chunks cleanly at the level's resolution.
+
+    Self-consistency (positivity, rank match against root) is checked
+    independently by :meth:`LevelMetadata.validate`.  Both this helper
+    and that method are no-ops when ``level_meta.chunk_shape is None``.
+    """
+    if level_meta.chunk_shape is None:
+        return
+    # Triggers the nesting check.
+    _ratios = chunk_scale_factor(root_meta, level_meta)
+    del _ratios
+
+    # Per-level bin_shape must still divide the per-level chunk_shape.
+    bin_shape: tuple[float, ...] | None
+    if level_meta.bin_shape is not None:
+        bin_shape = level_meta.bin_shape
+    elif level_meta.level == 0:
+        bin_shape = root_meta.effective_bin_shape
+    else:
+        bin_shape = None
+    if bin_shape is None:
+        return
+    for axis, (cs, bs) in enumerate(zip(level_meta.chunk_shape, bin_shape)):
+        if bs <= 0:
+            raise MetadataError(
+                f"Level {level_meta.level} bin_shape axis {axis} = {bs}; "
+                "must be > 0"
+            )
+        ratio_f = float(cs) / float(bs)
+        ratio_i = int(round(ratio_f))
+        if ratio_i < 1 or abs(ratio_f - ratio_i) > 1e-9:
+            raise MetadataError(
+                f"Level {level_meta.level} bin_shape axis {axis} = {bs} "
+                f"does not divide chunk_shape axis {axis} = {cs} "
+                f"(ratio {ratio_f})"
+            )
 
 
 def deserialise_parametric_types(

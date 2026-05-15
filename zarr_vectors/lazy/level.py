@@ -69,6 +69,16 @@ class ZVLevel:
         return None
 
     @property
+    def chunk_shape(self) -> tuple[float, ...]:
+        """Effective physical chunk shape for this level.
+
+        Returns the per-level override if set (v0.7+), else falls back
+        to ``RootMetadata.chunk_shape``.
+        """
+        from zarr_vectors.core.metadata import get_level_chunk_shape
+        return get_level_chunk_shape(self._root_meta, self._level_meta)
+
+    @property
     def bin_ratio(self) -> tuple[int, ...] | None:
         if self._level_meta is not None:
             return self._level_meta.bin_ratio
@@ -144,11 +154,11 @@ class ZVLevel:
         return False
 
     @property
-    def shared_vertex_groups(self) -> bool:
-        """True when per-chunk vertex groups may be referenced by
+    def shared_fragments(self) -> bool:
+        """True when per-chunk fragments may be referenced by
         multiple objects' manifests (shared metavertices)."""
         if self._level_meta is not None:
-            return bool(self._level_meta.shared_vertex_groups)
+            return bool(self._level_meta.shared_fragments)
         return False
 
     @property

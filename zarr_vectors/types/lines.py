@@ -21,7 +21,7 @@ from zarr_vectors.constants import (
     GEOM_LINE,
     LINKS_IMPLICIT_SEQUENTIAL,
     OBJIDX_STANDARD,
-    VERTEX_GROUP_OFFSETS,
+    VERTEX_FRAGMENTS,
     VERTICES,
 )
 from zarr_vectors.core.arrays import (
@@ -425,7 +425,7 @@ def read_lines(
     ]
     _prefetch_plan: list[tuple[str, list[str]]] = [
         (VERTICES, _chunk_key_strs),
-        (VERTEX_GROUP_OFFSETS, _chunk_key_strs),
+        (VERTEX_FRAGMENTS, _chunk_key_strs),
     ]
     _batched_reads_cm = level_group.batched_reads(_prefetch_plan)
     _batched_reads_cm.__enter__()

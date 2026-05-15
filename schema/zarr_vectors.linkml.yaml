@@ -109,11 +109,18 @@ enums:
           (``LevelMetadata.preserves_object_ids=True``).  Dropped objects
           appear as empty manifest slots; ``parent_level`` carries
           semantic weight on those levels.
-      shared_vertex_groups:
+      shared_fragments:
         description: >
-          At least one level stores per-chunk vertex groups that may be
-          referenced by multiple objects' manifests (shared metavertices
-          in the per-object pyramid regime).
+          At least one level stores per-chunk fragments that may be
+          referenced by multiple objects' manifests (the v0.6 successor
+          to ``shared_vertex_groups``; the sharing primitive is now a
+          fragment rather than a contiguous-byte vertex group).
+      fragment_index:
+        description: >
+          The store uses the v0.6 fragment-index encoding for
+          ``vertex_fragments`` and ``link_fragments`` (a single uint8
+          blob per chunk with a tagged-bitmap header + range table +
+          explicit CSR; see :mod:`zarr_vectors.encoding.fragments`).
       multiscale_links:
         description: >
           Store uses the 0.4 multiscale links layout
@@ -129,6 +136,16 @@ enums:
       stamps the corresponding tag.
     permissible_values:
       vertices:
+      vertex_fragments:
+        description: >
+          Per-chunk fragment-index group for ``vertices/<chunk>`` (v0.6+).
+          Replaces the v0.5 ``vertex_group_offsets``.
+      link_fragments:
+        description: >
+          Per-chunk fragment-index group for ``links/0/<chunk>`` (v0.6+,
+          delta == 0 only).  Splits the v0.5 inline self-describing
+          header into a sibling group so link bytes can be addressed
+          uniformly with vertex bytes.
       links:
       attribute:
       object_index:
@@ -212,6 +229,7 @@ classes:
       - arrays_present
       - bin_shape
       - bin_ratio
+      - chunk_shape
       - object_sparsity
       - coarsening_method
       - parent_level
@@ -220,7 +238,15 @@ classes:
       - chunk_attribute_values
       - preserves_object_ids
       - inherited_num_objects
-      - shared_vertex_groups
+      - shared_fragments
+    slot_usage:
+      chunk_shape:
+        required: false
+        description: >
+          Per-level physical chunk size override.  When omitted, the
+          level inherits ``RootMetadata.chunk_shape``.  When present,
+          each axis must be a positive integer multiple of the root
+          chunk_shape (nested chunk grids).
 
   # ----- per-array .zattrs shapes (zv_array discriminator) --------------
 
@@ -501,11 +527,12 @@ slots:
       ``preserves_object_ids`` is true; absent on standalone levels.
     range: integer
     minimum_value: 0
-  shared_vertex_groups:
+  shared_fragments:
     description: >
-      True when per-chunk vertex groups may be referenced by multiple
+      True when per-chunk fragments may be referenced by multiple
       objects' manifests (shared metavertices in the per-object pyramid
-      regime).  Readers MAY use this to short-circuit dedup work.
+      regime).  v0.6 successor to ``shared_vertex_groups``.  Readers
+      MAY use this to short-circuit dedup work.
     range: boolean
 
   # -- per-array .zattrs ------------------------------------------------

@@ -45,6 +45,15 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
         total_verts = 0
         chunk_vg_counts: dict[tuple, int] = {}
 
+        # Resolve per-level chunk_shape (v0.7 may override root).
+        from zarr_vectors.core.metadata import get_level_chunk_shape
+        from zarr_vectors.core.store import read_level_metadata
+        try:
+            level_meta_obj = read_level_metadata(root, li)
+        except Exception:
+            level_meta_obj = None
+        level_chunk_shape = get_level_chunk_shape(meta, level_meta_obj)
+
         # Determine effective bin shape for this level
         try:
             la = lg.attrs
@@ -54,14 +63,14 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
             elif li == 0:
                 level_bin_shape = meta.effective_bin_shape
             else:
-                level_bin_shape = meta.chunk_shape  # unknown — skip bin checks
+                level_bin_shape = level_chunk_shape  # unknown — skip bin checks
         except Exception:
-            level_bin_shape = meta.chunk_shape
+            level_bin_shape = level_chunk_shape
 
         # Compute bins_per_chunk for this level
         level_bins_per_chunk = tuple(
             int(round(cs / bs))
-            for cs, bs in zip(meta.chunk_shape, level_bin_shape)
+            for cs, bs in zip(level_chunk_shape, level_bin_shape)
         )
         max_vgs = 1
         for b in level_bins_per_chunk:

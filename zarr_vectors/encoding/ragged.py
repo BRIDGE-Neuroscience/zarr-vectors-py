@@ -177,124 +177,13 @@ def decode_ragged_ints(
     return decode_vertex_groups(raw_bytes, offsets, dtype=dtype, ncols=ncols)
 
 
-# ---------------------------------------------------------------------------
-# Object index encoding
-# ---------------------------------------------------------------------------
-
-def encode_object_index(
-    manifests: list[list[tuple[tuple[int, ...], int]]],
-    sid_ndim: int,
-) -> tuple[bytes, npt.NDArray[np.int64]]:
-    """Encode a list of object manifests into a byte buffer.
-
-    Each manifest is a list of ``(chunk_coords, vertex_group_index)`` tuples.
-    These are flattened to ``(sid_ndim + 1)`` ints per entry and concatenated.
-
-    Args:
-        manifests: ``[manifest_0, manifest_1, ...]`` where each manifest is
-            ``[(chunk_coords, vg_index), ...]``.
-        sid_ndim: Number of spatial index dimensions (e.g. 3 for XYZ).
-
-    Returns:
-        raw_bytes: Concatenated byte buffer of all manifests.
-        offsets: ``(O,)`` int64 byte offset array, one per object.
-    """
-    entry_len = sid_ndim + 1
-    dtype = np.dtype(np.int64)
-    parts: list[bytes] = []
-    offsets: list[int] = []
-    current_offset = 0
-
-    for manifest in manifests:
-        offsets.append(current_offset)
-        if not manifest:
-            # Empty manifest — object has no vertex groups
-            continue
-        flat: list[int] = []
-        for chunk_coords, vg_index in manifest:
-            if len(chunk_coords) != sid_ndim:
-                raise ArrayError(
-                    f"Chunk coords length {len(chunk_coords)} != sid_ndim {sid_ndim}"
-                )
-            flat.extend(chunk_coords)
-            flat.append(vg_index)
-        arr = np.array(flat, dtype=dtype)
-        raw = arr.tobytes()
-        parts.append(raw)
-        current_offset += len(raw)
-
-    return b"".join(parts), np.array(offsets, dtype=np.int64)
-
-
-def decode_object_index(
-    raw_bytes: bytes,
-    offsets: npt.NDArray[np.int64],
-    sid_ndim: int,
-) -> list[list[tuple[tuple[int, ...], int]]]:
-    """Decode a byte buffer back into a list of object manifests.
-
-    Args:
-        raw_bytes: Buffer from :func:`encode_object_index`.
-        offsets: ``(O,)`` byte offset array.
-        sid_ndim: Number of spatial index dimensions.
-
-    Returns:
-        List of manifests, each a list of ``(chunk_coords, vg_index)`` tuples.
-    """
-    if len(offsets) == 0:
-        return []
-
-    entry_len = sid_ndim + 1
-    dtype = np.dtype(np.int64)
-    itemsize = dtype.itemsize
-    total_len = len(raw_bytes)
-    manifests: list[list[tuple[tuple[int, ...], int]]] = []
-
-    for i in range(len(offsets)):
-        start = int(offsets[i])
-        end = int(offsets[i + 1]) if i + 1 < len(offsets) else total_len
-
-        if start == end:
-            manifests.append([])
-            continue
-
-        segment = raw_bytes[start:end]
-        arr = np.frombuffer(segment, dtype=dtype)
-
-        if len(arr) % entry_len != 0:
-            raise ArrayError(
-                f"Manifest segment length {len(arr)} not divisible by "
-                f"entry_len={entry_len} (sid_ndim={sid_ndim})"
-            )
-
-        entries: list[tuple[tuple[int, ...], int]] = []
-        for j in range(0, len(arr), entry_len):
-            chunk_coords = tuple(int(x) for x in arr[j : j + sid_ndim])
-            vg_index = int(arr[j + sid_ndim])
-            entries.append((chunk_coords, vg_index))
-        manifests.append(entries)
-
-    return manifests
-
-
-# ---------------------------------------------------------------------------
-# Vertex offset encoding (vertex_group_offsets: K×1)
-# ---------------------------------------------------------------------------
-
-def encode_vertex_offsets(
-    vertex_offsets: npt.NDArray[np.int64],
-) -> bytes:
-    """Encode ``(K,)`` int64 vertex byte offsets to bytes."""
-    return np.ascontiguousarray(vertex_offsets, dtype=np.int64).tobytes()
-
-
-def decode_vertex_offsets(
-    raw_bytes: bytes,
-) -> npt.NDArray[np.int64]:
-    """Decode ``(K,)`` int64 vertex byte offsets from bytes."""
-    if len(raw_bytes) == 0:
-        return np.empty(0, dtype=np.int64)
-    return np.frombuffer(raw_bytes, dtype=np.int64).copy()
+# v0.5 ``encode_object_index`` / ``decode_object_index`` and
+# ``encode_vertex_offsets`` / ``decode_vertex_offsets`` were removed in
+# 0.6.0.  Object manifests are now encoded as chunk-block payloads (see
+# :func:`zarr_vectors.encoding.fragments.encode_object_manifest_blocks`),
+# and per-chunk vertex grouping moved to a fragment-index blob under
+# ``vertex_fragments/`` (see :mod:`zarr_vectors.encoding.fragments`).
+# 0.5.x stores are not readable by this build — rewrite from source.
 
 
 # ---------------------------------------------------------------------------

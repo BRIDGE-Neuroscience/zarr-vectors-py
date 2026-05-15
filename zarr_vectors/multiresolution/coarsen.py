@@ -24,7 +24,7 @@ import numpy.typing as npt
 from zarr_vectors.constants import (
     CAP_MULTISCALE_LINKS,
     CAP_PRESERVED_OBJECT_IDS,
-    CAP_SHARED_VERTEX_GROUPS,
+    CAP_SHARED_FRAGMENTS,
     COARSEN_PER_OBJECT,
     DEFAULT_CROSS_LEVEL_DEPTH,
     DEFAULT_CROSS_LEVEL_STORAGE,
@@ -53,15 +53,19 @@ from zarr_vectors.core.arrays import (
     write_object_attributes,
     write_object_index,
 )
-from zarr_vectors.core.metadata import LevelMetadata
+from zarr_vectors.core.metadata import (
+    LevelMetadata,
+    get_level_chunk_shape,
+)
 from zarr_vectors.core.store import (
     create_resolution_level,
     get_resolution_level,
     list_resolution_levels,
     open_store,
+    read_level_metadata,
     read_root_metadata,
 )
-from zarr_vectors.exceptions import ArrayError
+from zarr_vectors.exceptions import ArrayError, CoarseningError
 from zarr_vectors.multiresolution.object_selection import apply_sparsity
 from zarr_vectors.spatial.boundary import (
     build_vertex_chunk_mapping,
@@ -82,6 +86,7 @@ def coarsen_level(
     *,
     coarsen_factor: float = 1.0,
     sparsity_factor: float = 1.0,
+    chunk_scale_factor: int | tuple[int, ...] = 1,
     sparsity_strategy: str = "random",
     sparsity_seed: int | None = None,
     cross_level_storage: str = XLEVEL_NONE,
@@ -102,6 +107,15 @@ def coarsen_level(
         sparsity_factor: Object-dropping factor (≥ 1).  Survivors keep
             their OIDs; dropped objects leave empty manifest slots.
             ``1.0`` is the identity (no drop).
+        chunk_scale_factor: Per-axis multiplier applied to the source
+            level's ``chunk_shape`` to derive the target level's
+            ``chunk_shape``.  ``1`` (default) keeps the chunk grid
+            unchanged.  Scalar values apply uniformly to every axis;
+            tuples set per-axis multipliers.  Each multiplier must be a
+            positive integer (nested chunk grids).  When the resulting
+            target chunk_shape differs from the root chunk_shape it is
+            stamped on the target level's ``LevelMetadata.chunk_shape``;
+            otherwise the target inherits from root.
         sparsity_strategy: Object selection strategy.
         sparsity_seed: Random seed.
         cross_level_storage: When called via ``build_pyramid`` this is
@@ -119,6 +133,7 @@ def coarsen_level(
         target_level=target_level,
         coarsen_factor=coarsen_factor,
         sparsity_factor=sparsity_factor,
+        chunk_scale_factor=chunk_scale_factor,
         sparsity_strategy=sparsity_strategy,
         sparsity_seed=sparsity_seed,
         cross_level_storage=cross_level_storage,
@@ -132,6 +147,7 @@ def _per_object_coarsen(
     target_level: int,
     coarsen_factor: float,
     sparsity_factor: float,
+    chunk_scale_factor: int | tuple[int, ...] = 1,
     sparsity_strategy: str,
     sparsity_seed: int | None,
     cross_level_storage: str = XLEVEL_NONE,
@@ -148,8 +164,44 @@ def _per_object_coarsen(
     root = open_store(str(store_path), mode="r+")
     root_meta = read_root_metadata(root)
     ndim = root_meta.sid_ndim
-    chunk_shape = root_meta.chunk_shape
     base_bin = root_meta.effective_bin_shape
+
+    # Source level's chunk_shape — may itself be a per-level override.
+    try:
+        src_level_meta = read_level_metadata(root, source_level)
+    except Exception:
+        src_level_meta = None
+    source_chunk_shape = get_level_chunk_shape(root_meta, src_level_meta)
+
+    # Target level's chunk_shape = source × chunk_scale_factor (per-axis).
+    if isinstance(chunk_scale_factor, (tuple, list)):
+        if len(chunk_scale_factor) != ndim:
+            raise CoarseningError(
+                f"chunk_scale_factor rank {len(chunk_scale_factor)} "
+                f"!= sid_ndim {ndim}"
+            )
+        chunk_scale = tuple(int(r) for r in chunk_scale_factor)
+    else:
+        chunk_scale = tuple(int(chunk_scale_factor) for _ in range(ndim))
+    if any(r < 1 for r in chunk_scale):
+        raise CoarseningError(
+            f"chunk_scale_factor must be positive integers per axis, "
+            f"got {chunk_scale}"
+        )
+    target_chunk_shape = tuple(
+        float(s) * int(r) for s, r in zip(source_chunk_shape, chunk_scale)
+    )
+    # The on-disk per-level chunk_shape field is omitted when the
+    # target equals root (the implicit default).  Compare via float.
+    target_chunk_shape_override: tuple[float, ...] | None
+    if all(
+        abs(t - r) < 1e-9
+        for t, r in zip(target_chunk_shape, root_meta.chunk_shape)
+    ):
+        target_chunk_shape_override = None
+    else:
+        target_chunk_shape_override = target_chunk_shape
+    chunk_shape = target_chunk_shape  # used for assign_chunks below
 
     src_group = get_resolution_level(root, source_level)
 
@@ -241,7 +293,7 @@ def _per_object_coarsen(
             "objects_kept": len(keep_oids),
             "method": COARSEN_PER_OBJECT,
             "preserves_object_ids": True,
-            "shared_vertex_groups": True,
+            "shared_fragments": True,
         }
 
     all_pos = np.concatenate(flat_positions, axis=0)
@@ -289,12 +341,13 @@ def _per_object_coarsen(
         arrays_present=arrays_present,
         bin_shape=target_bin_shape,
         bin_ratio=tuple(max(1, int(round(coarsen_factor))) for _ in range(ndim)),
+        chunk_shape=target_chunk_shape_override,
         object_sparsity=(1.0 / sparsity_factor),
         coarsening_method=COARSEN_PER_OBJECT,
         parent_level=source_level,
         preserves_object_ids=src_has_objects,
         inherited_num_objects=n_src_objects if src_has_objects else 0,
-        shared_vertex_groups=True,
+        shared_fragments=True,
     )
     level_group = create_resolution_level(root, target_level, level_meta_initial)
     create_vertices_array(level_group, dtype="float32")
@@ -362,7 +415,7 @@ def _per_object_coarsen(
     # --- Step 12: stamp root capability tokens --------------------------
     if src_has_objects:
         _stamp_root_capability(root, CAP_PRESERVED_OBJECT_IDS)
-    _stamp_root_capability(root, CAP_SHARED_VERTEX_GROUPS)
+    _stamp_root_capability(root, CAP_SHARED_FRAGMENTS)
 
     # --- Step 13: emit inline ±1 cross-level link arrays ----------------
     if cross_level_storage != XLEVEL_NONE and n_metavertices > 0:
@@ -385,7 +438,7 @@ def _per_object_coarsen(
         "source_objects": n_src_objects,
         "method": COARSEN_PER_OBJECT,
         "preserves_object_ids": True,
-        "shared_vertex_groups": True,
+        "shared_fragments": True,
     }
 
 
@@ -496,7 +549,7 @@ def _write_empty_preserve_level(
         parent_level=source_level,
         preserves_object_ids=True,
         inherited_num_objects=inherited_num_objects,
-        shared_vertex_groups=True,
+        shared_fragments=True,
     )
     level_group = create_resolution_level(root, target_level, level_meta)
     create_vertices_array(level_group, dtype="float32")
@@ -807,6 +860,7 @@ def build_pyramid(
     store_path: str | Path,
     *,
     factors: list[tuple[float, float]],
+    chunk_scale_factors: list[int | tuple[int, ...]] | None = None,
     sparsity_strategy: str = "random",
     sparsity_seed: int | None = None,
     cross_level_depth: int = DEFAULT_CROSS_LEVEL_DEPTH,
@@ -825,6 +879,12 @@ def build_pyramid(
         store_path: Path to the store with level 0.
         factors: List of ``(coarsen_factor, sparsity_factor)`` tuples,
             one per coarser level.
+        chunk_scale_factors: Optional per-level multipliers applied to
+            the source level's ``chunk_shape`` to derive each target
+            level's ``chunk_shape``.  Aligned with ``factors`` (same
+            length).  Each entry is either a scalar int (uniform per
+            axis) or a per-axis tuple.  ``None`` (default) means
+            all-ones: every level inherits root ``chunk_shape``.
         sparsity_strategy: Object selection strategy.
         sparsity_seed: Random seed.
         cross_level_depth: Maximum absolute level delta for materialized
@@ -849,6 +909,11 @@ def build_pyramid(
         raise ValueError(
             f"cross_level_depth must be ≥ -1 (got {cross_level_depth})"
         )
+    if chunk_scale_factors is not None and len(chunk_scale_factors) != len(factors):
+        raise ValueError(
+            f"chunk_scale_factors length {len(chunk_scale_factors)} != "
+            f"factors length {len(factors)}",
+        )
 
     summaries: list[dict[str, Any]] = []
     for i, fac in enumerate(factors):
@@ -859,12 +924,16 @@ def build_pyramid(
                 f"factors[{i}] must be a (coarsen_factor, sparsity_factor) "
                 f"tuple; got {fac!r}"
             )
+        chunk_scale = (
+            chunk_scale_factors[i] if chunk_scale_factors is not None else 1
+        )
         summaries.append(coarsen_level(
             store_path,
             source_level=i,
             target_level=i + 1,
             coarsen_factor=cf,
             sparsity_factor=sf,
+            chunk_scale_factor=chunk_scale,
             sparsity_strategy=sparsity_strategy,
             sparsity_seed=sparsity_seed,
             cross_level_storage=cross_level_storage,

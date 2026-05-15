@@ -13,11 +13,12 @@ from zarr_vectors.constants import (
     GROUP_ATTRIBUTES,
     GROUPS,
     LINK_ATTRIBUTES,
+    LINK_FRAGMENTS,
     LINKS,
     OBJECT_ATTRIBUTES,
     OBJECT_INDEX,
     VERTEX_ATTRIBUTES,
-    VERTEX_GROUP_OFFSETS,
+    VERTEX_FRAGMENTS,
     VERTICES,
 )
 
@@ -42,8 +43,10 @@ def get_default_compressor(array_type: str) -> dict[str, object]:
             "shuffle": 2,  # SHUFFLE_BITSHUFFLE — good for correlated ints
         }
 
-    # Offsets are monotonically increasing integers — delta + compress
-    if array_type in (VERTEX_GROUP_OFFSETS, OBJECT_INDEX):
+    # Fragment-index blobs (v0.6) and the object_index blob mix int64
+    # range tables with uint32 CSR offsets — byte-shuffle decorrelates
+    # the high zero bytes well across the heterogeneous payload.
+    if array_type in (VERTEX_FRAGMENTS, LINK_FRAGMENTS, OBJECT_INDEX):
         return {
             "id": "blosc",
             "cname": "zstd",

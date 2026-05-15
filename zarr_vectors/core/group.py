@@ -181,7 +181,7 @@ class Group:
             chunk_keys = list_chunk_keys(level_group, VERTICES)
             with level_group.batched_reads([
                 (VERTICES, chunk_keys),
-                (VERTEX_GROUP_OFFSETS, chunk_keys),
+                (VERTEX_FRAGMENTS, chunk_keys),
                 *((f"{VERTEX_ATTRIBUTES}/{a}", chunk_keys) for a in attrs),
             ]):
                 for cc in chunk_keys:

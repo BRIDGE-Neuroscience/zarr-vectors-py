@@ -26,7 +26,6 @@ import pytest
 
 icechunk = pytest.importorskip("icechunk")
 
-from zarr_vectors.core.metadata import RootMetadata
 from zarr_vectors.core.store import (
     commit,
     create_store,
@@ -42,9 +41,9 @@ from zarr_vectors.exceptions import StoreError
 # ===================================================================
 
 
-def _minimal_root_md() -> RootMetadata:
-    return RootMetadata(
-        spatial_index_dims=[
+def _minimal_root_kwargs() -> dict:
+    return dict(
+        axes=[
             {"name": "x", "type": "space", "unit": "um"},
             {"name": "y", "type": "space", "unit": "um"},
             {"name": "z", "type": "space", "unit": "um"},
@@ -67,7 +66,7 @@ def ic_repo_path(tmp_path: Path) -> str:
 
 def test_create_and_reopen(ic_repo_path: str) -> None:
     """create_store writes root metadata; commit + reopen reads it back."""
-    root = create_store(ic_repo_path, _minimal_root_md(), backend="icechunk")
+    root = create_store(ic_repo_path, **_minimal_root_kwargs(), backend="icechunk")
 
     # Session is attached and usable for commit.
     assert session_for(root) is not None
@@ -82,10 +81,10 @@ def test_create_and_reopen(ic_repo_path: str) -> None:
 
 def test_create_rejects_existing(ic_repo_path: str) -> None:
     """create_store on an existing icechunk repo must raise."""
-    root = create_store(ic_repo_path, _minimal_root_md(), backend="icechunk")
+    root = create_store(ic_repo_path, **_minimal_root_kwargs(), backend="icechunk")
     commit(root, "initial setup")
     with pytest.raises(StoreError, match="already exists"):
-        create_store(ic_repo_path, _minimal_root_md(), backend="icechunk")
+        create_store(ic_repo_path, **_minimal_root_kwargs(), backend="icechunk")
 
 
 def test_open_missing_raises(tmp_path: Path) -> None:
@@ -101,7 +100,7 @@ def test_open_missing_raises(tmp_path: Path) -> None:
 def test_subgroup_can_commit(ic_repo_path: str) -> None:
     """Sub-groups (created via root.create_group) share the same session
     and can be passed to commit() too."""
-    root = create_store(ic_repo_path, _minimal_root_md(), backend="icechunk")
+    root = create_store(ic_repo_path, **_minimal_root_kwargs(), backend="icechunk")
     # 0/ was auto-created by create_store
     res0 = root["0"]
     assert session_for(res0) is session_for(root)
@@ -111,7 +110,7 @@ def test_subgroup_can_commit(ic_repo_path: str) -> None:
 
 def test_discard_drops_uncommitted_writes(ic_repo_path: str) -> None:
     """Pending changes can be rolled back via discard_changes."""
-    root = create_store(ic_repo_path, _minimal_root_md(), backend="icechunk")
+    root = create_store(ic_repo_path, **_minimal_root_kwargs(), backend="icechunk")
     commit(root, "snapshot 1")
 
     # Make an uncommitted attribute mutation, then discard it.
@@ -130,7 +129,7 @@ def test_uncommitted_writes_are_not_durable(ic_repo_path: str) -> None:
     """A writable session that's never committed loses its work — this
     is the icechunk contract that callers need to be aware of when
     driving the high-level ``write_*`` functions."""
-    root = create_store(ic_repo_path, _minimal_root_md(), backend="icechunk")
+    root = create_store(ic_repo_path, **_minimal_root_kwargs(), backend="icechunk")
     commit(root, "snapshot 1")  # baseline
 
     # Mutate without committing, then drop the handle (simulating the
@@ -153,7 +152,7 @@ def test_uncommitted_writes_are_not_durable(ic_repo_path: str) -> None:
 
 def test_session_for_returns_none_on_local(tmp_path: Path) -> None:
     """Non-transactional backends have no session — helpers return None."""
-    root = create_store(str(tmp_path / "local_store"), _minimal_root_md())
+    root = create_store(str(tmp_path / "local_store"), **_minimal_root_kwargs())
     assert session_for(root) is None
     assert commit(root, "no-op") is None
     discard_changes(root)  # no-op, must not raise
@@ -161,13 +160,13 @@ def test_session_for_returns_none_on_local(tmp_path: Path) -> None:
 
 def test_unknown_scheme_in_icechunk_raises() -> None:
     with pytest.raises(StoreError, match="unsupported URL scheme"):
-        create_store("ftp://example.com/x", _minimal_root_md(), backend="icechunk")
+        create_store("ftp://example.com/x", **_minimal_root_kwargs(), backend="icechunk")
 
 
 def test_memory_storage_round_trip() -> None:
     """``memory://`` URLs route to icechunk's in-memory storage."""
     url = "memory://test"
-    root = create_store(url, _minimal_root_md(), backend="icechunk")
+    root = create_store(url, **_minimal_root_kwargs(), backend="icechunk")
     snap = commit(root, "init")
     assert isinstance(snap, str)
     # Note: in-memory icechunk repos are per-Repository — reopening
@@ -182,7 +181,7 @@ def test_memory_storage_round_trip() -> None:
 
 def test_readonly_at_snapshot(ic_repo_path: str) -> None:
     """Snapshot-pinned readonly sessions see the world at that snapshot."""
-    root = create_store(ic_repo_path, _minimal_root_md(), backend="icechunk")
+    root = create_store(ic_repo_path, **_minimal_root_kwargs(), backend="icechunk")
     snap1 = commit(root, "v1")
 
     # Mutate + commit a second snapshot.

@@ -56,7 +56,14 @@ from zarr_vectors.exceptions import ConventionError, MetadataError, StoreError
 # ===================================================================
 
 def _make_root_meta(**overrides) -> RootMetadata:
-    """Create a valid RootMetadata with sensible defaults, applying overrides."""
+    """Create a valid RootMetadata with sensible defaults, applying overrides.
+
+    Used by the ``TestRootMetadata`` suite (which validates the
+    dataclass directly).  Callers that just want to seed a store via
+    ``create_store`` should use :func:`_root_kwargs` instead — passing
+    a fully-populated :class:`RootMetadata` to ``create_store`` is no
+    longer supported.
+    """
     defaults = dict(
         spatial_index_dims=[
             {"name": "x", "type": "space", "unit": "um"},
@@ -71,6 +78,28 @@ def _make_root_meta(**overrides) -> RootMetadata:
     return RootMetadata(**defaults)
 
 
+def _root_kwargs(**overrides) -> dict:
+    """Flat kwargs for ``create_store`` with the same sensible defaults
+    that :func:`_make_root_meta` uses for the dataclass."""
+    defaults: dict = dict(
+        axes=[
+            {"name": "x", "type": "space", "unit": "um"},
+            {"name": "y", "type": "space", "unit": "um"},
+            {"name": "z", "type": "space", "unit": "um"},
+        ],
+        chunk_shape=(100.0, 100.0, 100.0),
+        bounds=([0.0, 0.0, 0.0], [1000.0, 1000.0, 1000.0]),
+        geometry_types=["point_cloud"],
+    )
+    # Translate the in-memory dataclass field name to the create_store
+    # kwarg name on the fly so tests can keep using the familiar
+    # ``spatial_index_dims=...`` override.
+    if "spatial_index_dims" in overrides:
+        overrides["axes"] = overrides.pop("spatial_index_dims")
+    defaults.update(overrides)
+    return defaults
+
+
 def _make_level_meta(level: int = 0, **overrides) -> LevelMetadata:
     """Create a valid LevelMetadata."""
     defaults: dict = dict(
@@ -80,7 +109,7 @@ def _make_level_meta(level: int = 0, **overrides) -> LevelMetadata:
     )
     if level > 0:
         defaults["bin_shape"] = (200.0, 200.0, 200.0)
-        defaults["coarsening_method"] = "grid_metanode"
+        defaults["coarsening_method"] = "per_object"
         defaults["parent_level"] = level - 1
     defaults.update(overrides)
     return LevelMetadata(**defaults)
@@ -511,8 +540,7 @@ class TestFsGroup:
 class TestStoreCreate:
 
     def test_create_store(self, tmp_store_path: Path) -> None:
-        meta = _make_root_meta()
-        root = create_store(tmp_store_path, meta)
+        root = create_store(tmp_store_path, **_root_kwargs())
         assert tmp_store_path.is_dir()
         assert "zarr_vectors" in root.attrs.to_dict()
         assert f"0" in root
@@ -576,18 +604,17 @@ class TestStoreCreate:
             pass
 
     def test_create_store_already_exists(self, tmp_store_path: Path) -> None:
-        meta = _make_root_meta()
-        create_store(tmp_store_path, meta)
+        create_store(tmp_store_path, **_root_kwargs())
         try:
-            create_store(tmp_store_path, meta)
+            create_store(tmp_store_path, **_root_kwargs())
             assert False
         except StoreError:
             pass
 
     def test_create_store_invalid_metadata(self, tmp_store_path: Path) -> None:
-        meta = _make_root_meta(chunk_shape=(100.0, 100.0))  # wrong ndim
         try:
-            create_store(tmp_store_path, meta)
+            # chunk_shape arity (2) inconsistent with axes arity (3).
+            create_store(tmp_store_path, **_root_kwargs(chunk_shape=(100.0, 100.0)))
             assert False
         except MetadataError:
             pass
@@ -596,8 +623,7 @@ class TestStoreCreate:
 class TestStoreOpen:
 
     def test_open_store(self, tmp_store_path: Path) -> None:
-        meta = _make_root_meta()
-        create_store(tmp_store_path, meta)
+        create_store(tmp_store_path, **_root_kwargs())
         root = open_store(tmp_store_path)
         assert isinstance(root, FsGroup)
 
@@ -621,7 +647,7 @@ class TestStoreOpen:
 class TestResolutionLevels:
 
     def test_create_and_list(self, tmp_store_path: Path) -> None:
-        root = create_store(tmp_store_path, _make_root_meta())
+        root = create_store(tmp_store_path, **_root_kwargs())
         lm0 = _make_level_meta(0)
         create_resolution_level(root, 0, lm0)
 
@@ -632,14 +658,14 @@ class TestResolutionLevels:
         assert levels == [0, 1]
 
     def test_get_level(self, tmp_store_path: Path) -> None:
-        root = create_store(tmp_store_path, _make_root_meta())
+        root = create_store(tmp_store_path, **_root_kwargs())
         lm0 = _make_level_meta(0)
         create_resolution_level(root, 0, lm0)
         lvl = get_resolution_level(root, 0)
         assert isinstance(lvl, FsGroup)
 
     def test_get_missing_level(self, tmp_store_path: Path) -> None:
-        root = create_store(tmp_store_path, _make_root_meta())
+        root = create_store(tmp_store_path, **_root_kwargs())
         try:
             get_resolution_level(root, 99)
             assert False
@@ -647,7 +673,7 @@ class TestResolutionLevels:
             pass
 
     def test_read_level_metadata(self, tmp_store_path: Path) -> None:
-        root = create_store(tmp_store_path, _make_root_meta())
+        root = create_store(tmp_store_path, **_root_kwargs())
         lm = _make_level_meta(0, vertex_count=42)
         create_resolution_level(root, 0, lm)
         read_back = read_level_metadata(root, 0)
@@ -657,8 +683,7 @@ class TestResolutionLevels:
 class TestRootMetadataReadWrite:
 
     def test_read_root_metadata(self, tmp_store_path: Path) -> None:
-        meta = _make_root_meta(geometry_types=["mesh"])
-        root = create_store(tmp_store_path, meta)
+        root = create_store(tmp_store_path, **_root_kwargs(geometry_types=["mesh"]))
         read_back = read_root_metadata(root)
         assert read_back.geometry_types == ["mesh"]
         assert read_back.chunk_shape == (100.0, 100.0, 100.0)
@@ -667,14 +692,14 @@ class TestRootMetadataReadWrite:
 class TestParametricTypesStore:
 
     def test_write_and_read(self, tmp_store_path: Path) -> None:
-        root = create_store(tmp_store_path, _make_root_meta())
+        root = create_store(tmp_store_path, **_root_kwargs())
         write_parametric_types(root, DEFAULT_PARAMETRIC_TYPES)
         types = read_parametric_types(root)
         assert len(types) == 3
         assert types[0].name == "plane"
 
     def test_empty(self, tmp_store_path: Path) -> None:
-        root = create_store(tmp_store_path, _make_root_meta())
+        root = create_store(tmp_store_path, **_root_kwargs())
         types = read_parametric_types(root)
         assert types == []
 
@@ -682,8 +707,10 @@ class TestParametricTypesStore:
 class TestStoreInfo:
 
     def test_basic_info(self, tmp_store_path: Path) -> None:
-        meta = _make_root_meta(geometry_types=["point_cloud", "skeleton"])
-        root = create_store(tmp_store_path, meta)
+        root = create_store(
+            tmp_store_path,
+            **_root_kwargs(geometry_types=["point_cloud", "skeleton"]),
+        )
         lm = _make_level_meta(0, vertex_count=5000)
         create_resolution_level(root, 0, lm)
         write_parametric_types(root, [PARAMETRIC_PLANE])

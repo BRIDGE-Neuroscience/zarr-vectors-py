@@ -70,7 +70,7 @@ def test_neighbours_works_for_4d_keys():
 def test_offsets_round_trip(tmp_path):
     rng = np.random.default_rng(0)
     pos = rng.uniform(0, 100, (777, 3)).astype("f4")
-    store = tmp_path / "p.zvr"
+    store = tmp_path / "p.zv"
     write_points(str(store), pos, chunk_shape=(50.0, 50.0, 50.0))
 
     root = open_store(str(store))
@@ -88,7 +88,7 @@ def test_offsets_empty_store_safe(tmp_path):
     """An empty level should report 0 chunks and 0 vertices, not raise."""
     rng = np.random.default_rng(0)
     pos = rng.uniform(0, 10, (5, 3)).astype("f4")  # one chunk
-    store = tmp_path / "p.zvr"
+    store = tmp_path / "p.zv"
     write_points(str(store), pos, chunk_shape=(100.0, 100.0, 100.0))
     root = open_store(str(store))
     lvl = get_resolution_level(root, 0)

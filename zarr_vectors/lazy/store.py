@@ -1,4 +1,4 @@
-"""ZVRStore — lazy wrapper around an open zarr vectors store.
+"""ZVStore — lazy wrapper around an open zarr vectors store.
 
 No data is read until ``.compute()`` is called on a collection.
 Metadata (root attrs, level attrs, chunk listings) is loaded on
@@ -21,10 +21,10 @@ from zarr_vectors.core.store import (
     rebind,
 )
 from zarr_vectors.core.metadata import RootMetadata, LevelMetadata
-from zarr_vectors.lazy.level import ZVRLevel
+from zarr_vectors.lazy.level import ZVLevel
 
 
-class ZVRStore:
+class ZVStore:
     """Lazy handle to a zarr vectors store.
 
     Attributes are read from ``.zattrs`` on first access and cached.
@@ -38,7 +38,7 @@ class ZVRStore:
     def __init__(self, root: Group, meta: RootMetadata) -> None:
         self._root = root
         self._meta = meta
-        self._levels_cache: dict[int, ZVRLevel] = {}
+        self._levels_cache: dict[int, ZVLevel] = {}
         self._level_list: list[int] | None = None
 
     # ---------------------------------------------------------------
@@ -115,7 +115,7 @@ class ZVRStore:
     # Level access
     # ---------------------------------------------------------------
 
-    def __getitem__(self, level: int) -> ZVRLevel:
+    def __getitem__(self, level: int) -> ZVLevel:
         """Get a lazy handle to a resolution level."""
         if level not in self._levels_cache:
             from zarr_vectors.core.store import get_resolution_level
@@ -124,14 +124,10 @@ class ZVRStore:
                 level_meta = read_level_metadata(self._root, level)
             except Exception:
                 level_meta = None
-            self._levels_cache[level] = ZVRLevel(
+            self._levels_cache[level] = ZVLevel(
                 level_group, level, self._meta, level_meta,
             )
         return self._levels_cache[level]
-
-    def level(self, index: int) -> ZVRLevel:
-        """Alias for ``self[index]``."""
-        return self[index]
 
     # ---------------------------------------------------------------
     # Repr
@@ -140,7 +136,7 @@ class ZVRStore:
     def __repr__(self) -> str:
         types = ", ".join(self.geometry_types)
         return (
-            f"ZVRStore('{self._root.url}', "
+            f"ZVStore('{self._root.url}', "
             f"levels={self.levels}, "
             f"geometry=[{types}], "
             f"chunk={self.chunk_shape}, "
@@ -193,12 +189,12 @@ class ZVRStore:
         return out
 
 
-def open_zvr(
+def open_zv(
     path: str | Path,
     *,
     backend: str | None = None,
     **backend_kwargs: Any,
-) -> ZVRStore:
+) -> ZVStore:
     """Open a zarr vectors store lazily.
 
     Reads only root metadata (a few KB).  No vertex data is loaded.
@@ -210,19 +206,13 @@ def open_zvr(
         **backend_kwargs: Forwarded to the backend constructor.
 
     Returns:
-        A :class:`ZVRStore` handle for lazy access.
+        A :class:`ZVStore` handle for lazy access.
     """
-    # mode="r+" so the writer() handles returned by ZVRLevel / ZVRStore
+    # mode="r+" so the writer() handles returned by ZVLevel / ZVStore
     # can mutate without an extra reopen.  Pure readers pay no cost for
     # this — the actual reads still touch only the chunks they need.
     root = open_store(str(path), mode="r+", backend=backend, **backend_kwargs)
     meta = read_root_metadata(root)
-    return ZVRStore(root, meta)
+    return ZVStore(root, meta)
 
 
-def object_levels(zvr: ZVRStore, oid: int) -> list[int]:
-    """Return the levels at which ``oid`` is present.
-
-    Module-level convenience around :meth:`ZVRStore.object_levels`.
-    """
-    return zvr.object_levels(oid)

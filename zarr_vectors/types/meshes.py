@@ -19,11 +19,14 @@ import numpy.typing as npt
 
 from zarr_vectors.constants import (
     CROSS_CHUNK_EXPLICIT,
+    CROSS_CHUNK_LINKS,
     ENCODING_DRACO,
     ENCODING_RAW,
     GEOM_MESH,
+    LINKS,
     LINKS_EXPLICIT,
     OBJIDX_STANDARD,
+    VERTEX_GROUP_OFFSETS,
     VERTICES,
 )
 from zarr_vectors.core.arrays import (
@@ -37,13 +40,11 @@ from zarr_vectors.core.arrays import (
     resolve_chunk_keys,
     read_chunk_links,
     read_chunk_vertices,
-    read_cross_chunk_faces,
     read_cross_chunk_links,
     read_object_vertices,
     write_chunk_attributes,
     write_chunk_links,
     write_chunk_vertices,
-    write_cross_chunk_faces,
     write_cross_chunk_links,
     write_object_attributes,
     write_object_index,
@@ -84,17 +85,6 @@ from zarr_vectors.typing import (
     ChunkShape,
     ObjectManifest,
 )
-
-
-def _stamp_root_capability(root_group, cap: str) -> None:
-    """Add ``cap`` to root metadata's ``format_capabilities`` (idempotent)."""
-    attrs = root_group.attrs.to_dict()
-    zv = attrs.get("zarr_vectors", {})
-    caps = list(zv.get("format_capabilities", []))
-    if cap not in caps:
-        caps.append(cap)
-        zv["format_capabilities"] = caps
-        root_group.attrs.update({"zarr_vectors": zv})
 
 
 def write_mesh(
@@ -306,31 +296,26 @@ def write_mesh(
                     level_group, chunk_coords, [intra_faces[chunk_coords]], delta=0,
                 )
 
-    # Write cross-chunk faces
-    # Convert cross-face refs to cross_chunk_links format
-    # Each cross face is a list of (chunk, local_idx) tuples
-    cross_links: list[Any] = []
-    for face_ref in cross_faces:
-        # Store as pairs: each consecutive pair of face vertices
-        for i in range(len(face_ref) - 1):
-            cross_links.append((face_ref[i], face_ref[i + 1]))
-        # Close the face: last vertex to first
-        if len(face_ref) >= 3:
-            cross_links.append((face_ref[-1], face_ref[0]))
-
+    # Write cross-chunk faces as variable-width records under
+    # ``cross_chunk_links/<delta=0>/``.  Each record is a list of L
+    # ``(chunk_coords, local_vertex_idx)`` endpoints where L is the
+    # face arity (3 for triangles).  Faces of different arity are
+    # rejected; meshes are uniform-arity by construction.
     idx_ndim = ndim + 1 if vertex_attr_bins is not None else ndim
-    if cross_links:
-        write_cross_chunk_links(
-            level_group, cross_links, sid_ndim=idx_ndim, delta=0,
-        )
-
-    # Tier C: persist cross-chunk face identity alongside the edge-pair
-    # fallback.  Old readers that ignore the new array still see
-    # connectivity via the existing cross_chunk_links; new readers can
-    # reconstruct boundary faces exactly.
     if cross_faces:
-        write_cross_chunk_faces(level_group, cross_faces, sid_ndim=idx_ndim)
-        _stamp_root_capability(root, "cross_chunk_faces")
+        face_arities = {len(f) for f in cross_faces}
+        if len(face_arities) != 1:
+            raise ArrayError(
+                f"cross-chunk faces have inconsistent arities {face_arities}; "
+                "meshes must be uniform-arity"
+            )
+        write_cross_chunk_links(
+            level_group,
+            [list(face) for face in cross_faces],
+            sid_ndim=idx_ndim,
+            delta=0,
+            link_width=face_arities.pop(),
+        )
 
     # Write object index
     write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
@@ -434,93 +419,109 @@ def read_mesh(
             return _empty_mesh_result(ndim, link_width)
         chunk_keys = [k for k in chunk_keys if k and k[0] == filter_bin]
 
-    # Read vertices and build offset map
-    all_positions: list[npt.NDArray] = []
-    chunk_offsets: dict[ChunkCoords, int] = {}
-    running = 0
+    # Prefetch every chunk (vertices, offsets, faces) and the cross-chunk
+    # face records in one async gather.  Subsequent ``read_bytes`` calls
+    # below hit the cache instead of paying one round-trip per chunk.
+    chunk_key_strs = [".".join(str(c) for c in cc) for cc in chunk_keys]
+    _prefetch_plan: list[tuple[str, list[str]]] = [
+        (VERTICES, chunk_key_strs),
+        (VERTEX_GROUP_OFFSETS, chunk_key_strs),
+        (f"{LINKS}/0", chunk_key_strs),
+        (f"{CROSS_CHUNK_LINKS}/0", ["data"]),
+    ]
+    _batched_reads_cm = level_group.batched_reads(_prefetch_plan)
+    _batched_reads_cm.__enter__()
+    try:
+        # Read vertices and build offset map
+        all_positions: list[npt.NDArray] = []
+        chunk_offsets: dict[ChunkCoords, int] = {}
+        running = 0
 
-    for chunk_coords in chunk_keys:
-        chunk_offsets[chunk_coords] = running
-        try:
-            groups = read_chunk_vertices(
-                level_group, chunk_coords, dtype=dtype, ndim=ndim
+        for chunk_coords in chunk_keys:
+            chunk_offsets[chunk_coords] = running
+            try:
+                groups = read_chunk_vertices(
+                    level_group, chunk_coords, dtype=dtype, ndim=ndim
+                )
+                for vg in groups:
+                    all_positions.append(vg)
+                    running += len(vg)
+            except ArrayError:
+                pass
+
+        if not all_positions:
+            return _empty_mesh_result(ndim, link_width)
+
+        positions_out = np.concatenate(all_positions, axis=0)
+
+        # Read intra-chunk faces
+        all_faces: list[npt.NDArray] = []
+        for chunk_coords in chunk_keys:
+            try:
+                link_groups = read_chunk_links(
+                    level_group, chunk_coords, link_width=link_width, delta=0,
+                )
+                offset = chunk_offsets.get(chunk_coords, 0)
+                for lg in link_groups:
+                    if len(lg) > 0:
+                        remapped = lg.copy() + offset
+                        all_faces.append(remapped)
+            except ArrayError:
+                pass
+
+        # Cross-chunk faces are stored as variable-width records under
+        # ``cross_chunk_links/<delta=0>/`` (link_width = face arity).  Map
+        # each (chunk, local_idx) endpoint into the global vertex index
+        # via ``chunk_offsets`` built above.
+        cross_face_records = read_cross_chunk_links(level_group, delta=0)
+        for face in cross_face_records:
+            if len(face) != link_width:
+                continue  # not a face record (e.g. edge-arity, ignore)
+            vertex_ids: list[int] = []
+            for cc, local_idx in face:
+                if cc not in chunk_offsets:
+                    vertex_ids = []
+                    break
+                vertex_ids.append(int(chunk_offsets[cc]) + int(local_idx))
+            if len(vertex_ids) == link_width:
+                all_faces.append(np.asarray(vertex_ids, dtype=np.int64)[None, :])
+
+        if all_faces:
+            faces_out = np.concatenate(all_faces, axis=0)
+        else:
+            faces_out = np.zeros((0, link_width), dtype=np.int64)
+
+        # Apply bbox filter on vertices
+        if bbox is not None:
+            bbox_min, bbox_max = np.asarray(bbox[0]), np.asarray(bbox[1])
+            node_mask = np.all(
+                (positions_out >= bbox_min) & (positions_out <= bbox_max),
+                axis=1,
             )
-            for vg in groups:
-                all_positions.append(vg)
-                running += len(vg)
-        except ArrayError:
-            pass
+            if not np.all(node_mask):
+                keep = np.flatnonzero(node_mask)
+                keep_set = set(keep.tolist())
+                positions_out = positions_out[keep]
 
-    if not all_positions:
-        return _empty_mesh_result(ndim, link_width)
+                old_to_new = {int(old): new for new, old in enumerate(keep)}
+                filtered: list[npt.NDArray] = []
+                for f in faces_out:
+                    if all(int(v) in keep_set for v in f):
+                        filtered.append(np.array([old_to_new[int(v)] for v in f]))
+                faces_out = (
+                    np.stack(filtered).astype(np.int64)
+                    if filtered
+                    else np.zeros((0, link_width), dtype=np.int64)
+                )
 
-    positions_out = np.concatenate(all_positions, axis=0)
-
-    # Read intra-chunk faces
-    all_faces: list[npt.NDArray] = []
-    for chunk_coords in chunk_keys:
-        try:
-            link_groups = read_chunk_links(
-                level_group, chunk_coords, link_width=link_width, delta=0,
-            )
-            offset = chunk_offsets.get(chunk_coords, 0)
-            for lg in link_groups:
-                if len(lg) > 0:
-                    remapped = lg.copy() + offset
-                    all_faces.append(remapped)
-        except ArrayError:
-            pass
-
-    # Tier C: emit cross-chunk faces using preserved identity records.
-    # Map each (chunk, local_idx) record into the global vertex index
-    # via ``chunk_offsets`` (built from the chunks we just read).  When
-    # the array is absent (0.2 stores or no boundary faces), reads are
-    # untouched.
-    cross_face_records = read_cross_chunk_faces(level_group)
-    for face in cross_face_records:
-        vertex_ids: list[int] = []
-        for cc, local_idx in face:
-            if cc not in chunk_offsets:
-                vertex_ids = []
-                break
-            vertex_ids.append(int(chunk_offsets[cc]) + int(local_idx))
-        if len(vertex_ids) == link_width:
-            all_faces.append(np.asarray(vertex_ids, dtype=np.int64)[None, :])
-
-    if all_faces:
-        faces_out = np.concatenate(all_faces, axis=0)
-    else:
-        faces_out = np.zeros((0, link_width), dtype=np.int64)
-
-    # Apply bbox filter on vertices
-    if bbox is not None:
-        bbox_min, bbox_max = np.asarray(bbox[0]), np.asarray(bbox[1])
-        node_mask = np.all(
-            (positions_out >= bbox_min) & (positions_out <= bbox_max),
-            axis=1,
-        )
-        if not np.all(node_mask):
-            keep = np.flatnonzero(node_mask)
-            keep_set = set(keep.tolist())
-            positions_out = positions_out[keep]
-
-            old_to_new = {int(old): new for new, old in enumerate(keep)}
-            filtered: list[npt.NDArray] = []
-            for f in faces_out:
-                if all(int(v) in keep_set for v in f):
-                    filtered.append(np.array([old_to_new[int(v)] for v in f]))
-            faces_out = (
-                np.stack(filtered).astype(np.int64)
-                if filtered
-                else np.zeros((0, link_width), dtype=np.int64)
-            )
-
-    return {
-        "vertices": positions_out,
-        "faces": faces_out,
-        "vertex_count": len(positions_out),
-        "face_count": len(faces_out),
-    }
+        return {
+            "vertices": positions_out,
+            "faces": faces_out,
+            "vertex_count": len(positions_out),
+            "face_count": len(faces_out),
+        }
+    finally:
+        _batched_reads_cm.__exit__(None, None, None)
 
 
 def _empty_mesh_result(ndim: int, link_width: int) -> dict[str, Any]:
@@ -552,15 +553,14 @@ def _write_draco_chunk(
 
     # Store as raw bytes in the vertices chunk
     from zarr_vectors.core.arrays import _chunk_key
-    from zarr_vectors.encoding.ragged import encode_paired_offsets
+    from zarr_vectors.encoding.ragged import encode_vertex_offsets
 
     key = _chunk_key(chunk_coords)
     level_group.write_bytes("vertices", key, blob)
 
     # Single vertex group spanning whole chunk
     v_off = np.array([0], dtype=np.int64)
-    l_off = np.array([-1], dtype=np.int64)
     level_group.write_bytes(
         "vertex_group_offsets", key,
-        encode_paired_offsets(v_off, l_off),
+        encode_vertex_offsets(v_off),
     )

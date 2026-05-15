@@ -278,11 +278,9 @@ class RootMetadata:
     cross_level_storage: str = DEFAULT_CROSS_LEVEL_STORAGE
     """0.4 multiscale links: ``"none"`` / ``"implicit"`` / ``"explicit"``."""
     format_capabilities: list[str] = field(default_factory=list)
-    """Optional 0.3+ capability tokens this store uses (e.g.
-    ``"cross_chunk_faces"``, ``"vertex_count_cache"``).  Old 0.2 stores
-    deserialise to an empty list and the standard read paths continue
-    to work.  See :mod:`zarr_vectors.constants` for the canonical token
-    names (``CAP_*``)."""
+    """Optional capability tokens this store uses.  See
+    :mod:`zarr_vectors.constants` for the canonical token names
+    (``CAP_*``).  Empty list by default."""
 
     def validate(self) -> None:
         """Validate this metadata object.

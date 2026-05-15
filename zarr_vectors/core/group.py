@@ -50,6 +50,7 @@ class Group:
     # without needing to remember to set the attributes.
     _pending_writes: list[tuple[str, str, bytes]] | None = None
     _pending_array_metas: dict[str, dict[str, Any]] | None = None
+    _prefetch_cache: dict[tuple[str, str], bytes] | None = None
 
     def __init__(self, zarr_group: zarr.Group) -> None:
         self._zarr = zarr_group
@@ -60,12 +61,17 @@ class Group:
         # against the underlying Store on context exit.
         self._pending_writes = None
         self._pending_array_metas = None
+        # Prefetch cache activated by :meth:`batched_reads`.  When set,
+        # :meth:`read_bytes` looks here first before hitting the store.
+        self._prefetch_cache = None
 
     @classmethod
     def _from_zarr(cls, zarr_group: zarr.Group) -> Group:
         instance = cls.__new__(cls)
         instance._zarr = zarr_group
         instance._pending_writes = None
+        instance._pending_array_metas = None
+        instance._prefetch_cache = None
         return instance
 
     @classmethod
@@ -144,6 +150,54 @@ class Group:
         a[:] = np.frombuffer(data, dtype="uint8")
 
     @contextmanager
+    def batched_reads(
+        self,
+        plan: list[tuple[str, list[str]]],
+    ) -> Iterator[None]:
+        """Prefetch every chunk in ``plan`` via one
+        :func:`asyncio.gather` and serve subsequent :meth:`read_bytes`
+        calls from the resulting in-memory cache.
+
+        ``plan`` is a list of ``(array_name, [chunk_keys, ...])`` pairs
+        — typically ``(VERTICES, list_chunk_keys(group, VERTICES))``
+        plus the parallel ``vertex_group_offsets`` and per-attribute
+        arrays.  On entry every (array_name, chunk_key) pair is fetched
+        in a single async gather; on exit the cache is dropped.
+
+        Reads for a key NOT in the plan fall through to the sync
+        :meth:`read_bytes` path, so under-specifying the plan
+        degrades performance gracefully (still correct).
+
+        Use for chunk-heavy read loops against high-latency object
+        stores (GCS / S3 / Azure).  Each per-chunk GET becomes one async
+        task instead of one serial sync call, so the total wall time
+        approaches one round-trip rather than ``N`` round-trips.
+
+        Nesting is not supported and raises :class:`StoreError`.
+        Writes inside the block are unaffected.
+
+        Example::
+
+            chunk_keys = list_chunk_keys(level_group, VERTICES)
+            with level_group.batched_reads([
+                (VERTICES, chunk_keys),
+                (VERTEX_GROUP_OFFSETS, chunk_keys),
+                *((f"{VERTEX_ATTRIBUTES}/{a}", chunk_keys) for a in attrs),
+            ]):
+                for cc in chunk_keys:
+                    vgs = read_chunk_vertices(level_group, cc, ...)
+        """
+        if self._prefetch_cache is not None:
+            raise StoreError("batched_reads() does not support nesting")
+        from zarr_vectors.core._batch_reader import flush_prefetch
+
+        self._prefetch_cache = flush_prefetch(self._zarr, plan)
+        try:
+            yield
+        finally:
+            self._prefetch_cache = None
+
+    @contextmanager
     def batched_writes(self) -> Iterator[None]:
         """Defer every :meth:`write_bytes` and :meth:`write_array_meta`
         call inside the block and flush them in a single
@@ -195,6 +249,15 @@ class Group:
             self._pending_array_metas = None
 
     def read_bytes(self, array_name: str, chunk_key: str) -> bytes:
+        # Batched-read mode (see :meth:`batched_reads`): serve from the
+        # prefetch cache when possible.  Cache misses fall through to
+        # the sync path below — useful when a caller under-specifies
+        # the plan or hits an array the prefetch skipped.
+        if self._prefetch_cache is not None:
+            cached = self._prefetch_cache.get((array_name, chunk_key))
+            if cached is not None:
+                return cached
+
         path = f"{array_name}/{chunk_key}"
         try:
             arr = self._zarr[path]

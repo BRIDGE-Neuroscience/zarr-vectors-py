@@ -29,7 +29,7 @@ class TestLazyFilterChain:
 
     def test_lazy_filter_pipeline(self, tmp_path: Path) -> None:
         from zarr_vectors.types.polylines import write_polylines
-        from zarr_vectors.lazy import open_zvr
+        from zarr_vectors.lazy import open_zv
 
         rng = np.random.default_rng(42)
         polys = _make_streamlines(rng, 100)
@@ -39,23 +39,23 @@ class TestLazyFilterChain:
             groups={0: list(range(50)), 1: list(range(50, 100))},
         )
 
-        zvr = open_zvr(store)
-        assert zvr[0].vertex_count > 0
+        zv = open_zv(store)
+        assert zv[0].vertex_count > 0
 
         # Chain: group → bbox
-        view = zvr[0].filter(group_ids=[0]).filter(
+        view = zv[0].filter(group_ids=[0]).filter(
             bbox=(np.array([0, 0, 0]), np.array([200, 200, 200])),
         )
         result = view.compute()
         assert result["vertex_count"] > 0
-        assert result["vertex_count"] < zvr[0].vertex_count
+        assert result["vertex_count"] < zv[0].vertex_count
 
         # Polyline access
-        poly_5 = zvr[0].polylines[5].compute()
+        poly_5 = zv[0].polylines[5].compute()
         assert poly_5.ndim == 2 and poly_5.shape[1] == 3
 
         # Compute all polylines in parallel
-        all_polys = zvr[0].polylines.compute()
+        all_polys = zv[0].polylines.compute()
         assert len(all_polys) == 100
 
 
@@ -65,15 +65,15 @@ class TestLazyDaskParallel:
     def test_dask_compute_chunks(self, tmp_path: Path) -> None:
         import dask
         from zarr_vectors.types.points import write_points
-        from zarr_vectors.lazy import open_zvr
+        from zarr_vectors.lazy import open_zv
 
         rng = np.random.default_rng(42)
         store = str(tmp_path / "pts.zv")
         positions = rng.uniform(0, 400, size=(5000, 3)).astype(np.float32)
         write_points(store, positions, chunk_shape=(100., 100., 100.))
 
-        zvr = open_zvr(store)
-        delayed_chunks = zvr[0].vertices.to_delayed()
+        zv = open_zv(store)
+        delayed_chunks = zv[0].vertices.to_delayed()
         assert len(delayed_chunks) > 1
 
         # Custom per-chunk processing
@@ -148,7 +148,7 @@ class TestShardedPyramid:
             rng.uniform(0, 1000, size=(10000, 3)).astype(np.float32),
             chunk_shape=(100., 100., 100.),
         )
-        build_pyramid(store)
+        build_pyramid(store, factors=[(2.0, 1.0), (2.0, 1.0)])
         levels_before = list_resolution_levels(open_store(store))
 
         # Shard
@@ -237,11 +237,11 @@ class TestRechunkByAttribute:
 
 
 class TestRechunkViaLazy:
-    """Rechunk via lazy API: zvr[0].rechunk()."""
+    """Rechunk via lazy API: zv[0].rechunk()."""
 
     def test_lazy_rechunk(self, tmp_path: Path) -> None:
         from zarr_vectors.types.polylines import write_polylines
-        from zarr_vectors.lazy import open_zvr
+        from zarr_vectors.lazy import open_zv
 
         rng = np.random.default_rng(42)
         polys = _make_streamlines(rng, 40)
@@ -251,14 +251,14 @@ class TestRechunkViaLazy:
             groups={0: list(range(20)), 1: list(range(20, 40))},
         )
 
-        zvr = open_zvr(store)
+        zv = open_zv(store)
         out = str(tmp_path / "rechunked.zv")
-        result = zvr[0].rechunk(by="group", output=out)
+        result = zv[0].rechunk(by="group", output=out)
         assert result["bins_created"] == 2
 
         # Read rechunked store via lazy API
-        zvr_rc = open_zvr(out)
-        assert zvr_rc[0].vertices.compute().shape[0] > 0
+        zv_rc = open_zv(out)
+        assert zv_rc[0].vertices.compute().shape[0] > 0
 
 
 class TestCompositeStore:
@@ -268,7 +268,7 @@ class TestCompositeStore:
         from zarr_vectors.types.points import write_points, read_points
         from zarr_vectors.composite import add_geometry, read_composite
         from zarr_vectors.validate import validate
-        from zarr_vectors.lazy import open_zvr
+        from zarr_vectors.lazy import open_zv
 
         rng = np.random.default_rng(42)
         store = str(tmp_path / "brain.zv")
@@ -300,9 +300,9 @@ class TestCompositeStore:
         assert validate(store, level=4).ok
 
         # Lazy API
-        zvr = open_zvr(store)
-        assert len(zvr.geometry_types) == 3
-        assert zvr[0].vertices.compute().shape[0] == 1000
+        zv = open_zv(store)
+        assert len(zv.geometry_types) == 3
+        assert zv[0].vertices.compute().shape[0] == 1000
 
 
 class TestBackwardCompat:
@@ -355,5 +355,5 @@ class TestBackwardCompat:
         s = str(tmp_path / "pyr.zv")
         write_points(s, rng.uniform(0, 1000, size=(10000, 3)).astype(np.float32),
                      chunk_shape=(100., 100., 100.))
-        build_pyramid(s)
+        build_pyramid(s, factors=[(2.0, 1.0)])
         assert validate(s, level=5).ok

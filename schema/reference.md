@@ -16,7 +16,6 @@ Name: zarr_vectors
 | [AttributeMeta](AttributeMeta.md) | `` |
 | [Axis](Axis.md) | One axis of the spatial index |
 | [BoundingBox](BoundingBox.md) | Two parallel ``ndim``-length arrays representing the global ``(min_corner, ma... |
-| [CrossChunkFacesMeta](CrossChunkFacesMeta.md) | `` |
 | [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |
 | [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |
 | [CRS](CRS.md) | Free-form coordinate reference system metadata |
@@ -25,10 +24,8 @@ Name: zarr_vectors
 | [LevelMetadata](LevelMetadata.md) | Per-resolution-level `` |
 | [LinkAttributeMeta](LinkAttributeMeta.md) | `` |
 | [LinksMeta](LinksMeta.md) | `` |
-| [MetanodeChildrenMeta](MetanodeChildrenMeta.md) | `` |
 | [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |
 | [ObjectIndexMeta](ObjectIndexMeta.md) | `` |
-| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |
 | [RootMetadata](RootMetadata.md) | Root-level `` |
 | [VerticesMeta](VerticesMeta.md) | `` |
 
@@ -40,7 +37,6 @@ Name: zarr_vectors
 | --- | --- |
 | [arrays_present](arrays_present.md) | Names of arrays present in the level group |
 | [base_bin_shape](base_bin_shape.md) | Supervoxel bin edge lengths at level 0 |
-| [batch_id](batch_id.md) | Monotonic batch id for an ``object_index/pending/<batch>`` sidecar |
 | [bin_ratio](bin_ratio.md) | Integer fold-change per axis relative to level 0 |
 | [bin_shape](bin_shape.md) | Per-axis supervoxel edge lengths at this level |
 | [bounds](bounds.md) | Global vertex bounding box |
@@ -61,21 +57,18 @@ Name: zarr_vectors
 | [inherited_num_objects](inherited_num_objects.md) | OID-space size inherited from the parent level (= ``parent_level |
 | [level](level.md) | Resolution level index (0 = full resolution) |
 | [level_delta](level_delta.md) | Pyramid-level delta between the source side (the level that owns this array) ... |
-| [link_width](link_width.md) | Width of a links row (2 for edges, 3 or 4 for face rows) |
+| [link_width](link_width.md) | Width of a links row (1 for parent→child metanode references, 2 for edges, 3 ... |
 | [links_convention](links_convention.md) |  |
 | [max_corner](max_corner.md) | Per-axis maxima |
 | [min_corner](min_corner.md) | Per-axis minima |
 | [name](name.md) | NGFF axis or attribute name (e |
-| [num_faces](num_faces.md) | Total cross-chunk face count |
 | [num_groups](num_groups.md) | Total grouping count |
 | [num_links](num_links.md) | Total cross-chunk link count |
-| [num_metanodes](num_metanodes.md) | Total metanode count in a coarsening sidecar |
 | [num_objects](num_objects.md) | Total object count this array carries |
 | [object_index_convention](object_index_convention.md) |  |
 | [object_sparsity](object_sparsity.md) | Fraction of objects retained at this level |
 | [parent_level](parent_level.md) | Source level index (None for level 0) |
 | [preserves_object_ids](preserves_object_ids.md) | True for levels written by the per-object pyramid regime |
-| [record_size](record_size.md) | Per-face record width in ``cross_chunk_faces/data`` (sid_ndim + 2 int64s) |
 | [reduction_factor](reduction_factor.md) | Multi-resolution coarsening factor (≥ 2) |
 | [shape](shape.md) | Shape of a dense per-object/per-group array |
 | [shared_vertex_groups](shared_vertex_groups.md) | True when per-chunk vertex groups may be referenced by multiple objects' mani... |
@@ -94,7 +87,7 @@ Name: zarr_vectors
 | [CrossChunkStrategy](CrossChunkStrategy.md) | How connectivity that crosses chunk boundaries is represented |
 | [CrossLevelStorage](CrossLevelStorage.md) | How cross-pyramid-level edges are stored in the multiscale links layout (``li... |
 | [Encoding](Encoding.md) | Per-array encoding of vertex data |
-| [FormatCapability](FormatCapability.md) | Optional 0 |
+| [FormatCapability](FormatCapability.md) | Optional feature tokens a store advertises in :attr:`RootMetadata |
 | [GeometryType](GeometryType.md) | The kind of geometry a store (or one of its sub-types) holds |
 | [LinksConvention](LinksConvention.md) | How intra-chunk links are represented for a polyline/graph/mesh |
 | [ObjectIndexConvention](ObjectIndexConvention.md) | How the object_id → vertex-group mapping is encoded |
@@ -135,7 +128,10 @@ Name: zarr_vectors
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: arrays_present 
 
@@ -144,11 +140,11 @@ _Names of arrays present in the level group._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:arrays_present](https://w3id.org/zarr-vectors/schema/0.5/arrays_present)
-Alias: arrays_present
-
 <!-- no inheritance hierarchy -->
 
 
@@ -223,7 +219,6 @@ name: arrays_present
 description: Names of arrays present in the level group.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: arrays_present
 domain_of:
 - LevelMetadata
 range: string
@@ -231,12 +226,15 @@ required: true
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: AttributeMeta 
 
@@ -244,6 +242,8 @@ multivalued: true
 _``.zattrs`` for each ``attributes/<name>/`` array._
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -378,22 +378,18 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: zv_array
     owner: AttributeMeta
     domain_of:
     - VerticesMeta
     - LinksMeta
     - AttributeMeta
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - ObjectAttributeMeta
     - GroupingsMeta
     - GroupingsAttributeMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
     - LinkAttributeMeta
     - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
     equals_string: attribute
@@ -403,7 +399,6 @@ attributes:
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
     slot_uri: schema:name
-    alias: name
     owner: AttributeMeta
     domain_of:
     - Axis
@@ -419,7 +414,6 @@ attributes:
     description: Numpy dtype string of the array's value type (e.g. "float32").
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: dtype
     owner: AttributeMeta
     domain_of:
     - VerticesMeta
@@ -436,7 +430,6 @@ attributes:
     description: For multi-channel per-vertex attributes, the channel labels.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: channel_names
     owner: AttributeMeta
     domain_of:
     - AttributeMeta
@@ -444,12 +437,15 @@ attributes:
     multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: Axis 
 
@@ -459,6 +455,8 @@ _One axis of the spatial index.  Mirrors the OME-Zarr NGFF axis object (RFC 4/5)
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -581,7 +579,6 @@ attributes:
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
     slot_uri: schema:name
-    alias: name
     owner: Axis
     domain_of:
     - Axis
@@ -597,7 +594,6 @@ attributes:
     description: NGFF axis type — "space", "time", or "channel".
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: type
     owner: Axis
     domain_of:
     - Axis
@@ -608,7 +604,6 @@ attributes:
     description: NGFF unit string (e.g. "um", "nanometer", "second").
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: unit
     owner: Axis
     domain_of:
     - Axis
@@ -616,12 +611,15 @@ attributes:
 class_uri: ngff:Axis
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: base_bin_shape 
 
@@ -632,11 +630,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:base_bin_shape](https://w3id.org/zarr-vectors/schema/0.5/base_bin_shape)
-Alias: base_bin_shape
-
 <!-- no inheritance hierarchy -->
 
 
@@ -714,126 +712,21 @@ description: 'Supervoxel bin edge lengths at level 0.  When set, every value mus
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: base_bin_shape
 domain_of:
 - RootMetadata
 range: float
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
-
-# Slot: batch_id 
-
-
-_Monotonic batch id for an ``object_index/pending/<batch>`` sidecar._
-
-
-
-
-
-URI: [zv:batch_id](https://w3id.org/zarr-vectors/schema/0.5/batch_id)
-Alias: batch_id
-
-<!-- no inheritance hierarchy -->
-
-
-
-
-
-## Applicable Classes
-
-| Name | Description | Modifies Slot |
-| --- | --- | --- |
-| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |  no  |
-
-
-
-
-
-
-## Properties
-
-### Type and Range
-
-| Property | Value |
-| --- | --- |
-| Range | [Integer](Integer.md) |
-| Domain Of | [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) |
-
-### Cardinality and Requirements
-
-| Property | Value |
-| --- | --- |
-| Required | Yes |
-### Value Constraints
-
-| Property | Value |
-| --- | --- |
-| Minimum Value | 0 |
-
-
-
-
-
-
-
-
-
-
-
-
-## Identifier and Mapping Information
-
-
-
-
-
-### Schema Source
-
-
-* from schema: https://w3id.org/zarr-vectors/schema/0.5
-
-
-
-
-## Mappings
-
-| Mapping Type | Mapped Value |
-| ---  | ---  |
-| self | zv:batch_id |
-| native | zv:batch_id |
-
-
-
-
-## LinkML Source
-
-<details>
-```yaml
-name: batch_id
-description: Monotonic batch id for an ``object_index/pending/<batch>`` sidecar.
-from_schema: https://w3id.org/zarr-vectors/schema/0.5
-rank: 1000
-alias: batch_id
-domain_of:
-- ObjectIndexPendingMeta
-range: integer
-required: true
-minimum_value: 0
-
-```
-</details>
-
-
 ---
-
-
+search:
+  boost: 5.0
+---
 
 # Slot: bin_ratio 
 
@@ -842,11 +735,11 @@ _Integer fold-change per axis relative to level 0._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:bin_ratio](https://w3id.org/zarr-vectors/schema/0.5/bin_ratio)
-Alias: bin_ratio
-
 <!-- no inheritance hierarchy -->
 
 
@@ -920,19 +813,21 @@ name: bin_ratio
 description: Integer fold-change per axis relative to level 0.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: bin_ratio
 domain_of:
 - LevelMetadata
 range: integer
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: bin_shape 
 
@@ -943,11 +838,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:bin_shape](https://w3id.org/zarr-vectors/schema/0.5/bin_shape)
-Alias: bin_shape
-
 <!-- no inheritance hierarchy -->
 
 
@@ -1024,19 +919,21 @@ description: 'Per-axis supervoxel edge lengths at this level.  Must be ``None`` 
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: bin_shape
 domain_of:
 - LevelMetadata
 range: float
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-# Type: Boolean 
+---
+search:
+  boost: 1.0
+---# Type: Boolean 
 
 
 
@@ -1044,6 +941,8 @@ multivalued: true
 _A binary (true or false) value_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:boolean](http://www.w3.org/2001/XMLSchema#boolean)
 
@@ -1091,10 +990,15 @@ URI: [xsd:boolean](http://www.w3.org/2001/XMLSchema#boolean)
 
 
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: BoundingBox 
 
@@ -1104,6 +1008,8 @@ _Two parallel ``ndim``-length arrays representing the global ``(min_corner, max_
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -1222,7 +1128,6 @@ attributes:
     description: Per-axis minima.  Length must equal ``len(spatial_index_dims)``.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: min_corner
     owner: BoundingBox
     domain_of:
     - BoundingBox
@@ -1234,7 +1139,6 @@ attributes:
     description: Per-axis maxima.  Length must equal ``len(spatial_index_dims)``.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: max_corner
     owner: BoundingBox
     domain_of:
     - BoundingBox
@@ -1243,12 +1147,15 @@ attributes:
     multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: bounds 
 
@@ -1257,11 +1164,11 @@ _Global vertex bounding box._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:bounds](https://w3id.org/zarr-vectors/schema/0.5/bounds)
-Alias: bounds
-
 <!-- no inheritance hierarchy -->
 
 
@@ -1335,19 +1242,21 @@ name: bounds
 description: Global vertex bounding box.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: bounds
 domain_of:
 - RootMetadata
 range: BoundingBox
 required: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: channel_names 
 
@@ -1356,11 +1265,11 @@ _For multi-channel per-vertex attributes, the channel labels._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:channel_names](https://w3id.org/zarr-vectors/schema/0.5/channel_names)
-Alias: channel_names
-
 <!-- no inheritance hierarchy -->
 
 
@@ -1434,19 +1343,21 @@ name: channel_names
 description: For multi-channel per-vertex attributes, the channel labels.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: channel_names
 domain_of:
 - AttributeMeta
 range: string
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: chunk_attribute_name 
 
@@ -1455,11 +1366,11 @@ _Name of the per-vertex attribute used as the leading chunk axis._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:chunk_attribute_name](https://w3id.org/zarr-vectors/schema/0.5/chunk_attribute_name)
-Alias: chunk_attribute_name
-
 <!-- no inheritance hierarchy -->
 
 
@@ -1532,18 +1443,20 @@ name: chunk_attribute_name
 description: Name of the per-vertex attribute used as the leading chunk axis.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: chunk_attribute_name
 domain_of:
 - LevelMetadata
 range: string
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: chunk_attribute_values 
 
@@ -1554,11 +1467,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:chunk_attribute_values](https://w3id.org/zarr-vectors/schema/0.5/chunk_attribute_values)
-Alias: chunk_attribute_values
-
 <!-- no inheritance hierarchy -->
 
 
@@ -1636,19 +1549,21 @@ description: 'Ordered list mapping attribute-bin index to original attribute val
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: chunk_attribute_values
 domain_of:
 - LevelMetadata
 range: string
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: chunk_dims 
 
@@ -1659,11 +1574,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:chunk_dims](https://w3id.org/zarr-vectors/schema/0.5/chunk_dims)
-Alias: chunk_dims
-
 <!-- no inheritance hierarchy -->
 
 
@@ -1740,19 +1655,21 @@ description: 'Chunk-key axis names; the leading axis names appear first.  Set wh
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: chunk_dims
 domain_of:
 - LevelMetadata
 range: string
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: chunk_shape 
 
@@ -1761,11 +1678,11 @@ _Physical spatial chunk size per axis (all values > 0)._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:chunk_shape](https://w3id.org/zarr-vectors/schema/0.5/chunk_shape)
-Alias: chunk_shape
-
 <!-- no inheritance hierarchy -->
 
 
@@ -1840,7 +1757,6 @@ name: chunk_shape
 description: Physical spatial chunk size per axis (all values > 0).
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: chunk_shape
 domain_of:
 - RootMetadata
 range: float
@@ -1848,12 +1764,15 @@ required: true
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: coarsening_method 
 
@@ -1862,11 +1781,11 @@ _How this level was generated (e.g. "grid_metanode")._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:coarsening_method](https://w3id.org/zarr-vectors/schema/0.5/coarsening_method)
-Alias: coarsening_method
-
 <!-- no inheritance hierarchy -->
 
 
@@ -1939,26 +1858,28 @@ name: coarsening_method
 description: How this level was generated (e.g. "grid_metanode").
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: coarsening_method
 domain_of:
 - LevelMetadata
 range: string
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: cross_chunk_strategy 
+
+<div data-search-exclude markdown="1">
 
 
 
 URI: [zv:cross_chunk_strategy](https://w3id.org/zarr-vectors/schema/0.5/cross_chunk_strategy)
-Alias: cross_chunk_strategy
-
 <!-- no inheritance hierarchy -->
 
 
@@ -2030,18 +1951,20 @@ Alias: cross_chunk_strategy
 name: cross_chunk_strategy
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: cross_chunk_strategy
 domain_of:
 - RootMetadata
 range: CrossChunkStrategy
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: cross_level_depth 
 
@@ -2052,11 +1975,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:cross_level_depth](https://w3id.org/zarr-vectors/schema/0.5/cross_level_depth)
-Alias: cross_level_depth
-
 <!-- no inheritance hierarchy -->
 
 
@@ -2141,19 +2064,21 @@ description: 'Maximum absolute level delta for which cross-pyramid-level link ar
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: cross_level_depth
 domain_of:
 - RootMetadata
 range: integer
 minimum_value: -1
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: cross_level_storage 
 
@@ -2164,11 +2089,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:cross_level_storage](https://w3id.org/zarr-vectors/schema/0.5/cross_level_storage)
-Alias: cross_level_storage
-
 <!-- no inheritance hierarchy -->
 
 
@@ -2245,229 +2170,20 @@ description: 'Whether cross-level link arrays are written in both directions (``
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: cross_level_storage
 domain_of:
 - RootMetadata
 range: CrossLevelStorage
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
-
-# Class: CrossChunkFacesMeta 
-
-
-_``.zattrs`` for ``cross_chunk_faces/`` (0.3 capability ``cross_chunk_faces``)._
-
-
-
-
-
-URI: [zv:CrossChunkFacesMeta](https://w3id.org/zarr-vectors/schema/0.5/CrossChunkFacesMeta)
-
-
-
-
-
-```mermaid
- classDiagram
-    class CrossChunkFacesMeta
-    click CrossChunkFacesMeta href "../CrossChunkFacesMeta/"
-      CrossChunkFacesMeta : num_faces
-        
-      CrossChunkFacesMeta : record_size
-        
-      CrossChunkFacesMeta : sid_ndim
-        
-      CrossChunkFacesMeta : zv_array
-        
-          
-    
-        
-        
-        CrossChunkFacesMeta --> "1" ZvArrayTag : zv_array
-        click ZvArrayTag href "../ZvArrayTag/"
-    
-
-        
-      
-```
-
-
-
-
-<!-- no inheritance hierarchy -->
-
-## Slots
-
-| Name | Cardinality and Range | Description | Inheritance |
-| ---  | --- | --- | --- |
-| [zv_array](zv_array.md) | 1 <br/> [ZvArrayTag](ZvArrayTag.md) | Discriminator slot identifying the kind of per-array `` | direct |
-| [num_faces](num_faces.md) | 1 <br/> [Integer](Integer.md) | Total cross-chunk face count | direct |
-| [sid_ndim](sid_ndim.md) | 1 <br/> [Integer](Integer.md) | Number of spatial-index dimensions encoded in chunk keys | direct |
-| [record_size](record_size.md) | 1 <br/> [Integer](Integer.md) | Per-face record width in ``cross_chunk_faces/data`` (sid_ndim + 2 int64s) | direct |
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Identifier and Mapping Information
-
-
-
-
-
-### Schema Source
-
-
-* from schema: https://w3id.org/zarr-vectors/schema/0.5
-
-
-
-
-## Mappings
-
-| Mapping Type | Mapped Value |
-| ---  | ---  |
-| self | zv:CrossChunkFacesMeta |
-| native | zv:CrossChunkFacesMeta |
-
-
-
-
-
-
-## LinkML Source
-
-### Direct
-
-<details>
-```yaml
-name: CrossChunkFacesMeta
-description: '``.zattrs`` for ``cross_chunk_faces/`` (0.3 capability ``cross_chunk_faces``).'
-from_schema: https://w3id.org/zarr-vectors/schema/0.5
-rank: 1000
-slots:
-- zv_array
-- num_faces
-- sid_ndim
-- record_size
-slot_usage:
-  zv_array:
-    name: zv_array
-    required: true
-    equals_string: cross_chunk_faces
-
-```
-</details>
-
-### Induced
-
-<details>
-```yaml
-name: CrossChunkFacesMeta
-description: '``.zattrs`` for ``cross_chunk_faces/`` (0.3 capability ``cross_chunk_faces``).'
-from_schema: https://w3id.org/zarr-vectors/schema/0.5
-rank: 1000
-slot_usage:
-  zv_array:
-    name: zv_array
-    required: true
-    equals_string: cross_chunk_faces
-attributes:
-  zv_array:
-    name: zv_array
-    description: 'Discriminator slot identifying the kind of per-array ``.zattrs``
-      block.  Each writer in ``core/arrays.py`` stamps the corresponding token from
-      :class:`ZvArrayTag`.
-
-      '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: zv_array
-    owner: CrossChunkFacesMeta
-    domain_of:
-    - VerticesMeta
-    - LinksMeta
-    - AttributeMeta
-    - ObjectIndexMeta
-    - ObjectIndexPendingMeta
-    - ObjectAttributeMeta
-    - GroupingsMeta
-    - GroupingsAttributeMeta
-    - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
-    - LinkAttributeMeta
-    - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
-    range: ZvArrayTag
-    required: true
-    equals_string: cross_chunk_faces
-  num_faces:
-    name: num_faces
-    description: Total cross-chunk face count.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: num_faces
-    owner: CrossChunkFacesMeta
-    domain_of:
-    - CrossChunkFacesMeta
-    range: integer
-    required: true
-    minimum_value: 0
-  sid_ndim:
-    name: sid_ndim
-    description: Number of spatial-index dimensions encoded in chunk keys.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: sid_ndim
-    owner: CrossChunkFacesMeta
-    domain_of:
-    - ObjectIndexMeta
-    - ObjectIndexPendingMeta
-    - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
-    - MetanodeChildrenMeta
-    range: integer
-    required: true
-    minimum_value: 1
-  record_size:
-    name: record_size
-    description: 'Per-face record width in ``cross_chunk_faces/data`` (sid_ndim +
-      2 int64s).
-
-      '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: record_size
-    owner: CrossChunkFacesMeta
-    domain_of:
-    - CrossChunkFacesMeta
-    range: integer
-    required: true
-    minimum_value: 2
-
-```
-</details>
-
-
 ---
-
-
+search:
+  boost: 10.0
+---
 
 # Class: CrossChunkLinkAttributeMeta 
 
@@ -2477,6 +2193,8 @@ _``.zattrs`` for each ``cross_chunk_link_attributes/<name>/<delta>/`` array.  St
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -2623,22 +2341,18 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: zv_array
     owner: CrossChunkLinkAttributeMeta
     domain_of:
     - VerticesMeta
     - LinksMeta
     - AttributeMeta
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - ObjectAttributeMeta
     - GroupingsMeta
     - GroupingsAttributeMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
     - LinkAttributeMeta
     - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
     equals_string: cross_chunk_link_attribute
@@ -2648,7 +2362,6 @@ attributes:
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
     slot_uri: schema:name
-    alias: name
     owner: CrossChunkLinkAttributeMeta
     domain_of:
     - Axis
@@ -2664,7 +2377,6 @@ attributes:
     description: Numpy dtype string of the array's value type (e.g. "float32").
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: dtype
     owner: CrossChunkLinkAttributeMeta
     domain_of:
     - VerticesMeta
@@ -2686,7 +2398,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: level_delta
     owner: CrossChunkLinkAttributeMeta
     domain_of:
     - LinksMeta
@@ -2700,7 +2411,6 @@ attributes:
     description: Total cross-chunk link count.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: num_links
     owner: CrossChunkLinkAttributeMeta
     domain_of:
     - CrossChunkLinksMeta
@@ -2710,21 +2420,26 @@ attributes:
     minimum_value: 0
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: CrossChunkLinksMeta 
 
 
-_``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Under the 0.4 multiscale layout, each delta segment carries its own meta block; ``level_delta=0`` is the intra-level array.  Source-side endpoints live at the array's own resolution level; target-side endpoints live at ``this_level + level_delta``._
+_``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Each delta segment carries its own meta block; ``level_delta=0`` is the intra-level array.  Each record is ``link_width`` ``(chunk_coords, vertex_idx)`` endpoints — ``link_width=2`` encodes a cross-chunk edge, ``link_width=3`` a triangle face record, and so on.  Source-side endpoint (endpoint 0) lives at the array's own resolution level; target-side endpoints live at ``this_level + level_delta``._
 
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -2739,6 +2454,8 @@ URI: [zv:CrossChunkLinksMeta](https://w3id.org/zarr-vectors/schema/0.5/CrossChun
     class CrossChunkLinksMeta
     click CrossChunkLinksMeta href "../CrossChunkLinksMeta/"
       CrossChunkLinksMeta : level_delta
+        
+      CrossChunkLinksMeta : link_width
         
       CrossChunkLinksMeta : num_links
         
@@ -2771,6 +2488,7 @@ URI: [zv:CrossChunkLinksMeta](https://w3id.org/zarr-vectors/schema/0.5/CrossChun
 | [num_links](num_links.md) | 1 <br/> [Integer](Integer.md) | Total cross-chunk link count | direct |
 | [sid_ndim](sid_ndim.md) | 1 <br/> [Integer](Integer.md) | Number of spatial-index dimensions encoded in chunk keys | direct |
 | [level_delta](level_delta.md) | 1 <br/> [Integer](Integer.md) | Pyramid-level delta between the source side (the level that owns this array) ... | direct |
+| [link_width](link_width.md) | 1 <br/> [Integer](Integer.md) | Width of a links row (1 for parent→child metanode references, 2 for edges, 3 ... | direct |
 
 
 
@@ -2819,10 +2537,12 @@ URI: [zv:CrossChunkLinksMeta](https://w3id.org/zarr-vectors/schema/0.5/CrossChun
 <details>
 ```yaml
 name: CrossChunkLinksMeta
-description: '``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Under the 0.4
-  multiscale layout, each delta segment carries its own meta block; ``level_delta=0``
-  is the intra-level array.  Source-side endpoints live at the array''s own resolution
-  level; target-side endpoints live at ``this_level + level_delta``.
+description: '``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Each delta
+  segment carries its own meta block; ``level_delta=0`` is the intra-level array.  Each
+  record is ``link_width`` ``(chunk_coords, vertex_idx)`` endpoints — ``link_width=2``
+  encodes a cross-chunk edge, ``link_width=3`` a triangle face record, and so on.  Source-side
+  endpoint (endpoint 0) lives at the array''s own resolution level; target-side endpoints
+  live at ``this_level + level_delta``.
 
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
@@ -2832,6 +2552,7 @@ slots:
 - num_links
 - sid_ndim
 - level_delta
+- link_width
 slot_usage:
   zv_array:
     name: zv_array
@@ -2846,10 +2567,12 @@ slot_usage:
 <details>
 ```yaml
 name: CrossChunkLinksMeta
-description: '``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Under the 0.4
-  multiscale layout, each delta segment carries its own meta block; ``level_delta=0``
-  is the intra-level array.  Source-side endpoints live at the array''s own resolution
-  level; target-side endpoints live at ``this_level + level_delta``.
+description: '``.zattrs`` for a ``cross_chunk_links/<delta>/`` array.  Each delta
+  segment carries its own meta block; ``level_delta=0`` is the intra-level array.  Each
+  record is ``link_width`` ``(chunk_coords, vertex_idx)`` endpoints — ``link_width=2``
+  encodes a cross-chunk edge, ``link_width=3`` a triangle face record, and so on.  Source-side
+  endpoint (endpoint 0) lives at the array''s own resolution level; target-side endpoints
+  live at ``this_level + level_delta``.
 
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
@@ -2869,22 +2592,18 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: zv_array
     owner: CrossChunkLinksMeta
     domain_of:
     - VerticesMeta
     - LinksMeta
     - AttributeMeta
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - ObjectAttributeMeta
     - GroupingsMeta
     - GroupingsAttributeMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
     - LinkAttributeMeta
     - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
     equals_string: cross_chunk_links
@@ -2893,7 +2612,6 @@ attributes:
     description: Total cross-chunk link count.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: num_links
     owner: CrossChunkLinksMeta
     domain_of:
     - CrossChunkLinksMeta
@@ -2906,14 +2624,10 @@ attributes:
     description: Number of spatial-index dimensions encoded in chunk keys.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: sid_ndim
     owner: CrossChunkLinksMeta
     domain_of:
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
-    - MetanodeChildrenMeta
     range: integer
     required: true
     minimum_value: 1
@@ -2927,7 +2641,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: level_delta
     owner: CrossChunkLinksMeta
     domain_of:
     - LinksMeta
@@ -2936,12 +2649,33 @@ attributes:
     - CrossChunkLinkAttributeMeta
     range: integer
     required: true
+  link_width:
+    name: link_width
+    description: 'Width of a links row (1 for parent→child metanode references, 2
+      for edges, 3 for triangle faces, 4 for quads).
+
+      '
+    from_schema: https://w3id.org/zarr-vectors/schema/0.5
+    rank: 1000
+    owner: CrossChunkLinksMeta
+    domain_of:
+    - LinksMeta
+    - CrossChunkLinksMeta
+    range: integer
+    required: true
+    minimum_value: 1
 
 ```
-</details>
+</details></div>
 
 
 ---
+
+---
+search:
+  boost: 2.0
+---
+
 
 # Enum: CrossChunkStrategy 
 
@@ -2951,6 +2685,8 @@ attributes:
 _How connectivity that crosses chunk boundaries is represented._
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [zv:CrossChunkStrategy](https://w3id.org/zarr-vectors/schema/0.5/CrossChunkStrategy)
 
@@ -3017,8 +2753,16 @@ permissible_values:
 ```
 </details>
 
+</div>
+
 
 ---
+
+---
+search:
+  boost: 2.0
+---
+
 
 # Enum: CrossLevelStorage 
 
@@ -3030,6 +2774,8 @@ _How cross-pyramid-level edges are stored in the multiscale links layout (``link
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [zv:CrossLevelStorage](https://w3id.org/zarr-vectors/schema/0.5/CrossLevelStorage)
 
@@ -3106,10 +2852,15 @@ permissible_values:
 ```
 </details>
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: crs 
 
@@ -3120,11 +2871,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [schema:coordinateReferenceSystem](http://schema.org/coordinateReferenceSystem)
-Alias: crs
-
 <!-- no inheritance hierarchy -->
 
 
@@ -3202,19 +2953,21 @@ description: 'Optional coordinate reference system metadata (free-form dict matc
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
 slot_uri: schema:coordinateReferenceSystem
-alias: crs
 domain_of:
 - RootMetadata
 range: CRS
 inlined: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-# Type: Curie 
+---
+search:
+  boost: 1.0
+---# Type: Curie 
 
 
 
@@ -3222,6 +2975,8 @@ inlined: true
 _a compact URI_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
@@ -3273,10 +3028,15 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
 
 
+</div>
+
 
 ---
 
-# Type: Date 
+---
+search:
+  boost: 1.0
+---# Type: Date 
 
 
 
@@ -3284,6 +3044,8 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 _a date (year, month and day) in an idealized calendar_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:date](http://www.w3.org/2001/XMLSchema#date)
 
@@ -3332,10 +3094,15 @@ URI: [xsd:date](http://www.w3.org/2001/XMLSchema#date)
 
 
 
+</div>
+
 
 ---
 
-# Type: DateOrDatetime 
+---
+search:
+  boost: 1.0
+---# Type: DateOrDatetime 
 
 
 
@@ -3343,6 +3110,8 @@ URI: [xsd:date](http://www.w3.org/2001/XMLSchema#date)
 _Either a date or a datetime_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [linkml:DateOrDatetime](https://w3id.org/linkml/DateOrDatetime)
 
@@ -3389,10 +3158,15 @@ URI: [linkml:DateOrDatetime](https://w3id.org/linkml/DateOrDatetime)
 
 
 
+</div>
+
 
 ---
 
-# Type: Datetime 
+---
+search:
+  boost: 1.0
+---# Type: Datetime 
 
 
 
@@ -3400,6 +3174,8 @@ URI: [linkml:DateOrDatetime](https://w3id.org/linkml/DateOrDatetime)
 _The combination of a date and time_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:dateTime](http://www.w3.org/2001/XMLSchema#dateTime)
 
@@ -3447,10 +3223,15 @@ URI: [xsd:dateTime](http://www.w3.org/2001/XMLSchema#dateTime)
 
 
 
+</div>
+
 
 ---
 
-# Type: Decimal 
+---
+search:
+  boost: 1.0
+---# Type: Decimal 
 
 
 
@@ -3458,6 +3239,8 @@ URI: [xsd:dateTime](http://www.w3.org/2001/XMLSchema#dateTime)
 _A real number with arbitrary precision that conforms to the xsd:decimal specification_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:decimal](http://www.w3.org/2001/XMLSchema#decimal)
 
@@ -3504,10 +3287,15 @@ URI: [xsd:decimal](http://www.w3.org/2001/XMLSchema#decimal)
 
 
 
+</div>
+
 
 ---
 
-# Type: Double 
+---
+search:
+  boost: 1.0
+---# Type: Double 
 
 
 
@@ -3515,6 +3303,8 @@ URI: [xsd:decimal](http://www.w3.org/2001/XMLSchema#decimal)
 _A real number that conforms to the xsd:double specification_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:double](http://www.w3.org/2001/XMLSchema#double)
 
@@ -3561,10 +3351,15 @@ URI: [xsd:double](http://www.w3.org/2001/XMLSchema#double)
 
 
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: dtype 
 
@@ -3573,11 +3368,11 @@ _Numpy dtype string of the array's value type (e.g. "float32")._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:dtype](https://w3id.org/zarr-vectors/schema/0.5/dtype)
-Alias: dtype
-
 <!-- no inheritance hierarchy -->
 
 
@@ -3588,13 +3383,13 @@ Alias: dtype
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
+| [VerticesMeta](VerticesMeta.md) | `` |  no  |
 | [LinksMeta](LinksMeta.md) | `` |  no  |
 | [AttributeMeta](AttributeMeta.md) | `` |  no  |
-| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 | [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
 | [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
-| [VerticesMeta](VerticesMeta.md) | `` |  no  |
+| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 
 
 
@@ -3657,7 +3452,6 @@ name: dtype
 description: Numpy dtype string of the array's value type (e.g. "float32").
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: dtype
 domain_of:
 - VerticesMeta
 - LinksMeta
@@ -3670,10 +3464,16 @@ range: string
 required: true
 
 ```
-</details>
+</details></div>
 
 
 ---
+
+---
+search:
+  boost: 2.0
+---
+
 
 # Enum: Encoding 
 
@@ -3683,6 +3483,8 @@ required: true
 _Per-array encoding of vertex data._
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [zv:Encoding](https://w3id.org/zarr-vectors/schema/0.5/Encoding)
 
@@ -3745,10 +3547,15 @@ permissible_values:
 ```
 </details>
 
+</div>
+
 
 ---
 
-# Type: Float 
+---
+search:
+  boost: 1.0
+---# Type: Float 
 
 
 
@@ -3756,6 +3563,8 @@ permissible_values:
 _A real number that conforms to the xsd:float specification_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:float](http://www.w3.org/2001/XMLSchema#float)
 
@@ -3802,10 +3611,15 @@ URI: [xsd:float](http://www.w3.org/2001/XMLSchema#float)
 
 
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: format_capabilities 
 
@@ -3814,11 +3628,11 @@ _Optional 0.3+ feature tokens advertised by this store._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:format_capabilities](https://w3id.org/zarr-vectors/schema/0.5/format_capabilities)
-Alias: format_capabilities
-
 <!-- no inheritance hierarchy -->
 
 
@@ -3892,37 +3706,41 @@ name: format_capabilities
 description: Optional 0.3+ feature tokens advertised by this store.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: format_capabilities
 domain_of:
 - RootMetadata
 range: FormatCapability
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
+
+---
+search:
+  boost: 2.0
+---
+
 
 # Enum: FormatCapability 
 
 
 
 
-_Optional 0.3+ feature tokens a store advertises in :attr:`RootMetadata.format_capabilities`.  Open-set: new tokens will be added in future spec revisions; readers must tolerate unknown values._
+_Optional feature tokens a store advertises in :attr:`RootMetadata.format_capabilities`.  Open-set: new tokens will be added in future spec revisions; readers must tolerate unknown values._
 
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [zv:FormatCapability](https://w3id.org/zarr-vectors/schema/0.5/FormatCapability)
 
 ## Permissible Values
 | Value | Meaning | Description |
 | --- | --- | --- |
-| cross_chunk_faces | None | Store has the ``cross_chunk_faces`` array for boundary faces |
-| vertex_count_cache | None | Per-chunk ``vertex_counts/<chunk_key>`` sidecars are present |
-| object_index_pending | None | One or more uncompacted ``object_index/pending/<batch>`` sidecars exist |
 | preserved_object_ids | None | At least one level was written with ID-preserving sparsification (``LevelMeta... |
 | shared_vertex_groups | None | At least one level stores per-chunk vertex groups that may be referenced by m... |
 | multiscale_links | None | Store uses the 0 |
@@ -3966,7 +3784,7 @@ URI: [zv:FormatCapability](https://w3id.org/zarr-vectors/schema/0.5/FormatCapabi
 <details>
 ```yaml
 name: FormatCapability
-description: 'Optional 0.3+ feature tokens a store advertises in :attr:`RootMetadata.format_capabilities`.  Open-set:
+description: 'Optional feature tokens a store advertises in :attr:`RootMetadata.format_capabilities`.  Open-set:
   new tokens will be added in future spec revisions; readers must tolerate unknown
   values.
 
@@ -3974,16 +3792,6 @@ description: 'Optional 0.3+ feature tokens a store advertises in :attr:`RootMeta
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
 permissible_values:
-  cross_chunk_faces:
-    text: cross_chunk_faces
-    description: Store has the ``cross_chunk_faces`` array for boundary faces.
-  vertex_count_cache:
-    text: vertex_count_cache
-    description: Per-chunk ``vertex_counts/<chunk_key>`` sidecars are present.
-  object_index_pending:
-    text: object_index_pending
-    description: One or more uncompacted ``object_index/pending/<batch>`` sidecars
-      exist.
   preserved_object_ids:
     text: preserved_object_ids
     description: 'At least one level was written with ID-preserving sparsification
@@ -4009,10 +3817,15 @@ permissible_values:
 ```
 </details>
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: geometry_types 
 
@@ -4021,11 +3834,11 @@ _One or more geometry kinds present in the store._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:geometry_types](https://w3id.org/zarr-vectors/schema/0.5/geometry_types)
-Alias: geometry_types
-
 <!-- no inheritance hierarchy -->
 
 
@@ -4101,7 +3914,6 @@ name: geometry_types
 description: One or more geometry kinds present in the store.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: geometry_types
 domain_of:
 - RootMetadata
 range: GeometryType
@@ -4110,10 +3922,16 @@ multivalued: true
 minimum_cardinality: 1
 
 ```
-</details>
+</details></div>
 
 
 ---
+
+---
+search:
+  boost: 2.0
+---
+
 
 # Enum: GeometryType 
 
@@ -4123,6 +3941,8 @@ minimum_cardinality: 1
 _The kind of geometry a store (or one of its sub-types) holds._
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [zv:GeometryType](https://w3id.org/zarr-vectors/schema/0.5/GeometryType)
 
@@ -4198,10 +4018,15 @@ permissible_values:
 ```
 </details>
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: GroupingsAttributeMeta 
 
@@ -4209,6 +4034,8 @@ permissible_values:
 _``.zattrs`` for each ``groupings_attributes/<name>/`` array._
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -4343,22 +4170,18 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: zv_array
     owner: GroupingsAttributeMeta
     domain_of:
     - VerticesMeta
     - LinksMeta
     - AttributeMeta
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - ObjectAttributeMeta
     - GroupingsMeta
     - GroupingsAttributeMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
     - LinkAttributeMeta
     - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
     equals_string: groupings_attribute
@@ -4368,7 +4191,6 @@ attributes:
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
     slot_uri: schema:name
-    alias: name
     owner: GroupingsAttributeMeta
     domain_of:
     - Axis
@@ -4384,7 +4206,6 @@ attributes:
     description: Numpy dtype string of the array's value type (e.g. "float32").
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: dtype
     owner: GroupingsAttributeMeta
     domain_of:
     - VerticesMeta
@@ -4401,7 +4222,6 @@ attributes:
     description: Shape of a dense per-object/per-group array.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: shape
     owner: GroupingsAttributeMeta
     domain_of:
     - ObjectAttributeMeta
@@ -4411,12 +4231,15 @@ attributes:
     multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: GroupingsMeta 
 
@@ -4424,6 +4247,8 @@ attributes:
 _``.zattrs`` for ``groupings/``._
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -4550,22 +4375,18 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: zv_array
     owner: GroupingsMeta
     domain_of:
     - VerticesMeta
     - LinksMeta
     - AttributeMeta
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - ObjectAttributeMeta
     - GroupingsMeta
     - GroupingsAttributeMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
     - LinkAttributeMeta
     - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
     equals_string: groupings
@@ -4574,7 +4395,6 @@ attributes:
     description: Total grouping count.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: num_groups
     owner: GroupingsMeta
     domain_of:
     - GroupingsMeta
@@ -4583,12 +4403,15 @@ attributes:
     minimum_value: 0
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: inherited_num_objects 
 
@@ -4599,11 +4422,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:inherited_num_objects](https://w3id.org/zarr-vectors/schema/0.5/inherited_num_objects)
-Alias: inherited_num_objects
-
 <!-- no inheritance hierarchy -->
 
 
@@ -4686,19 +4509,21 @@ description: 'OID-space size inherited from the parent level (= ``parent_level.n
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: inherited_num_objects
 domain_of:
 - LevelMetadata
 range: integer
 minimum_value: 0
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-# Type: Integer 
+---
+search:
+  boost: 1.0
+---# Type: Integer 
 
 
 
@@ -4706,6 +4531,8 @@ minimum_value: 0
 _An integer_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:integer](http://www.w3.org/2001/XMLSchema#integer)
 
@@ -4752,10 +4579,15 @@ URI: [xsd:integer](http://www.w3.org/2001/XMLSchema#integer)
 
 
 
+</div>
+
 
 ---
 
-# Type: Jsonpath 
+---
+search:
+  boost: 1.0
+---# Type: Jsonpath 
 
 
 
@@ -4763,6 +4595,8 @@ URI: [xsd:integer](http://www.w3.org/2001/XMLSchema#integer)
 _A string encoding a JSON Path. The value of the string MUST conform to JSON Point syntax and SHOULD dereference to zero or more valid objects within the current instance document when encoded in tree form._
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
@@ -4809,10 +4643,15 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
 
 
+</div>
+
 
 ---
 
-# Type: Jsonpointer 
+---
+search:
+  boost: 1.0
+---# Type: Jsonpointer 
 
 
 
@@ -4820,6 +4659,8 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 _A string encoding a JSON Pointer. The value of the string MUST conform to JSON Point syntax and SHOULD dereference to a valid object within the current instance document when encoded in tree form._
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
@@ -4866,10 +4707,15 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
 
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: level 
 
@@ -4878,11 +4724,11 @@ _Resolution level index (0 = full resolution)._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:level](https://w3id.org/zarr-vectors/schema/0.5/level)
-Alias: level
-
 <!-- no inheritance hierarchy -->
 
 
@@ -4963,7 +4809,6 @@ name: level
 description: Resolution level index (0 = full resolution).
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: level
 domain_of:
 - LevelMetadata
 range: integer
@@ -4971,12 +4816,15 @@ required: true
 minimum_value: 0
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: level_delta 
 
@@ -4987,11 +4835,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:level_delta](https://w3id.org/zarr-vectors/schema/0.5/level_delta)
-Alias: level_delta
-
 <!-- no inheritance hierarchy -->
 
 
@@ -5003,9 +4851,9 @@ Alias: level_delta
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
 | [LinksMeta](LinksMeta.md) | `` |  no  |
+| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
 | [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
 | [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
-| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
 
 
 
@@ -5073,7 +4921,6 @@ description: 'Pyramid-level delta between the source side (the level that owns t
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: level_delta
 domain_of:
 - LinksMeta
 - CrossChunkLinksMeta
@@ -5083,12 +4930,15 @@ range: integer
 required: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: LevelMetadata 
 
@@ -5098,6 +4948,8 @@ _Per-resolution-level ``.zattrs`` payload, persisted under the key ``zarr_vector
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -5255,7 +5107,6 @@ attributes:
     description: Resolution level index (0 = full resolution).
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: level
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5267,7 +5118,6 @@ attributes:
     description: Total number of vertices at this level.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: vertex_count
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5279,7 +5129,6 @@ attributes:
     description: Names of arrays present in the level group.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: arrays_present
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5294,7 +5143,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: bin_shape
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5305,7 +5153,6 @@ attributes:
     description: Integer fold-change per axis relative to level 0.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: bin_ratio
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5316,7 +5163,6 @@ attributes:
     description: Fraction of objects retained at this level.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: object_sparsity
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5328,7 +5174,6 @@ attributes:
     description: How this level was generated (e.g. "grid_metanode").
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: coarsening_method
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5338,7 +5183,6 @@ attributes:
     description: Source level index (None for level 0).
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: parent_level
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5352,7 +5196,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: chunk_dims
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5363,7 +5206,6 @@ attributes:
     description: Name of the per-vertex attribute used as the leading chunk axis.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: chunk_attribute_name
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5377,7 +5219,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: chunk_attribute_values
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5393,7 +5234,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: preserves_object_ids
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5406,7 +5246,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: inherited_num_objects
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
@@ -5421,32 +5260,36 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: shared_vertex_groups
     owner: LevelMetadata
     domain_of:
     - LevelMetadata
     range: boolean
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: link_width 
 
 
-_Width of a links row (2 for edges, 3 or 4 for face rows)._
+_Width of a links row (1 for parent→child metanode references, 2 for edges, 3 for triangle faces, 4 for quads)._
+
+__
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
 URI: [zv:link_width](https://w3id.org/zarr-vectors/schema/0.5/link_width)
-Alias: link_width
-
 <!-- no inheritance hierarchy -->
 
 
@@ -5458,6 +5301,7 @@ Alias: link_width
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
 | [LinksMeta](LinksMeta.md) | `` |  no  |
+| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
 
 
 
@@ -5471,7 +5315,7 @@ Alias: link_width
 | Property | Value |
 | --- | --- |
 | Range | [Integer](Integer.md) |
-| Domain Of | [LinksMeta](LinksMeta.md) |
+| Domain Of | [LinksMeta](LinksMeta.md), [CrossChunkLinksMeta](CrossChunkLinksMeta.md) |
 
 ### Cardinality and Requirements
 
@@ -5482,7 +5326,7 @@ Alias: link_width
 
 | Property | Value |
 | --- | --- |
-| Minimum Value | 2 |
+| Minimum Value | 1 |
 
 
 
@@ -5524,23 +5368,29 @@ Alias: link_width
 <details>
 ```yaml
 name: link_width
-description: Width of a links row (2 for edges, 3 or 4 for face rows).
+description: 'Width of a links row (1 for parent→child metanode references, 2 for
+  edges, 3 for triangle faces, 4 for quads).
+
+  '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: link_width
 domain_of:
 - LinksMeta
+- CrossChunkLinksMeta
 range: integer
 required: true
-minimum_value: 2
+minimum_value: 1
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: LinkAttributeMeta 
 
@@ -5550,6 +5400,8 @@ _``.zattrs`` for each ``link_attributes/<name>/<delta>/`` array. Parallel to the
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -5690,22 +5542,18 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: zv_array
     owner: LinkAttributeMeta
     domain_of:
     - VerticesMeta
     - LinksMeta
     - AttributeMeta
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - ObjectAttributeMeta
     - GroupingsMeta
     - GroupingsAttributeMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
     - LinkAttributeMeta
     - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
     equals_string: link_attribute
@@ -5715,7 +5563,6 @@ attributes:
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
     slot_uri: schema:name
-    alias: name
     owner: LinkAttributeMeta
     domain_of:
     - Axis
@@ -5731,7 +5578,6 @@ attributes:
     description: Numpy dtype string of the array's value type (e.g. "float32").
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: dtype
     owner: LinkAttributeMeta
     domain_of:
     - VerticesMeta
@@ -5753,7 +5599,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: level_delta
     owner: LinkAttributeMeta
     domain_of:
     - LinksMeta
@@ -5764,20 +5609,23 @@ attributes:
     required: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: links_convention 
+
+<div data-search-exclude markdown="1">
 
 
 
 URI: [zv:links_convention](https://w3id.org/zarr-vectors/schema/0.5/links_convention)
-Alias: links_convention
-
 <!-- no inheritance hierarchy -->
 
 
@@ -5849,16 +5697,21 @@ Alias: links_convention
 name: links_convention
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: links_convention
 domain_of:
 - RootMetadata
 range: LinksConvention
 
 ```
-</details>
+</details></div>
 
 
 ---
+
+---
+search:
+  boost: 2.0
+---
+
 
 # Enum: LinksConvention 
 
@@ -5870,6 +5723,8 @@ _How intra-chunk links are represented for a polyline/graph/mesh._
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [zv:LinksConvention](https://w3id.org/zarr-vectors/schema/0.5/LinksConvention)
 
@@ -5938,10 +5793,15 @@ permissible_values:
 ```
 </details>
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: LinksMeta 
 
@@ -5951,6 +5811,8 @@ _``.zattrs`` for a ``links/<delta>/`` array.  Under the 0.4 multiscale layout, e
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -5995,7 +5857,7 @@ URI: [zv:LinksMeta](https://w3id.org/zarr-vectors/schema/0.5/LinksMeta)
 | ---  | --- | --- | --- |
 | [zv_array](zv_array.md) | 1 <br/> [ZvArrayTag](ZvArrayTag.md) | Discriminator slot identifying the kind of per-array `` | direct |
 | [dtype](dtype.md) | 1 <br/> [String](String.md) | Numpy dtype string of the array's value type (e | direct |
-| [link_width](link_width.md) | 1 <br/> [Integer](Integer.md) | Width of a links row (2 for edges, 3 or 4 for face rows) | direct |
+| [link_width](link_width.md) | 1 <br/> [Integer](Integer.md) | Width of a links row (1 for parent→child metanode references, 2 for edges, 3 ... | direct |
 | [level_delta](level_delta.md) | 1 <br/> [Integer](Integer.md) | Pyramid-level delta between the source side (the level that owns this array) ... | direct |
 
 
@@ -6093,22 +5955,18 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: zv_array
     owner: LinksMeta
     domain_of:
     - VerticesMeta
     - LinksMeta
     - AttributeMeta
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - ObjectAttributeMeta
     - GroupingsMeta
     - GroupingsAttributeMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
     - LinkAttributeMeta
     - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
     equals_string: links
@@ -6117,7 +5975,6 @@ attributes:
     description: Numpy dtype string of the array's value type (e.g. "float32").
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: dtype
     owner: LinksMeta
     domain_of:
     - VerticesMeta
@@ -6131,16 +5988,19 @@ attributes:
     required: true
   link_width:
     name: link_width
-    description: Width of a links row (2 for edges, 3 or 4 for face rows).
+    description: 'Width of a links row (1 for parent→child metanode references, 2
+      for edges, 3 for triangle faces, 4 for quads).
+
+      '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: link_width
     owner: LinksMeta
     domain_of:
     - LinksMeta
+    - CrossChunkLinksMeta
     range: integer
     required: true
-    minimum_value: 2
+    minimum_value: 1
   level_delta:
     name: level_delta
     description: 'Pyramid-level delta between the source side (the level that owns
@@ -6151,7 +6011,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: level_delta
     owner: LinksMeta
     domain_of:
     - LinksMeta
@@ -6162,12 +6021,15 @@ attributes:
     required: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: max_corner 
 
@@ -6176,11 +6038,11 @@ _Per-axis maxima.  Length must equal ``len(spatial_index_dims)``._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:max_corner](https://w3id.org/zarr-vectors/schema/0.5/max_corner)
-Alias: max_corner
-
 <!-- no inheritance hierarchy -->
 
 
@@ -6255,7 +6117,6 @@ name: max_corner
 description: Per-axis maxima.  Length must equal ``len(spatial_index_dims)``.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: max_corner
 domain_of:
 - BoundingBox
 range: float
@@ -6263,204 +6124,15 @@ required: true
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
-
-# Class: MetanodeChildrenMeta 
-
-
-_``.zattrs`` for the ``metanode_children/`` coarsening sidecar._
-
-
-
-
-
-URI: [zv:MetanodeChildrenMeta](https://w3id.org/zarr-vectors/schema/0.5/MetanodeChildrenMeta)
-
-
-
-
-
-```mermaid
- classDiagram
-    class MetanodeChildrenMeta
-    click MetanodeChildrenMeta href "../MetanodeChildrenMeta/"
-      MetanodeChildrenMeta : num_metanodes
-        
-      MetanodeChildrenMeta : sid_ndim
-        
-      MetanodeChildrenMeta : zv_array
-        
-          
-    
-        
-        
-        MetanodeChildrenMeta --> "1" ZvArrayTag : zv_array
-        click ZvArrayTag href "../ZvArrayTag/"
-    
-
-        
-      
-```
-
-
-
-
-<!-- no inheritance hierarchy -->
-
-## Slots
-
-| Name | Cardinality and Range | Description | Inheritance |
-| ---  | --- | --- | --- |
-| [zv_array](zv_array.md) | 1 <br/> [ZvArrayTag](ZvArrayTag.md) | Discriminator slot identifying the kind of per-array `` | direct |
-| [num_metanodes](num_metanodes.md) | 1 <br/> [Integer](Integer.md) | Total metanode count in a coarsening sidecar | direct |
-| [sid_ndim](sid_ndim.md) | 1 <br/> [Integer](Integer.md) | Number of spatial-index dimensions encoded in chunk keys | direct |
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Identifier and Mapping Information
-
-
-
-
-
-### Schema Source
-
-
-* from schema: https://w3id.org/zarr-vectors/schema/0.5
-
-
-
-
-## Mappings
-
-| Mapping Type | Mapped Value |
-| ---  | ---  |
-| self | zv:MetanodeChildrenMeta |
-| native | zv:MetanodeChildrenMeta |
-
-
-
-
-
-
-## LinkML Source
-
-### Direct
-
-<details>
-```yaml
-name: MetanodeChildrenMeta
-description: '``.zattrs`` for the ``metanode_children/`` coarsening sidecar.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.5
-rank: 1000
-slots:
-- zv_array
-- num_metanodes
-- sid_ndim
-slot_usage:
-  zv_array:
-    name: zv_array
-    required: true
-    equals_string: metanode_children
-
-```
-</details>
-
-### Induced
-
-<details>
-```yaml
-name: MetanodeChildrenMeta
-description: '``.zattrs`` for the ``metanode_children/`` coarsening sidecar.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.5
-rank: 1000
-slot_usage:
-  zv_array:
-    name: zv_array
-    required: true
-    equals_string: metanode_children
-attributes:
-  zv_array:
-    name: zv_array
-    description: 'Discriminator slot identifying the kind of per-array ``.zattrs``
-      block.  Each writer in ``core/arrays.py`` stamps the corresponding token from
-      :class:`ZvArrayTag`.
-
-      '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: zv_array
-    owner: MetanodeChildrenMeta
-    domain_of:
-    - VerticesMeta
-    - LinksMeta
-    - AttributeMeta
-    - ObjectIndexMeta
-    - ObjectIndexPendingMeta
-    - ObjectAttributeMeta
-    - GroupingsMeta
-    - GroupingsAttributeMeta
-    - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
-    - LinkAttributeMeta
-    - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
-    range: ZvArrayTag
-    required: true
-    equals_string: metanode_children
-  num_metanodes:
-    name: num_metanodes
-    description: Total metanode count in a coarsening sidecar.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: num_metanodes
-    owner: MetanodeChildrenMeta
-    domain_of:
-    - MetanodeChildrenMeta
-    range: integer
-    required: true
-    minimum_value: 0
-  sid_ndim:
-    name: sid_ndim
-    description: Number of spatial-index dimensions encoded in chunk keys.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: sid_ndim
-    owner: MetanodeChildrenMeta
-    domain_of:
-    - ObjectIndexMeta
-    - ObjectIndexPendingMeta
-    - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
-    - MetanodeChildrenMeta
-    range: integer
-    required: true
-    minimum_value: 1
-
-```
-</details>
-
-
 ---
-
-
+search:
+  boost: 5.0
+---
 
 # Slot: min_corner 
 
@@ -6469,11 +6141,11 @@ _Per-axis minima.  Length must equal ``len(spatial_index_dims)``._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:min_corner](https://w3id.org/zarr-vectors/schema/0.5/min_corner)
-Alias: min_corner
-
 <!-- no inheritance hierarchy -->
 
 
@@ -6548,7 +6220,6 @@ name: min_corner
 description: Per-axis minima.  Length must equal ``len(spatial_index_dims)``.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: min_corner
 domain_of:
 - BoundingBox
 range: float
@@ -6556,12 +6227,15 @@ required: true
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: name 
 
@@ -6570,11 +6244,11 @@ _NGFF axis or attribute name (e.g. "x", "intensity")._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [schema:name](http://schema.org/name)
-Alias: name
-
 <!-- no inheritance hierarchy -->
 
 
@@ -6585,12 +6259,12 @@ Alias: name
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
-| [AttributeMeta](AttributeMeta.md) | `` |  no  |
-| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 | [Axis](Axis.md) | One axis of the spatial index |  no  |
+| [AttributeMeta](AttributeMeta.md) | `` |  no  |
 | [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
 | [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
+| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 
 
 
@@ -6655,7 +6329,6 @@ description: NGFF axis or attribute name (e.g. "x", "intensity").
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
 slot_uri: schema:name
-alias: name
 domain_of:
 - Axis
 - AttributeMeta
@@ -6667,12 +6340,15 @@ range: string
 required: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-# Type: Ncname 
+---
+search:
+  boost: 1.0
+---# Type: Ncname 
 
 
 
@@ -6680,6 +6356,8 @@ required: true
 _Prefix part of CURIE_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
@@ -6726,10 +6404,15 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
 
 
+</div>
+
 
 ---
 
-# Type: Nodeidentifier 
+---
+search:
+  boost: 1.0
+---# Type: Nodeidentifier 
 
 
 
@@ -6737,6 +6420,8 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 _A URI, CURIE or BNODE that represents a node in a model._
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [shex:nonLiteral](http://www.w3.org/ns/shex#nonLiteral)
 
@@ -6783,117 +6468,15 @@ URI: [shex:nonLiteral](http://www.w3.org/ns/shex#nonLiteral)
 
 
 
-
----
-
-
-
-# Slot: num_faces 
-
-
-_Total cross-chunk face count._
-
-
-
-
-
-URI: [zv:num_faces](https://w3id.org/zarr-vectors/schema/0.5/num_faces)
-Alias: num_faces
-
-<!-- no inheritance hierarchy -->
-
-
-
-
-
-## Applicable Classes
-
-| Name | Description | Modifies Slot |
-| --- | --- | --- |
-| [CrossChunkFacesMeta](CrossChunkFacesMeta.md) | `` |  no  |
-
-
-
-
-
-
-## Properties
-
-### Type and Range
-
-| Property | Value |
-| --- | --- |
-| Range | [Integer](Integer.md) |
-| Domain Of | [CrossChunkFacesMeta](CrossChunkFacesMeta.md) |
-
-### Cardinality and Requirements
-
-| Property | Value |
-| --- | --- |
-| Required | Yes |
-### Value Constraints
-
-| Property | Value |
-| --- | --- |
-| Minimum Value | 0 |
-
-
-
-
-
-
-
-
-
-
-
-
-## Identifier and Mapping Information
-
-
-
-
-
-### Schema Source
-
-
-* from schema: https://w3id.org/zarr-vectors/schema/0.5
-
-
-
-
-## Mappings
-
-| Mapping Type | Mapped Value |
-| ---  | ---  |
-| self | zv:num_faces |
-| native | zv:num_faces |
-
-
-
-
-## LinkML Source
-
-<details>
-```yaml
-name: num_faces
-description: Total cross-chunk face count.
-from_schema: https://w3id.org/zarr-vectors/schema/0.5
-rank: 1000
-alias: num_faces
-domain_of:
-- CrossChunkFacesMeta
-range: integer
-required: true
-minimum_value: 0
-
-```
-</details>
+</div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: num_groups 
 
@@ -6902,11 +6485,11 @@ _Total grouping count._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:num_groups](https://w3id.org/zarr-vectors/schema/0.5/num_groups)
-Alias: num_groups
-
 <!-- no inheritance hierarchy -->
 
 
@@ -6987,7 +6570,6 @@ name: num_groups
 description: Total grouping count.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: num_groups
 domain_of:
 - GroupingsMeta
 range: integer
@@ -6995,12 +6577,15 @@ required: true
 minimum_value: 0
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: num_links 
 
@@ -7009,11 +6594,11 @@ _Total cross-chunk link count._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:num_links](https://w3id.org/zarr-vectors/schema/0.5/num_links)
-Alias: num_links
-
 <!-- no inheritance hierarchy -->
 
 
@@ -7024,8 +6609,8 @@ Alias: num_links
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 | [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 
 
 
@@ -7095,7 +6680,6 @@ name: num_links
 description: Total cross-chunk link count.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: num_links
 domain_of:
 - CrossChunkLinksMeta
 - CrossChunkLinkAttributeMeta
@@ -7104,119 +6688,15 @@ required: true
 minimum_value: 0
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
-
-# Slot: num_metanodes 
-
-
-_Total metanode count in a coarsening sidecar._
-
-
-
-
-
-URI: [zv:num_metanodes](https://w3id.org/zarr-vectors/schema/0.5/num_metanodes)
-Alias: num_metanodes
-
-<!-- no inheritance hierarchy -->
-
-
-
-
-
-## Applicable Classes
-
-| Name | Description | Modifies Slot |
-| --- | --- | --- |
-| [MetanodeChildrenMeta](MetanodeChildrenMeta.md) | `` |  no  |
-
-
-
-
-
-
-## Properties
-
-### Type and Range
-
-| Property | Value |
-| --- | --- |
-| Range | [Integer](Integer.md) |
-| Domain Of | [MetanodeChildrenMeta](MetanodeChildrenMeta.md) |
-
-### Cardinality and Requirements
-
-| Property | Value |
-| --- | --- |
-| Required | Yes |
-### Value Constraints
-
-| Property | Value |
-| --- | --- |
-| Minimum Value | 0 |
-
-
-
-
-
-
-
-
-
-
-
-
-## Identifier and Mapping Information
-
-
-
-
-
-### Schema Source
-
-
-* from schema: https://w3id.org/zarr-vectors/schema/0.5
-
-
-
-
-## Mappings
-
-| Mapping Type | Mapped Value |
-| ---  | ---  |
-| self | zv:num_metanodes |
-| native | zv:num_metanodes |
-
-
-
-
-## LinkML Source
-
-<details>
-```yaml
-name: num_metanodes
-description: Total metanode count in a coarsening sidecar.
-from_schema: https://w3id.org/zarr-vectors/schema/0.5
-rank: 1000
-alias: num_metanodes
-domain_of:
-- MetanodeChildrenMeta
-range: integer
-required: true
-minimum_value: 0
-
-```
-</details>
-
-
 ---
-
-
+search:
+  boost: 5.0
+---
 
 # Slot: num_objects 
 
@@ -7225,11 +6705,11 @@ _Total object count this array carries._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:num_objects](https://w3id.org/zarr-vectors/schema/0.5/num_objects)
-Alias: num_objects
-
 <!-- no inheritance hierarchy -->
 
 
@@ -7241,7 +6721,6 @@ Alias: num_objects
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
 | [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  no  |
-| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |  no  |
 
 
 
@@ -7255,7 +6734,7 @@ Alias: num_objects
 | Property | Value |
 | --- | --- |
 | Range | [Integer](Integer.md) |
-| Domain Of | [ObjectIndexMeta](ObjectIndexMeta.md), [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) |
+| Domain Of | [ObjectIndexMeta](ObjectIndexMeta.md) |
 
 ### Cardinality and Requirements
 
@@ -7311,29 +6790,30 @@ name: num_objects
 description: Total object count this array carries.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: num_objects
 domain_of:
 - ObjectIndexMeta
-- ObjectIndexPendingMeta
 range: integer
 required: true
 minimum_value: 0
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: object_index_convention 
+
+<div data-search-exclude markdown="1">
 
 
 
 URI: [zv:object_index_convention](https://w3id.org/zarr-vectors/schema/0.5/object_index_convention)
-Alias: object_index_convention
-
 <!-- no inheritance hierarchy -->
 
 
@@ -7405,18 +6885,20 @@ Alias: object_index_convention
 name: object_index_convention
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: object_index_convention
 domain_of:
 - RootMetadata
 range: ObjectIndexConvention
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: object_sparsity 
 
@@ -7425,11 +6907,11 @@ _Fraction of objects retained at this level._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:object_sparsity](https://w3id.org/zarr-vectors/schema/0.5/object_sparsity)
-Alias: object_sparsity
-
 <!-- no inheritance hierarchy -->
 
 
@@ -7510,7 +6992,6 @@ name: object_sparsity
 description: Fraction of objects retained at this level.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: object_sparsity
 domain_of:
 - LevelMetadata
 range: float
@@ -7518,12 +6999,15 @@ minimum_value: 0.0
 maximum_value: 1.0
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: ObjectAttributeMeta 
 
@@ -7531,6 +7015,8 @@ maximum_value: 1.0
 _``.zattrs`` for each ``object_attributes/<name>/`` array._
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -7665,22 +7151,18 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: zv_array
     owner: ObjectAttributeMeta
     domain_of:
     - VerticesMeta
     - LinksMeta
     - AttributeMeta
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - ObjectAttributeMeta
     - GroupingsMeta
     - GroupingsAttributeMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
     - LinkAttributeMeta
     - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
     equals_string: object_attribute
@@ -7690,7 +7172,6 @@ attributes:
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
     slot_uri: schema:name
-    alias: name
     owner: ObjectAttributeMeta
     domain_of:
     - Axis
@@ -7706,7 +7187,6 @@ attributes:
     description: Numpy dtype string of the array's value type (e.g. "float32").
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: dtype
     owner: ObjectAttributeMeta
     domain_of:
     - VerticesMeta
@@ -7723,7 +7203,6 @@ attributes:
     description: Shape of a dense per-object/per-group array.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: shape
     owner: ObjectAttributeMeta
     domain_of:
     - ObjectAttributeMeta
@@ -7733,12 +7212,15 @@ attributes:
     multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-# Type: Objectidentifier 
+---
+search:
+  boost: 1.0
+---# Type: Objectidentifier 
 
 
 
@@ -7746,6 +7228,8 @@ attributes:
 _A URI or CURIE that represents an object in the model._
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [shex:iri](http://www.w3.org/ns/shex#iri)
 
@@ -7796,8 +7280,16 @@ URI: [shex:iri](http://www.w3.org/ns/shex#iri)
 
 
 
+</div>
+
 
 ---
+
+---
+search:
+  boost: 2.0
+---
+
 
 # Enum: ObjectIndexConvention 
 
@@ -7807,6 +7299,8 @@ URI: [shex:iri](http://www.w3.org/ns/shex#iri)
 _How the object_id → vertex-group mapping is encoded._
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [zv:ObjectIndexConvention](https://w3id.org/zarr-vectors/schema/0.5/ObjectIndexConvention)
 
@@ -7872,10 +7366,15 @@ permissible_values:
 ```
 </details>
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: ObjectIndexMeta 
 
@@ -7883,6 +7382,8 @@ permissible_values:
 _``.zattrs`` for ``object_index/``._
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -8013,22 +7514,18 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: zv_array
     owner: ObjectIndexMeta
     domain_of:
     - VerticesMeta
     - LinksMeta
     - AttributeMeta
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - ObjectAttributeMeta
     - GroupingsMeta
     - GroupingsAttributeMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
     - LinkAttributeMeta
     - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
     equals_string: object_index
@@ -8037,11 +7534,9 @@ attributes:
     description: Total object count this array carries.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: num_objects
     owner: ObjectIndexMeta
     domain_of:
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     range: integer
     required: true
     minimum_value: 0
@@ -8050,234 +7545,24 @@ attributes:
     description: Number of spatial-index dimensions encoded in chunk keys.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: sid_ndim
     owner: ObjectIndexMeta
     domain_of:
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
-    - MetanodeChildrenMeta
     range: integer
     required: true
     minimum_value: 1
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
-
-# Class: ObjectIndexPendingMeta 
-
-
-_``.zattrs`` for ``object_index/pending/<batch_id>/``._
-
-
-
-
-
-URI: [zv:ObjectIndexPendingMeta](https://w3id.org/zarr-vectors/schema/0.5/ObjectIndexPendingMeta)
-
-
-
-
-
-```mermaid
- classDiagram
-    class ObjectIndexPendingMeta
-    click ObjectIndexPendingMeta href "../ObjectIndexPendingMeta/"
-      ObjectIndexPendingMeta : batch_id
-        
-      ObjectIndexPendingMeta : num_objects
-        
-      ObjectIndexPendingMeta : sid_ndim
-        
-      ObjectIndexPendingMeta : zv_array
-        
-          
-    
-        
-        
-        ObjectIndexPendingMeta --> "1" ZvArrayTag : zv_array
-        click ZvArrayTag href "../ZvArrayTag/"
-    
-
-        
-      
-```
-
-
-
-
-<!-- no inheritance hierarchy -->
-
-## Slots
-
-| Name | Cardinality and Range | Description | Inheritance |
-| ---  | --- | --- | --- |
-| [zv_array](zv_array.md) | 1 <br/> [ZvArrayTag](ZvArrayTag.md) | Discriminator slot identifying the kind of per-array `` | direct |
-| [batch_id](batch_id.md) | 1 <br/> [Integer](Integer.md) | Monotonic batch id for an ``object_index/pending/<batch>`` sidecar | direct |
-| [num_objects](num_objects.md) | 1 <br/> [Integer](Integer.md) | Total object count this array carries | direct |
-| [sid_ndim](sid_ndim.md) | 1 <br/> [Integer](Integer.md) | Number of spatial-index dimensions encoded in chunk keys | direct |
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Identifier and Mapping Information
-
-
-
-
-
-### Schema Source
-
-
-* from schema: https://w3id.org/zarr-vectors/schema/0.5
-
-
-
-
-## Mappings
-
-| Mapping Type | Mapped Value |
-| ---  | ---  |
-| self | zv:ObjectIndexPendingMeta |
-| native | zv:ObjectIndexPendingMeta |
-
-
-
-
-
-
-## LinkML Source
-
-### Direct
-
-<details>
-```yaml
-name: ObjectIndexPendingMeta
-description: '``.zattrs`` for ``object_index/pending/<batch_id>/``.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.5
-rank: 1000
-slots:
-- zv_array
-- batch_id
-- num_objects
-- sid_ndim
-slot_usage:
-  zv_array:
-    name: zv_array
-    required: true
-    equals_string: object_index_pending
-
-```
-</details>
-
-### Induced
-
-<details>
-```yaml
-name: ObjectIndexPendingMeta
-description: '``.zattrs`` for ``object_index/pending/<batch_id>/``.'
-from_schema: https://w3id.org/zarr-vectors/schema/0.5
-rank: 1000
-slot_usage:
-  zv_array:
-    name: zv_array
-    required: true
-    equals_string: object_index_pending
-attributes:
-  zv_array:
-    name: zv_array
-    description: 'Discriminator slot identifying the kind of per-array ``.zattrs``
-      block.  Each writer in ``core/arrays.py`` stamps the corresponding token from
-      :class:`ZvArrayTag`.
-
-      '
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: zv_array
-    owner: ObjectIndexPendingMeta
-    domain_of:
-    - VerticesMeta
-    - LinksMeta
-    - AttributeMeta
-    - ObjectIndexMeta
-    - ObjectIndexPendingMeta
-    - ObjectAttributeMeta
-    - GroupingsMeta
-    - GroupingsAttributeMeta
-    - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
-    - LinkAttributeMeta
-    - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
-    range: ZvArrayTag
-    required: true
-    equals_string: object_index_pending
-  batch_id:
-    name: batch_id
-    description: Monotonic batch id for an ``object_index/pending/<batch>`` sidecar.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: batch_id
-    owner: ObjectIndexPendingMeta
-    domain_of:
-    - ObjectIndexPendingMeta
-    range: integer
-    required: true
-    minimum_value: 0
-  num_objects:
-    name: num_objects
-    description: Total object count this array carries.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: num_objects
-    owner: ObjectIndexPendingMeta
-    domain_of:
-    - ObjectIndexMeta
-    - ObjectIndexPendingMeta
-    range: integer
-    required: true
-    minimum_value: 0
-  sid_ndim:
-    name: sid_ndim
-    description: Number of spatial-index dimensions encoded in chunk keys.
-    from_schema: https://w3id.org/zarr-vectors/schema/0.5
-    rank: 1000
-    alias: sid_ndim
-    owner: ObjectIndexPendingMeta
-    domain_of:
-    - ObjectIndexMeta
-    - ObjectIndexPendingMeta
-    - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
-    - MetanodeChildrenMeta
-    range: integer
-    required: true
-    minimum_value: 1
-
-```
-</details>
-
-
 ---
-
-
+search:
+  boost: 5.0
+---
 
 # Slot: parent_level 
 
@@ -8286,11 +7571,11 @@ _Source level index (None for level 0)._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:parent_level](https://w3id.org/zarr-vectors/schema/0.5/parent_level)
-Alias: parent_level
-
 <!-- no inheritance hierarchy -->
 
 
@@ -8370,19 +7655,21 @@ name: parent_level
 description: Source level index (None for level 0).
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: parent_level
 domain_of:
 - LevelMetadata
 range: integer
 minimum_value: 0
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: preserves_object_ids 
 
@@ -8393,11 +7680,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:preserves_object_ids](https://w3id.org/zarr-vectors/schema/0.5/preserves_object_ids)
-Alias: preserves_object_ids
-
 <!-- no inheritance hierarchy -->
 
 
@@ -8475,129 +7762,20 @@ description: 'True for levels written by the per-object pyramid regime.  When se
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: preserves_object_ids
 domain_of:
 - LevelMetadata
 range: boolean
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
-
-# Slot: record_size 
-
-
-_Per-face record width in ``cross_chunk_faces/data`` (sid_ndim + 2 int64s)._
-
-__
-
-
-
-
-
-URI: [zv:record_size](https://w3id.org/zarr-vectors/schema/0.5/record_size)
-Alias: record_size
-
-<!-- no inheritance hierarchy -->
-
-
-
-
-
-## Applicable Classes
-
-| Name | Description | Modifies Slot |
-| --- | --- | --- |
-| [CrossChunkFacesMeta](CrossChunkFacesMeta.md) | `` |  no  |
-
-
-
-
-
-
-## Properties
-
-### Type and Range
-
-| Property | Value |
-| --- | --- |
-| Range | [Integer](Integer.md) |
-| Domain Of | [CrossChunkFacesMeta](CrossChunkFacesMeta.md) |
-
-### Cardinality and Requirements
-
-| Property | Value |
-| --- | --- |
-| Required | Yes |
-### Value Constraints
-
-| Property | Value |
-| --- | --- |
-| Minimum Value | 2 |
-
-
-
-
-
-
-
-
-
-
-
-
-## Identifier and Mapping Information
-
-
-
-
-
-### Schema Source
-
-
-* from schema: https://w3id.org/zarr-vectors/schema/0.5
-
-
-
-
-## Mappings
-
-| Mapping Type | Mapped Value |
-| ---  | ---  |
-| self | zv:record_size |
-| native | zv:record_size |
-
-
-
-
-## LinkML Source
-
-<details>
-```yaml
-name: record_size
-description: 'Per-face record width in ``cross_chunk_faces/data`` (sid_ndim + 2 int64s).
-
-  '
-from_schema: https://w3id.org/zarr-vectors/schema/0.5
-rank: 1000
-alias: record_size
-domain_of:
-- CrossChunkFacesMeta
-range: integer
-required: true
-minimum_value: 2
-
-```
-</details>
-
-
 ---
-
-
+search:
+  boost: 5.0
+---
 
 # Slot: reduction_factor 
 
@@ -8606,11 +7784,11 @@ _Multi-resolution coarsening factor (≥ 2)._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:reduction_factor](https://w3id.org/zarr-vectors/schema/0.5/reduction_factor)
-Alias: reduction_factor
-
 <!-- no inheritance hierarchy -->
 
 
@@ -8690,19 +7868,21 @@ name: reduction_factor
 description: Multi-resolution coarsening factor (≥ 2).
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: reduction_factor
 domain_of:
 - RootMetadata
 range: integer
 minimum_value: 2
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: RootMetadata 
 
@@ -8712,6 +7892,8 @@ _Root-level ``.zattrs`` payload, persisted under the key ``zarr_vectors``.  Vali
 __
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -8946,7 +8128,6 @@ attributes:
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
     slot_uri: schema:version
-    alias: zv_version
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -8958,7 +8139,6 @@ attributes:
     description: Physical spatial chunk size per axis (all values > 0).
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: chunk_shape
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -8970,7 +8150,6 @@ attributes:
     description: Global vertex bounding box.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: bounds
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -8981,7 +8160,6 @@ attributes:
     description: One or more geometry kinds present in the store.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: geometry_types
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -8998,7 +8176,6 @@ attributes:
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
     slot_uri: schema:coordinateReferenceSystem
-    alias: crs
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -9008,7 +8185,6 @@ attributes:
     name: links_convention
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: links_convention
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -9017,7 +8193,6 @@ attributes:
     name: object_index_convention
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: object_index_convention
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -9026,7 +8201,6 @@ attributes:
     name: cross_chunk_strategy
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: cross_chunk_strategy
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -9041,7 +8215,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: cross_level_depth
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -9057,7 +8230,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: cross_level_storage
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -9067,7 +8239,6 @@ attributes:
     description: Multi-resolution coarsening factor (≥ 2).
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: reduction_factor
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -9082,7 +8253,6 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: base_bin_shape
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -9093,7 +8263,6 @@ attributes:
     description: Optional 0.3+ feature tokens advertised by this store.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: format_capabilities
     owner: RootMetadata
     domain_of:
     - RootMetadata
@@ -9101,12 +8270,15 @@ attributes:
     multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: shape 
 
@@ -9115,11 +8287,11 @@ _Shape of a dense per-object/per-group array._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:shape](https://w3id.org/zarr-vectors/schema/0.5/shape)
-Alias: shape
-
 <!-- no inheritance hierarchy -->
 
 
@@ -9130,8 +8302,8 @@ Alias: shape
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
 | [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
+| [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
 
 
 
@@ -9195,7 +8367,6 @@ name: shape
 description: Shape of a dense per-object/per-group array.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: shape
 domain_of:
 - ObjectAttributeMeta
 - GroupingsAttributeMeta
@@ -9204,12 +8375,15 @@ required: true
 multivalued: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: shared_vertex_groups 
 
@@ -9220,11 +8394,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:shared_vertex_groups](https://w3id.org/zarr-vectors/schema/0.5/shared_vertex_groups)
-Alias: shared_vertex_groups
-
 <!-- no inheritance hierarchy -->
 
 
@@ -9301,18 +8475,20 @@ description: 'True when per-chunk vertex groups may be referenced by multiple ob
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: shared_vertex_groups
 domain_of:
 - LevelMetadata
 range: boolean
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: sid_ndim 
 
@@ -9321,11 +8497,11 @@ _Number of spatial-index dimensions encoded in chunk keys._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:sid_ndim](https://w3id.org/zarr-vectors/schema/0.5/sid_ndim)
-Alias: sid_ndim
-
 <!-- no inheritance hierarchy -->
 
 
@@ -9338,9 +8514,6 @@ Alias: sid_ndim
 | --- | --- | --- |
 | [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  no  |
 | [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
-| [CrossChunkFacesMeta](CrossChunkFacesMeta.md) | `` |  no  |
-| [MetanodeChildrenMeta](MetanodeChildrenMeta.md) | `` |  no  |
-| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |  no  |
 
 
 
@@ -9354,7 +8527,7 @@ Alias: sid_ndim
 | Property | Value |
 | --- | --- |
 | Range | [Integer](Integer.md) |
-| Domain Of | [ObjectIndexMeta](ObjectIndexMeta.md), [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md), [CrossChunkLinksMeta](CrossChunkLinksMeta.md), [CrossChunkFacesMeta](CrossChunkFacesMeta.md), [MetanodeChildrenMeta](MetanodeChildrenMeta.md) |
+| Domain Of | [ObjectIndexMeta](ObjectIndexMeta.md), [CrossChunkLinksMeta](CrossChunkLinksMeta.md) |
 
 ### Cardinality and Requirements
 
@@ -9410,24 +8583,23 @@ name: sid_ndim
 description: Number of spatial-index dimensions encoded in chunk keys.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: sid_ndim
 domain_of:
 - ObjectIndexMeta
-- ObjectIndexPendingMeta
 - CrossChunkLinksMeta
-- CrossChunkFacesMeta
-- MetanodeChildrenMeta
 range: integer
 required: true
 minimum_value: 1
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-# Type: Sparqlpath 
+---
+search:
+  boost: 1.0
+---# Type: Sparqlpath 
 
 
 
@@ -9435,6 +8607,8 @@ minimum_value: 1
 _A string encoding a SPARQL Property Path. The value of the string MUST conform to SPARQL syntax and SHOULD dereference to zero or more valid objects within the current instance document when encoded as RDF._
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
@@ -9481,10 +8655,15 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
 
 
+</div>
+
 
 ---
 
-# Type: String 
+---
+search:
+  boost: 1.0
+---# Type: String 
 
 
 
@@ -9492,6 +8671,8 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 _A character string_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
@@ -9509,7 +8690,7 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
 ## Notes
 
-* In RDF serializations, a slot with range of string is treated as a literal or type xsd:string.   If you are authoring schemas in LinkML YAML, the type is referenced with the lower case "string".
+* In RDF serializations, a slot with range of string is treated as a literal or type xsd:string. If you are authoring schemas in LinkML YAML, the type is referenced with the lower case "string".
 
 
 
@@ -9538,10 +8719,15 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 
 
 
+</div>
+
 
 ---
 
-# Type: Time 
+---
+search:
+  boost: 1.0
+---# Type: Time 
 
 
 
@@ -9549,6 +8735,8 @@ URI: [xsd:string](http://www.w3.org/2001/XMLSchema#string)
 _A time object represents a (local) time of day, independent of any particular day_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:time](http://www.w3.org/2001/XMLSchema#time)
 
@@ -9597,10 +8785,15 @@ URI: [xsd:time](http://www.w3.org/2001/XMLSchema#time)
 
 
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: type 
 
@@ -9609,11 +8802,11 @@ _NGFF axis type — "space", "time", or "channel"._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:type](https://w3id.org/zarr-vectors/schema/0.5/type)
-Alias: type
-
 <!-- no inheritance hierarchy -->
 
 
@@ -9687,19 +8880,21 @@ name: type
 description: NGFF axis type — "space", "time", or "channel".
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: type
 domain_of:
 - Axis
 range: string
 required: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: unit 
 
@@ -9708,11 +8903,11 @@ _NGFF unit string (e.g. "um", "nanometer", "second")._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:unit](https://w3id.org/zarr-vectors/schema/0.5/unit)
-Alias: unit
-
 <!-- no inheritance hierarchy -->
 
 
@@ -9785,18 +8980,20 @@ name: unit
 description: NGFF unit string (e.g. "um", "nanometer", "second").
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: unit
 domain_of:
 - Axis
 range: string
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-# Type: Uri 
+---
+search:
+  boost: 1.0
+---# Type: Uri 
 
 
 
@@ -9804,6 +9001,8 @@ range: string
 _a complete URI_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:anyURI](http://www.w3.org/2001/XMLSchema#anyURI)
 
@@ -9855,10 +9054,15 @@ URI: [xsd:anyURI](http://www.w3.org/2001/XMLSchema#anyURI)
 
 
 
+</div>
+
 
 ---
 
-# Type: Uriorcurie 
+---
+search:
+  boost: 1.0
+---# Type: Uriorcurie 
 
 
 
@@ -9866,6 +9070,8 @@ URI: [xsd:anyURI](http://www.w3.org/2001/XMLSchema#anyURI)
 _a URI or a CURIE_
 
 
+
+<div data-search-exclude markdown="1">
 
 URI: [xsd:anyURI](http://www.w3.org/2001/XMLSchema#anyURI)
 
@@ -9912,10 +9118,15 @@ URI: [xsd:anyURI](http://www.w3.org/2001/XMLSchema#anyURI)
 
 
 
+</div>
+
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: vertex_count 
 
@@ -9924,11 +9135,11 @@ _Total number of vertices at this level._
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:vertex_count](https://w3id.org/zarr-vectors/schema/0.5/vertex_count)
-Alias: vertex_count
-
 <!-- no inheritance hierarchy -->
 
 
@@ -10009,7 +9220,6 @@ name: vertex_count
 description: Total number of vertices at this level.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: vertex_count
 domain_of:
 - LevelMetadata
 range: integer
@@ -10017,12 +9227,15 @@ required: true
 minimum_value: 0
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 10.0
+---
 
 # Class: VerticesMeta 
 
@@ -10030,6 +9243,8 @@ minimum_value: 0
 _``.zattrs`` for the ``vertices/`` array._
 
 
+
+<div data-search-exclude markdown="1">
 
 
 
@@ -10169,22 +9384,18 @@ attributes:
       '
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: zv_array
     owner: VerticesMeta
     domain_of:
     - VerticesMeta
     - LinksMeta
     - AttributeMeta
     - ObjectIndexMeta
-    - ObjectIndexPendingMeta
     - ObjectAttributeMeta
     - GroupingsMeta
     - GroupingsAttributeMeta
     - CrossChunkLinksMeta
-    - CrossChunkFacesMeta
     - LinkAttributeMeta
     - CrossChunkLinkAttributeMeta
-    - MetanodeChildrenMeta
     range: ZvArrayTag
     required: true
     equals_string: vertices
@@ -10193,7 +9404,6 @@ attributes:
     description: Numpy dtype string of the array's value type (e.g. "float32").
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: dtype
     owner: VerticesMeta
     domain_of:
     - VerticesMeta
@@ -10210,14 +9420,13 @@ attributes:
     description: How the chunk bytes are encoded.
     from_schema: https://w3id.org/zarr-vectors/schema/0.5
     rank: 1000
-    alias: encoding
     owner: VerticesMeta
     domain_of:
     - VerticesMeta
     range: Encoding
 
 ```
-</details>
+</details></div>
 
 
 ---
@@ -10232,7 +9441,10 @@ URI: https://w3id.org/zarr-vectors/schema/0.5
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: zv_array 
 
@@ -10243,11 +9455,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [zv:zv_array](https://w3id.org/zarr-vectors/schema/0.5/zv_array)
-Alias: zv_array
-
 <!-- no inheritance hierarchy -->
 
 
@@ -10258,19 +9470,16 @@ Alias: zv_array
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  yes  |
-| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  yes  |
-| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  yes  |
+| [VerticesMeta](VerticesMeta.md) | `` |  yes  |
 | [LinksMeta](LinksMeta.md) | `` |  yes  |
 | [AttributeMeta](AttributeMeta.md) | `` |  yes  |
-| [GroupingsMeta](GroupingsMeta.md) | `` |  yes  |
-| [CrossChunkFacesMeta](CrossChunkFacesMeta.md) | `` |  yes  |
-| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  yes  |
+| [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  yes  |
 | [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  yes  |
-| [MetanodeChildrenMeta](MetanodeChildrenMeta.md) | `` |  yes  |
+| [GroupingsMeta](GroupingsMeta.md) | `` |  yes  |
 | [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  yes  |
-| [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md) | `` |  yes  |
-| [VerticesMeta](VerticesMeta.md) | `` |  yes  |
+| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  yes  |
+| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  yes  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  yes  |
 
 
 
@@ -10284,7 +9493,7 @@ Alias: zv_array
 | Property | Value |
 | --- | --- |
 | Range | [ZvArrayTag](ZvArrayTag.md) |
-| Domain Of | [VerticesMeta](VerticesMeta.md), [LinksMeta](LinksMeta.md), [AttributeMeta](AttributeMeta.md), [ObjectIndexMeta](ObjectIndexMeta.md), [ObjectIndexPendingMeta](ObjectIndexPendingMeta.md), [ObjectAttributeMeta](ObjectAttributeMeta.md), [GroupingsMeta](GroupingsMeta.md), [GroupingsAttributeMeta](GroupingsAttributeMeta.md), [CrossChunkLinksMeta](CrossChunkLinksMeta.md), [CrossChunkFacesMeta](CrossChunkFacesMeta.md), [LinkAttributeMeta](LinkAttributeMeta.md), [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md), [MetanodeChildrenMeta](MetanodeChildrenMeta.md) |
+| Domain Of | [VerticesMeta](VerticesMeta.md), [LinksMeta](LinksMeta.md), [AttributeMeta](AttributeMeta.md), [ObjectIndexMeta](ObjectIndexMeta.md), [ObjectAttributeMeta](ObjectAttributeMeta.md), [GroupingsMeta](GroupingsMeta.md), [GroupingsAttributeMeta](GroupingsAttributeMeta.md), [CrossChunkLinksMeta](CrossChunkLinksMeta.md), [LinkAttributeMeta](LinkAttributeMeta.md), [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) |
 
 ### Cardinality and Requirements
 
@@ -10336,31 +9545,30 @@ description: 'Discriminator slot identifying the kind of per-array ``.zattrs`` b
   '
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
-alias: zv_array
 domain_of:
 - VerticesMeta
 - LinksMeta
 - AttributeMeta
 - ObjectIndexMeta
-- ObjectIndexPendingMeta
 - ObjectAttributeMeta
 - GroupingsMeta
 - GroupingsAttributeMeta
 - CrossChunkLinksMeta
-- CrossChunkFacesMeta
 - LinkAttributeMeta
 - CrossChunkLinkAttributeMeta
-- MetanodeChildrenMeta
 range: ZvArrayTag
 required: true
 
 ```
-</details>
+</details></div>
 
 
 ---
 
-
+---
+search:
+  boost: 5.0
+---
 
 # Slot: zv_version 
 
@@ -10371,11 +9579,11 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 
 
 URI: [schema:version](http://schema.org/version)
-Alias: zv_version
-
 <!-- no inheritance hierarchy -->
 
 
@@ -10462,7 +9670,6 @@ description: 'ZV spec version this store was written against (e.g. "0.5.0"). Ren
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
 slot_uri: schema:version
-alias: zv_version
 domain_of:
 - RootMetadata
 range: string
@@ -10470,10 +9677,16 @@ required: true
 pattern: ^\d+\.\d+(\.\d+)?$
 
 ```
-</details>
+</details></div>
 
 
 ---
+
+---
+search:
+  boost: 2.0
+---
+
 
 # Enum: ZvArrayTag 
 
@@ -10486,6 +9699,8 @@ __
 
 
 
+<div data-search-exclude markdown="1">
+
 URI: [zv:ZvArrayTag](https://w3id.org/zarr-vectors/schema/0.5/ZvArrayTag)
 
 ## Permissible Values
@@ -10495,15 +9710,12 @@ URI: [zv:ZvArrayTag](https://w3id.org/zarr-vectors/schema/0.5/ZvArrayTag)
 | links | None |  |
 | attribute | None |  |
 | object_index | None |  |
-| object_index_pending | None |  |
 | object_attribute | None |  |
 | groupings | None |  |
 | groupings_attribute | None |  |
 | cross_chunk_links | None |  |
-| cross_chunk_faces | None |  |
 | link_attribute | None |  |
 | cross_chunk_link_attribute | None |  |
-| metanode_children | None |  |
 
 
 
@@ -10559,8 +9771,6 @@ permissible_values:
     text: attribute
   object_index:
     text: object_index
-  object_index_pending:
-    text: object_index_pending
   object_attribute:
     text: object_attribute
   groupings:
@@ -10569,14 +9779,12 @@ permissible_values:
     text: groupings_attribute
   cross_chunk_links:
     text: cross_chunk_links
-  cross_chunk_faces:
-    text: cross_chunk_faces
   link_attribute:
     text: link_attribute
   cross_chunk_link_attribute:
     text: cross_chunk_link_attribute
-  metanode_children:
-    text: metanode_children
 
 ```
 </details>
+
+</div>

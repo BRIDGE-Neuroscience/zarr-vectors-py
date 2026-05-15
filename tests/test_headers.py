@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from zarr_vectors.headers import HeaderRegistry
-from zarr_vectors.lazy import open_zvr
+from zarr_vectors.lazy import open_zv
 from zarr_vectors.types.points import write_points
 
 
@@ -82,8 +82,8 @@ class TestLazyStoreHeaders:
         reg = HeaderRegistry(store)
         reg.add("trk", {"format_name": "trk", "voxel_size": [1.0, 1.0, 1.0]})
 
-        zvr = open_zvr(store)
-        headers = zvr.headers
+        zv = open_zv(store)
+        headers = zv.headers
         assert "trk" in headers
         assert isinstance(headers["trk"], dict)
         assert headers["trk"]["voxel_size"] == [1.0, 1.0, 1.0]

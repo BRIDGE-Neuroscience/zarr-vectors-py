@@ -21,6 +21,7 @@ from zarr_vectors.constants import (
     GEOM_LINE,
     LINKS_IMPLICIT_SEQUENTIAL,
     OBJIDX_STANDARD,
+    VERTEX_GROUP_OFFSETS,
     VERTICES,
 )
 from zarr_vectors.core.arrays import (
@@ -84,12 +85,15 @@ def write_lines(
     chunk_shape: ChunkShape,
     bin_shape: BinShape | None = None,
     bounds: tuple[list[float], list[float]] | None = None,
-    attributes: dict[str, npt.NDArray] | None = None,
-    line_attributes: dict[str, npt.NDArray] | None = None,
+    vertex_attributes: dict[str, npt.NDArray] | None = None,
+    object_attributes: dict[str, npt.NDArray] | None = None,
     dtype: str = "float32",
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
     out_of_bounds: str = DEFAULT_OOB_POLICY,
+    # Deprecated aliases (will be removed):
+    attributes: dict[str, npt.NDArray] | None = None,
+    line_attributes: dict[str, npt.NDArray] | None = None,
 ) -> dict[str, Any]:
     """Write finite line segments to a new zarr vectors store.
 
@@ -98,16 +102,47 @@ def write_lines(
         endpoints: ``(N, 2, D)`` array — N lines, each with 2 endpoints
             of D dimensions.
         chunk_shape: Spatial chunk size per dimension.
-        attributes: Per-vertex attributes as ``{name: (N, 2) or (N, 2, C)}``.
-            Two values per line (one per endpoint).
-        line_attributes: Per-line (per-object) attributes as
-            ``{name: (N,) or (N, C)}``.
+        vertex_attributes: Per-vertex attributes as
+            ``{name: (N, 2) or (N, 2, C)}``.  Two values per line (one
+            per endpoint).  (Spec name; replaces ``attributes``.)
+        object_attributes: Per-line (per-object) attributes as
+            ``{name: (N,) or (N, C)}``.  (Spec name; replaces
+            ``line_attributes``.)
         dtype: Numpy dtype string for positions.
 
     Returns:
         Summary dict with ``line_count``, ``chunk_count``,
         ``cross_chunk_count``.
     """
+    # Back-compat: accept the legacy kwarg names.
+    if attributes is not None:
+        if vertex_attributes is not None:
+            raise TypeError(
+                "got both `attributes` and `vertex_attributes`; "
+                "pass only `vertex_attributes`."
+            )
+        import warnings
+        warnings.warn(
+            "`attributes` is deprecated; use `vertex_attributes`.",
+            DeprecationWarning, stacklevel=2,
+        )
+        vertex_attributes = attributes
+    if line_attributes is not None:
+        if object_attributes is not None:
+            raise TypeError(
+                "got both `line_attributes` and `object_attributes`; "
+                "pass only `object_attributes`."
+            )
+        import warnings
+        warnings.warn(
+            "`line_attributes` is deprecated; use `object_attributes`.",
+            DeprecationWarning, stacklevel=2,
+        )
+        object_attributes = line_attributes
+    # Internal aliases so the rest of the body stays unchanged.
+    attributes = vertex_attributes
+    line_attributes = object_attributes
+
     np_dtype = np.dtype(dtype)
     endpoints = np.asarray(endpoints, dtype=np_dtype)
 
@@ -381,24 +416,40 @@ def read_lines(
 
     result_endpoints: list[npt.NDArray] = []
 
-    for oid in object_ids:
-        try:
-            vg_list = read_object_vertices(
-                level_group, oid, dtype=dtype, ndim=ndim
-            )
-        except ArrayError:
-            continue
+    # Prefetch every vertex chunk (and its offsets sidecar) in one async
+    # gather so the per-object read loop hits the cache instead of
+    # paying one round-trip per chunk.
+    _chunk_key_strs = [
+        ".".join(str(c) for c in cc)
+        for cc in list_chunk_keys(level_group, VERTICES)
+    ]
+    _prefetch_plan: list[tuple[str, list[str]]] = [
+        (VERTICES, _chunk_key_strs),
+        (VERTEX_GROUP_OFFSETS, _chunk_key_strs),
+    ]
+    _batched_reads_cm = level_group.batched_reads(_prefetch_plan)
+    _batched_reads_cm.__enter__()
+    try:
+        for oid in object_ids:
+            try:
+                vg_list = read_object_vertices(
+                    level_group, oid, dtype=dtype, ndim=ndim
+                )
+            except ArrayError:
+                continue
 
-        # Concatenate vertex groups to get the full line (2 vertices)
-        all_verts = np.concatenate(vg_list, axis=0)
+            # Concatenate vertex groups to get the full line (2 vertices)
+            all_verts = np.concatenate(vg_list, axis=0)
 
-        if len(all_verts) < 2:
-            continue
+            if len(all_verts) < 2:
+                continue
 
-        # Take first and last as endpoints (handles both same-chunk
-        # and cross-chunk cases)
-        ep = np.stack([all_verts[0], all_verts[-1]], axis=0)  # (2, D)
-        result_endpoints.append(ep)
+            # Take first and last as endpoints (handles both same-chunk
+            # and cross-chunk cases)
+            ep = np.stack([all_verts[0], all_verts[-1]], axis=0)  # (2, D)
+            result_endpoints.append(ep)
+    finally:
+        _batched_reads_cm.__exit__(None, None, None)
 
     if not result_endpoints:
         return {

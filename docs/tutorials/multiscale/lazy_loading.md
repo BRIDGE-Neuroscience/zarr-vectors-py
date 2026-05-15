@@ -4,7 +4,7 @@ The ZVF read functions (`read_points`, `read_polylines`, etc.) are eager:
 they fetch and return all requested data immediately. For large stores or
 remote datasets, an eager read of the full store is impractical.
 
-The **lazy API** provides a `open_zvr` object that opens the store
+The **lazy API** provides a `open_zv` object that opens the store
 metadata without reading any array data. Array slices are fetched on demand
 — only when accessed. This is the recommended access pattern for:
 
@@ -20,10 +20,10 @@ metadata without reading any array data. Array slices are fetched on demand
 ## Opening a store lazily
 
 ```python
-from zarr_vectors.lazy import open_zvr
+from zarr_vectors.lazy import open_zv
 
 # Opens metadata only — no vertex data fetched
-store = open_zvr("synchrotron.zarrvectors")
+store = open_zv("synchrotron.zarrvectors")
 
 print(store.geometry_type)           # "point_cloud"
 print(store.spatial_dims)            # 3
@@ -38,7 +38,7 @@ Opening a remote store is identical — pass an fsspec URL:
 
 ```python
 import s3fs
-from zarr_vectors.lazy import open_zvr
+from zarr_vectors.lazy import open_zv
 
 # 0.4+: backend layer auto-routes cloud URLs via obstore (or fsspec).
 # Public access works without explicit anon=True.
@@ -140,7 +140,7 @@ print(f"Mean intensity over {total_count} points: {mean_intensity:.4f}")
 
 ## Lazy array access
 
-The `open_zvr` exposes each array as a lazy `zarr.Array` that can
+The `open_zv` exposes each array as a lazy `zarr.Array` that can
 be sliced directly:
 
 ```python
@@ -178,18 +178,18 @@ print(f"{len(high_fa_ids)} high-FA streamlines")
 
 ```python
 import s3fs
-from zarr_vectors.lazy import open_zvr
+from zarr_vectors.lazy import open_zv
 
-store = open_zvr("s3://my-bucket/dataset/tracts.zarrvectors")
+store = open_zv("s3://my-bucket/dataset/tracts.zarrvectors")
 ```
 
 ### GCS
 
 ```python
 import gcsfs
-from zarr_vectors.lazy import open_zvr
+from zarr_vectors.lazy import open_zv
 
-store = open_zvr("gs://my-bucket/tracts.zarrvectors")
+store = open_zv("gs://my-bucket/tracts.zarrvectors")
 ```
 
 ### Performance on object stores
@@ -203,7 +203,7 @@ minimises requests by:
 3. Caching decompressed chunks in an LRU cache (configurable size).
 
 ```python
-store = open_zvr(
+store = open_zv(
     "s3://my-bucket/tracts.zarrvectors",
     cache_size=256,     # cache up to 256 decompressed chunks in memory
     n_workers=8,        # fetch up to 8 chunks in parallel
@@ -223,12 +223,12 @@ for chunk_coord, chunk_data in store.iter_chunks(level=1, prefetch=4):
 
 ---
 
-## open_zvr API summary
+## open_zv API summary
 
 ```python
-from zarr_vectors.lazy import open_zvr
+from zarr_vectors.lazy import open_zv
 
-store = open_zvr(path_or_store)
+store = open_zv(path_or_store)
 
 # Metadata (no data I/O)
 store.geometry_type           # str
@@ -258,7 +258,7 @@ store.__enter__() / store.__exit__()   # context manager
 ### Using as a context manager
 
 ```python
-with open_zvr("scan.zarrvectors") as store:
+with open_zv("scan.zarrvectors") as store:
     result = store.read(level=2)
 # Store is closed and cache is freed on exit
 ```
@@ -272,7 +272,7 @@ with open_zvr("scan.zarrvectors") as store:
 Load the coarsest level for a quick full-volume thumbnail:
 
 ```python
-store    = open_zvr("scan.zarrvectors")
+store    = open_zv("scan.zarrvectors")
 coarsest = store.levels[-1]
 result   = store.read(level=coarsest)
 # Use result["positions"] to render a low-density overview

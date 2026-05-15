@@ -36,7 +36,7 @@ from zarr_vectors.core.store import (
     read_level_metadata,
     read_root_metadata,
 )
-from zarr_vectors.lazy.store import object_levels, open_zvr
+from zarr_vectors.lazy.store import open_zv
 from zarr_vectors.multiresolution.coarsen import build_pyramid, coarsen_level
 from zarr_vectors.spatial.chunking import neighbouring_chunk_keys
 from zarr_vectors.types.polylines import write_polylines
@@ -55,7 +55,7 @@ def _make_streamlines(seed=0, n=20, vpp=30, extent=100.0):
 
 
 def _build_store(tmp_path, seed=0, n=20):
-    store = tmp_path / "tr.zvr"
+    store = tmp_path / "tr.zv"
     write_polylines(
         str(store),
         _make_streamlines(seed=seed, n=n, vpp=30),
@@ -118,19 +118,18 @@ def test_monotone_oid_drop_across_levels(tmp_path):
     build_pyramid(
         str(store),
         factors=[(1.5, 2.0), (1.5, 2.0)],
-        method=COARSEN_PER_OBJECT,
         sparsity_seed=42,
     )
 
-    zvr = open_zvr(str(store))
+    zv = open_zv(str(store))
     levels = list_resolution_levels(open_store(str(store)))
     assert levels == [0, 1, 2]
 
-    present_sets = {L: set(zvr[L].present_oids.tolist()) for L in levels}
+    present_sets = {L: set(zv[L].present_oids.tolist()) for L in levels}
     assert present_sets[2] <= present_sets[1] <= present_sets[0]
     # Object_levels for any surviving level-2 OID is a contiguous prefix.
     for oid in present_sets[2]:
-        visible = object_levels(zvr, oid)
+        visible = zv.object_levels(oid)
         assert visible == list(range(max(visible) + 1))
 
 
@@ -255,7 +254,6 @@ def test_factors_via_build_pyramid(tmp_path):
     result = build_pyramid(
         str(store),
         factors=[(2.0, 2.0), (2.0, 2.0)],
-        method=COARSEN_PER_OBJECT,
         sparsity_seed=42,
     )
     assert result["levels_created"] == 2

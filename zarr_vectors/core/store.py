@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from zarr.storage import StoreLike
 
 from zarr_vectors.constants import (
-    CAP_VERTEX_COUNT_CACHE,
     DEFAULT_AXES_NAMES,
     DEFAULT_BOUNDS_SIDE,
     DEFAULT_OOB_POLICY,
@@ -316,7 +315,6 @@ class FsGroup(Group):
 
 def create_store(
     path: StoreLike,
-    root_metadata: RootMetadata | None = None,
     *,
     bounds: tuple[list[float], list[float]] | None = None,
     chunk_shape: tuple[float, ...] | None = None,
@@ -326,6 +324,14 @@ def create_store(
     ndim: int | None = None,
     vertex_dtype: str = "float32",
     vertex_encoding: str = "raw",
+    links_convention: str | None = None,
+    object_index_convention: str | None = None,
+    cross_chunk_strategy: str | None = None,
+    cross_level_depth: int | None = None,
+    cross_level_storage: str | None = None,
+    reduction_factor: int | None = None,
+    base_bin_shape: tuple[float, ...] | None = None,
+    format_capabilities: list[str] | None = None,
     backend: str | None = None,
     **backend_kwargs: Any,
 ) -> Group:
@@ -363,6 +369,29 @@ def create_store(
             ``chunk_shape``).  Defaults to 3.
         vertex_dtype: dtype for the level-0 vertices array.
         vertex_encoding: ``"raw"`` or ``"draco"``.
+        links_convention: How edges are encoded
+            (``"explicit"`` / ``"implicit_sequential"`` /
+            ``"implicit_sequential_with_branches"``).  When omitted the
+            store has no convention stamped at create time; the first
+            type writer (``write_graph``, ``write_polyline``, ...)
+            fills it in via ``_ensure_root_metadata_for_write``.
+        object_index_convention: How ``object_index/`` is encoded
+            (``"standard"`` / ``"identity"``).  Same lazy-fill rule as
+            ``links_convention``.
+        cross_chunk_strategy: Cross-chunk connectivity strategy
+            (``"boundary_deduplication"`` / ``"explicit_links"`` /
+            ``"both"``).  Lazy-filled by type writers.
+        cross_level_depth: Maximum ``|delta|`` materialised by
+            ``build_pyramid``.  ``0`` disables cross-level link
+            arrays.
+        cross_level_storage: ``"none"`` / ``"implicit"`` /
+            ``"explicit"`` — see
+            :data:`zarr_vectors.constants.VALID_XLEVEL_STORAGE`.
+        reduction_factor: Default vertex-count fold per pyramid step.
+        base_bin_shape: Level-0 supervoxel bin edge lengths.  When
+            omitted, defaults to ``chunk_shape`` (one bin per chunk).
+        format_capabilities: Optional capability tokens to stamp on
+            the root.  See :mod:`zarr_vectors.constants` ``CAP_*``.
         backend: Force a particular backend (``"local"`` / ``"icechunk"``).
         **backend_kwargs: Forwarded to the backend constructor.
 
@@ -373,22 +402,6 @@ def create_store(
         StoreError: If a store already exists at ``path``.
         MetadataError: If kwargs are inconsistent (mismatched ndim).
     """
-    # Backward-compat: accept a fully-populated RootMetadata as the
-    # second positional arg (the pre-0.4.1 API).  Unpack it into the
-    # flat-kwargs path so the rest of the function only handles one shape.
-    if root_metadata is not None:
-        root_metadata.validate()
-        if axes is None:
-            axes = root_metadata.spatial_index_dims
-        if chunk_shape is None:
-            chunk_shape = root_metadata.chunk_shape
-        if bounds is None:
-            bounds = root_metadata.bounds
-        if geometry_types is None:
-            geometry_types = root_metadata.geometry_types
-        if crs is None:
-            crs = root_metadata.crs
-
     resolved_ndim = _resolve_ndim(
         ndim=ndim, axes=axes, chunk_shape=chunk_shape, bounds=bounds,
     )
@@ -444,25 +457,24 @@ def create_store(
         axes=axes,
         geometry_types=geometry_types,
         crs=crs,
+        links_convention=links_convention,
+        object_index_convention=object_index_convention,
+        cross_chunk_strategy=cross_chunk_strategy,
+        cross_level_depth=cross_level_depth,
+        cross_level_storage=cross_level_storage,
+        reduction_factor=reduction_factor,
+        base_bin_shape=base_bin_shape,
+        format_capabilities=format_capabilities,
     )
-    # Backward-compat: merge the non-structural fields from a supplied
-    # RootMetadata (conventions, base_bin_shape, cross_level_*, etc.) on
-    # top of the flat-kwarg attrs.
-    if root_metadata is not None:
-        full = root_metadata.to_dict()
-        attrs = root.attrs.to_dict()
-        merged = dict(attrs.get("zarr_vectors", {}))
-        merged.update(full.get("zarr_vectors", {}))
-        root.attrs.update({"zarr_vectors": merged})
 
     # 0/ + empty vertices pair — the "warm" payload.
-    level0 = root.create_group(f"{RESOLUTION_PREFIX}0")
-    level0.attrs.update(
+    level0 = create_resolution_level(
+        root, 0,
         LevelMetadata(
             level=0,
             vertex_count=0,
             arrays_present=[VERTICES],
-        ).to_dict()
+        ),
     )
     # Defer import: arrays.py imports from store.py (FsGroup).
     from zarr_vectors.core.arrays import create_vertices_array
@@ -511,6 +523,14 @@ def _write_root_attrs(
     axes: list[dict[str, str]],
     geometry_types: list[str],
     crs: dict[str, Any] | None = None,
+    links_convention: str | None = None,
+    object_index_convention: str | None = None,
+    cross_chunk_strategy: str | None = None,
+    cross_level_depth: int | None = None,
+    cross_level_storage: str | None = None,
+    reduction_factor: int | None = None,
+    base_bin_shape: tuple[float, ...] | None = None,
+    format_capabilities: list[str] | None = None,
 ) -> None:
     """Write the ``zarr_vectors`` root-attrs block plus the eager NGFF
     ``multiscales`` block (axes only — ``datasets`` are filled in by
@@ -524,15 +544,29 @@ def _write_root_attrs(
     existing = full_attrs.get("zarr_vectors", {})
     zv: dict[str, Any] = dict(existing)
     zv["zv_version"] = FORMAT_VERSION
-    caps = list(zv.get("format_capabilities") or [])
-    if CAP_VERTEX_COUNT_CACHE not in caps:
-        caps.append(CAP_VERTEX_COUNT_CACHE)
-    zv["format_capabilities"] = caps
+    if format_capabilities is not None:
+        zv["format_capabilities"] = list(format_capabilities)
+    else:
+        zv.setdefault("format_capabilities", list(zv.get("format_capabilities") or []))
     zv["chunk_shape"] = list(chunk_shape)
     zv["bounds"] = [list(bounds[0]), list(bounds[1])]
     zv["geometry_types"] = list(geometry_types)
     if crs is not None:
         zv["crs"] = crs
+    if links_convention is not None:
+        zv["links_convention"] = links_convention
+    if object_index_convention is not None:
+        zv["object_index_convention"] = object_index_convention
+    if cross_chunk_strategy is not None:
+        zv["cross_chunk_strategy"] = cross_chunk_strategy
+    if cross_level_depth is not None:
+        zv["cross_level_depth"] = int(cross_level_depth)
+    if cross_level_storage is not None:
+        zv["cross_level_storage"] = cross_level_storage
+    if reduction_factor is not None:
+        zv["reduction_factor"] = int(reduction_factor)
+    if base_bin_shape is not None:
+        zv["base_bin_shape"] = list(base_bin_shape)
 
     # Eager NGFF ``multiscales`` block — axes are the canonical axis
     # store from 0.5.0 on.  We seed datasets with level 0 only; the
@@ -581,10 +615,7 @@ def _ensure_root_metadata_for_write(
     existing = full_attrs.get("zarr_vectors", {})
     zv: dict[str, Any] = dict(existing)
     zv.setdefault("zv_version", FORMAT_VERSION)
-    caps = list(zv.get("format_capabilities") or [])
-    if CAP_VERTEX_COUNT_CACHE not in caps:
-        caps.append(CAP_VERTEX_COUNT_CACHE)
-    zv["format_capabilities"] = caps
+    zv.setdefault("format_capabilities", list(zv.get("format_capabilities") or []))
 
     # Axes live in NGFF ``multiscales[0].axes`` (0.5.0+).
     ms = full_attrs.get("multiscales") or []
@@ -1098,11 +1129,60 @@ def create_resolution_level(
     level: int,
     level_metadata: LevelMetadata,
 ) -> Group:
-    """Create a new resolution level group within the store."""
+    """Create a new resolution level group within the store.
+
+    The level's spatial transform (``bin_ratio`` → NGFF ``scale``,
+    ``bin_shape`` → NGFF ``translation = bin_shape / 2``) is written to
+    the NGFF ``multiscales[0].datasets`` block via
+    :func:`zarr_vectors.core.multiscale.upsert_level_transform` so the
+    NGFF block stays the **single source of truth** for spatial
+    geometry.  ``bin_shape`` and ``bin_ratio`` are intentionally
+    omitted from the level's own ``zarr_vectors_level`` attrs; readers
+    derive them from the NGFF block (see :func:`read_level_metadata`).
+    """
     level_metadata.validate()
     group_name = f"{RESOLUTION_PREFIX}{level}"
     level_group = root.require_group(group_name)
-    level_group.attrs.update(level_metadata.to_dict())
+    payload = level_metadata.to_dict()
+    payload["zarr_vectors_level"].pop("bin_shape", None)
+    payload["zarr_vectors_level"].pop("bin_ratio", None)
+    level_group.attrs.update(payload)
+
+    # Mirror the spatial transform into the NGFF block.
+    from zarr_vectors.core.multiscale import upsert_level_transform
+    if level == 0:
+        # Level 0: scale = 1.0 per-axis; translation seeded by base_bin/2 if known.
+        try:
+            root_meta = read_root_metadata(root)
+            ndim = root_meta.sid_ndim
+            base_bin = root_meta.effective_bin_shape
+            scale = [1.0] * ndim
+            translation = [bs / 2.0 for bs in base_bin]
+        except Exception:
+            scale = [1.0]
+            translation = None
+        upsert_level_transform(
+            root, level, scale=scale, translation=translation,
+        )
+    elif level_metadata.bin_ratio is not None or level_metadata.bin_shape is not None:
+        try:
+            root_meta = read_root_metadata(root)
+            ndim = root_meta.sid_ndim
+        except Exception:
+            ndim = (
+                len(level_metadata.bin_ratio) if level_metadata.bin_ratio
+                else (len(level_metadata.bin_shape) if level_metadata.bin_shape else 1)
+            )
+        if level_metadata.bin_ratio is not None:
+            scale = [float(r) for r in level_metadata.bin_ratio]
+        else:
+            scale = [1.0] * ndim
+        translation = (
+            [bs / 2.0 for bs in level_metadata.bin_shape]
+            if level_metadata.bin_shape is not None
+            else None
+        )
+        upsert_level_transform(root, level, scale=scale, translation=translation)
     return level_group
 
 
@@ -1153,12 +1233,31 @@ def read_root_metadata(root: Group) -> RootMetadata:
 def read_level_metadata(root: Group, level: int) -> LevelMetadata:
     """Read and parse level metadata.
 
+    ``bin_shape`` and ``bin_ratio`` are read from the NGFF
+    ``multiscales[0].datasets`` block (the authoritative source under
+    0.5+).  Legacy stores that still carry them under
+    ``zarr_vectors_level`` are honoured as a fallback.
+
     Raises:
         StoreError: If the level does not exist.
         MetadataError: If metadata is malformed.
     """
     level_group = get_resolution_level(root, level)
-    return LevelMetadata.from_dict(level_group.attrs.to_dict())
+    lm = LevelMetadata.from_dict(level_group.attrs.to_dict())
+
+    # NGFF takes precedence over the legacy fields when present.
+    from zarr_vectors.core.multiscale import read_level_transform
+    scale, translation = read_level_transform(root, level)
+    if scale is not None:
+        if level == 0:
+            # Level 0 has scale == 1.0 by convention; bin_ratio stays None.
+            lm.bin_ratio = None
+            lm.bin_shape = None
+        else:
+            lm.bin_ratio = tuple(int(round(s)) for s in scale)
+            if translation is not None:
+                lm.bin_shape = tuple(2.0 * t for t in translation)
+    return lm
 
 
 def write_parametric_types(
@@ -1261,10 +1360,10 @@ def add_resolution_level(
         parent_level=parent_level,
     )
     level_meta.validate()
-
-    level_group = root.require_group(group_name)
-    level_group.attrs.update(level_meta.to_dict())
-    return level_group
+    # Route through create_resolution_level so the NGFF block is updated
+    # via :func:`zarr_vectors.core.multiscale.upsert_level_transform` in
+    # the same way as a writer-driven create.
+    return create_resolution_level(root, level_index, level_meta)
 
 
 def remove_resolution_level(root: Group, level_index: int) -> None:

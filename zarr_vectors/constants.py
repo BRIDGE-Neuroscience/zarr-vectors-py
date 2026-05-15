@@ -12,40 +12,40 @@ everywhere in the package.
 FORMAT_VERSION: str = "0.5.0"
 """Current ZV specification version.
 
-0.5.0: NGFF-alignment cleanup.  Hard break — see
-``RootMetadata.validate``.  Three on-disk changes vs 0.4.1:
+0.5.0: NGFF-alignment cleanup + format simplification.  The 0.5
+series went through several on-disk simplifications without a
+version bump (consumers should pin to a specific point release):
 
-1. Root key ``zarr_vectors.format_version`` is renamed to
-   ``zarr_vectors.zv_version`` to disambiguate from Zarr v3's
-   ``zarr_format`` field.
-2. Root key ``zarr_vectors.spatial_index_dims`` is removed; axes are
-   read from the NGFF ``multiscales[0].axes`` block which is now
-   written eagerly at :func:`zarr_vectors.core.store.create_store`
-   time.  ``multiscales[].version`` is ``"0.4"`` and the ZV
-   discriminator lives in ``multiscales[].metadata.format =
-   "zarr_vectors"`` (NGFF reserves ``type`` for the downsampling
-   method).
-3. Per-array ``.zattrs`` no longer duplicate the array's ``dtype`` —
-   Zarr v3 already stores it as ``data_type`` in the array
-   ``zarr.json``.
+- ``vertex_counts/`` per-chunk sidecars removed; per-chunk vertex
+  counts are derived from ``vertex_group_offsets`` and the
+  ``vertices/<key>`` blob size.
+- ``vertex_group_offsets/<key>`` is a plain ``(K,)`` int64 array of
+  vertex byte offsets (the legacy ``(K, 2)`` paired layout with a
+  link-offset column is gone).
+- ``attributes/<name>/<key>_offsets`` sibling blobs removed.
+  Attribute groups align 1:1 with vertex groups; per-group byte
+  offsets are computed at read time.
+- ``metanode_children/`` removed.  Pyramid drill-down uses the
+  ``links/<+1>/`` + ``cross_chunk_links/<+1>/`` arrays emitted inline
+  during coarsening (mirrored as ``-1`` on the coarse side under
+  ``cross_level_storage="explicit"``).
+- ``cross_chunk_faces/`` removed.  Cross-chunk face identity uses
+  ``cross_chunk_links/<delta>/`` with ``link_width=3``.  The
+  ``cross_chunk_links`` array carries a ``link_width`` metadata
+  field (default 2 for edges).
+- ``object_index/pending/`` staging tree removed.  Incremental
+  writes go directly into ``object_index/``; transactional backends
+  (icechunk) make this cheap.
 
-0.4.1: bare-integer resolution-level group names (``0/``, ``1/``)
-to mirror OME-Zarr; previously prefixed as ``resolution_0/``,
-``resolution_1/``.
+Earlier 0.5 changes (now baseline): renamed ``format_version`` to
+``zv_version``, moved axes to ``multiscales[0].axes``, dropped
+per-array dtype duplication.
+
+0.4.1: bare-integer resolution-level group names (``0/``, ``1/``).
 """
 
 # Capability tokens stored in RootMetadata.format_capabilities.  Readers
-# inspect these to know which optional 0.3+ features the store uses, and
-# degrade gracefully when a capability is absent.
-CAP_CROSS_CHUNK_FACES: str = "cross_chunk_faces"
-"""Store contains the cross_chunk_faces array (face-identity preservation)."""
-
-CAP_VERTEX_COUNT_CACHE: str = "vertex_count_cache"
-"""Per-chunk vertex_counts/<key> sidecars are present."""
-
-CAP_OBJECT_INDEX_PENDING: str = "object_index_pending"
-"""Store has uncompacted object_index pending sidecars."""
-
+# inspect these to know which optional features the store uses.
 CAP_PRESERVED_OBJECT_IDS: str = "preserved_object_ids"
 """At least one resolution level was written with ID-preserving
 sparsification (``preserves_object_ids=True`` on the level metadata).
@@ -104,39 +104,33 @@ PARAMETRIC_GROUP: str = "parametric"
 VERTICES: str = "vertices"
 VERTEX_GROUP_OFFSETS: str = "vertex_group_offsets"
 LINKS: str = "links"
-ATTRIBUTES: str = "attributes"
+VERTEX_ATTRIBUTES: str = "vertex_attributes"
 OBJECT_INDEX: str = "object_index"
 OBJECT_ATTRIBUTES: str = "object_attributes"
-GROUPINGS: str = "groupings"
-GROUPINGS_ATTRIBUTES: str = "groupings_attributes"
+GROUPS: str = "groups"
+GROUP_ATTRIBUTES: str = "group_attributes"
 CROSS_CHUNK_LINKS: str = "cross_chunk_links"
-CROSS_CHUNK_FACES: str = "cross_chunk_faces"
 LINK_ATTRIBUTES: str = "link_attributes"
 CROSS_CHUNK_LINK_ATTRIBUTES: str = "cross_chunk_link_attributes"
-METANODE_CHILDREN: str = "metanode_children"
-VERTEX_COUNTS: str = "vertex_counts"
 
 # Parametric sub-arrays
 PARAMETRIC_OBJECTS: str = "objects"
 PARAMETRIC_OBJECT_ATTRIBUTES: str = "object_attributes"
-PARAMETRIC_GROUPINGS: str = "groupings"
-PARAMETRIC_GROUPINGS_ATTRIBUTES: str = "groupings_attributes"
+PARAMETRIC_GROUPS: str = "groups"
+PARAMETRIC_GROUP_ATTRIBUTES: str = "group_attributes"
 
 ALL_ARRAY_NAMES: frozenset[str] = frozenset({
     VERTICES,
     VERTEX_GROUP_OFFSETS,
     LINKS,
-    ATTRIBUTES,
+    VERTEX_ATTRIBUTES,
     OBJECT_INDEX,
     OBJECT_ATTRIBUTES,
-    GROUPINGS,
-    GROUPINGS_ATTRIBUTES,
+    GROUPS,
+    GROUP_ATTRIBUTES,
     CROSS_CHUNK_LINKS,
-    CROSS_CHUNK_FACES,
     LINK_ATTRIBUTES,
     CROSS_CHUNK_LINK_ATTRIBUTES,
-    METANODE_CHILDREN,
-    VERTEX_COUNTS,
 })
 
 # Array names whose on-disk layout includes a ``<level_delta>`` segment
@@ -262,7 +256,7 @@ DEFAULT_REDUCTION_FACTOR: int = 8
 DEFAULT_BIN_RATIO: tuple[int, ...] = (1, 1, 1)
 """Bin ratio at level 0 (no downsampling)."""
 
-DEFAULT_COARSENING_METHOD: str = "grid_metanode"
+DEFAULT_COARSENING_METHOD: str = "per_object"
 
 # Valid values for LevelMetadata.coarsening_method.  Open-set: future
 # strategies (e.g. mesh edge-collapse decimation) may add tokens here.
@@ -271,22 +265,11 @@ COARSEN_PER_OBJECT: str = "per_object"
 into bin centroids (metavertices).  Metavertices may be shared between
 objects; OIDs are preserved across levels."""
 
-COARSEN_CROSS_OBJECT_METANODE: str = "cross_object_metanode"
-"""Legacy aggregation that merges vertices across objects, producing a
-fresh OID space at each level.  No provenance back to the source
-objects."""
-
-COARSEN_GRID_METANODE: str = "grid_metanode"
-"""Alias for the legacy cross-object metanode aggregation; kept for
-historical level metadata read-back."""
-
 COARSEN_MANUAL: str = "manual"
 COARSEN_NONE: str = "none"
 
 VALID_COARSENING_METHODS: frozenset[str] = frozenset({
     COARSEN_PER_OBJECT,
-    COARSEN_CROSS_OBJECT_METANODE,
-    COARSEN_GRID_METANODE,
     COARSEN_MANUAL,
     COARSEN_NONE,
 })

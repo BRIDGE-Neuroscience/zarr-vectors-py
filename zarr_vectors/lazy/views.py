@@ -1,11 +1,11 @@
 """Lazy filtered views and geometry-specific collections.
 
-``ZVRView`` is a filtered projection of a ``ZVRLevel`` that narrows
+``ZVView`` is a filtered projection of a ``ZVLevel`` that narrows
 which chunks, bins, objects, or groups will be read.  Filters chain:
 each ``.filter()`` returns a new view with the intersection of all
 constraints.  Data is materialised only on ``.compute()``.
 
-``ZVRPolylineCollection`` provides per-object lazy access to
+``ZVPolylineCollection`` provides per-object lazy access to
 polylines/streamlines.
 """
 
@@ -83,14 +83,14 @@ class FilterSpec:
 
 
 # ===================================================================
-# ZVRView — filtered lazy view
+# ZVView — filtered lazy view
 # ===================================================================
 
-class ZVRView:
+class ZVView:
     """A filtered lazy view of a resolution level.
 
-    Created by calling ``.filter()`` on a ``ZVRLevel`` or another
-    ``ZVRView``.  Each filter narrows the read plan; data is only
+    Created by calling ``.filter()`` on a ``ZVLevel`` or another
+    ``ZVView``.  Each filter narrows the read plan; data is only
     loaded on ``.compute()``.
 
     Args:
@@ -121,7 +121,7 @@ class ZVRView:
         bbox: tuple[npt.NDArray, npt.NDArray] | None = None,
         object_ids: list[int] | None = None,
         group_ids: list[int] | None = None,
-    ) -> ZVRView:
+    ) -> ZVView:
         """Apply additional filter constraints, returning a new view.
 
         Args:
@@ -131,7 +131,7 @@ class ZVRView:
                 to object IDs via groupings).
 
         Returns:
-            A new ``ZVRView`` with the intersection of all constraints.
+            A new ``ZVView`` with the intersection of all constraints.
         """
         new_spec = FilterSpec()
 
@@ -172,7 +172,7 @@ class ZVRView:
             new_spec.target_object_ids = resolved
 
         merged = self._spec.intersect(new_spec)
-        return ZVRView(
+        return ZVView(
             self._group, self._root_meta, self._level_meta,
             self._all_chunk_keys, merged,
         )
@@ -311,13 +311,13 @@ class ZVRView:
         if self._spec.bbox is not None:
             parts.append("bbox=set")
         desc = ", ".join(parts) if parts else "unfiltered"
-        return f"ZVRView({desc})"
+        return f"ZVView({desc})"
 
 
 class _FilteredVertices:
     """Vertex accessor on a filtered view."""
 
-    def __init__(self, view: ZVRView) -> None:
+    def __init__(self, view: ZVView) -> None:
         self._view = view
 
     def compute(self) -> npt.NDArray[np.floating]:
@@ -329,10 +329,10 @@ class _FilteredVertices:
 
 
 # ===================================================================
-# ZVRPolylineCollection — per-object lazy polyline access
+# ZVPolylineCollection — per-object lazy polyline access
 # ===================================================================
 
-class ZVRPolylineCollection:
+class ZVPolylineCollection:
     """Lazy collection of polylines accessible by object ID.
 
     Each polyline is reconstructed by following its object_index
@@ -421,7 +421,7 @@ class ZVRPolylineCollection:
         )
 
     def __repr__(self) -> str:
-        return f"ZVRPolylineCollection(count={self.count})"
+        return f"ZVPolylineCollection(count={self.count})"
 
 
 class FilteredPolylineCollection:
@@ -429,7 +429,7 @@ class FilteredPolylineCollection:
 
     def __init__(
         self,
-        parent: ZVRPolylineCollection,
+        parent: ZVPolylineCollection,
         *,
         object_ids: list[int] | None = None,
         length_range: tuple[float, float] | None = None,

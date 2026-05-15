@@ -26,7 +26,7 @@ from zarr_vectors.core.arrays import (
     write_chunk_vertices,
     write_object_index,
 )
-from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
+from zarr_vectors.core.metadata import LevelMetadata
 from zarr_vectors.core.store import (
     FsGroup,
     create_resolution_level,
@@ -145,19 +145,17 @@ def rechunk(
     ]
     rechunk_dims = [spec.dimension_name, *spatial_dim_names]
 
-    out_meta = RootMetadata(
-        spatial_index_dims=src_meta.spatial_index_dims,
+    out_root = create_store(
+        str(output_path),
+        axes=src_meta.spatial_index_dims,
         chunk_shape=chunk_shape,
         bounds=src_meta.bounds,
         geometry_types=src_meta.geometry_types,
-        zv_version=src_meta.zv_version,
         links_convention=src_meta.links_convention,
         object_index_convention=src_meta.object_index_convention,
         cross_chunk_strategy=src_meta.cross_chunk_strategy,
         base_bin_shape=src_meta.base_bin_shape,
     )
-
-    out_root = create_store(str(output_path), out_meta)
 
     # Compute the bin → original-value list for attribute-based rechunking.
     # Only meaningful when ``by="attribute:..."`` and we have the source

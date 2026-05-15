@@ -278,51 +278,68 @@ def decode_object_index(
 
 
 # ---------------------------------------------------------------------------
-# Paired offset encoding (vertex_group_offsets: K×2)
+# Vertex offset encoding (vertex_group_offsets: K×1)
 # ---------------------------------------------------------------------------
 
-def encode_paired_offsets(
+def encode_vertex_offsets(
     vertex_offsets: npt.NDArray[np.int64],
-    link_offsets: npt.NDArray[np.int64],
 ) -> bytes:
-    """Encode paired (vertex_offset, link_offset) arrays into bytes.
-
-    Args:
-        vertex_offsets: ``(K,)`` byte offsets into the vertices chunk.
-        link_offsets: ``(K,)`` byte offsets into the links chunk.
-            Use -1 for entries where links are not applicable.
-
-    Returns:
-        Raw bytes encoding a ``(K, 2)`` int64 array.
-    """
-    k = len(vertex_offsets)
-    if len(link_offsets) != k:
-        raise ArrayError(
-            f"vertex_offsets length {k} != link_offsets length {len(link_offsets)}"
-        )
-    paired = np.stack([vertex_offsets, link_offsets], axis=1).astype(np.int64)
-    return paired.tobytes()
+    """Encode ``(K,)`` int64 vertex byte offsets to bytes."""
+    return np.ascontiguousarray(vertex_offsets, dtype=np.int64).tobytes()
 
 
-def decode_paired_offsets(
+def decode_vertex_offsets(
     raw_bytes: bytes,
-) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-    """Decode paired offsets from bytes.
-
-    Args:
-        raw_bytes: Buffer from :func:`encode_paired_offsets`.
-
-    Returns:
-        vertex_offsets: ``(K,)`` int64 array.
-        link_offsets: ``(K,)`` int64 array.
-    """
+) -> npt.NDArray[np.int64]:
+    """Decode ``(K,)`` int64 vertex byte offsets from bytes."""
     if len(raw_bytes) == 0:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
+        return np.empty(0, dtype=np.int64)
+    return np.frombuffer(raw_bytes, dtype=np.int64).copy()
 
-    arr = np.frombuffer(raw_bytes, dtype=np.int64)
-    if len(arr) % 2 != 0:
-        raise ArrayError(
-            f"Paired offsets buffer length {len(arr)} is not even"
-        )
-    paired = arr.reshape(-1, 2)
-    return paired[:, 0].copy(), paired[:, 1].copy()
+
+# ---------------------------------------------------------------------------
+# Self-describing ragged blob (inline header)
+#
+# Used by per-chunk link blobs where per-vertex-group boundaries cannot
+# be derived from another array.  Layout:
+#
+#   [K : int64]              # number of groups
+#   [off_0, ..., off_{K-1}]  # K int64 byte offsets into the data section
+#   [data]                   # concatenated raw bytes
+#
+# Each off_k is the byte offset of group k inside ``data``.  The
+# end of the last group is ``len(data)``.
+# ---------------------------------------------------------------------------
+
+def encode_ragged_blob(
+    groups: list[npt.NDArray],
+    dtype: np.dtype,
+) -> bytes:
+    """Encode a list of ragged arrays with inline offset header."""
+    data_bytes, offsets = encode_vertex_groups(groups, dtype)
+    k = len(offsets)
+    header = np.empty(1 + k, dtype=np.int64)
+    header[0] = k
+    if k:
+        header[1:] = offsets
+    return header.tobytes() + data_bytes
+
+
+def decode_ragged_blob(
+    raw_bytes: bytes,
+    dtype: np.dtype,
+    ncols: int = 1,
+) -> list[npt.NDArray]:
+    """Decode an inline-header ragged blob produced by
+    :func:`encode_ragged_blob`."""
+    if len(raw_bytes) < 8:
+        return []
+    k = int(np.frombuffer(raw_bytes[:8], dtype=np.int64)[0])
+    header_len = 8 * (1 + k)
+    if k == 0:
+        return []
+    offsets = np.frombuffer(
+        raw_bytes[8:header_len], dtype=np.int64,
+    ).copy()
+    data = raw_bytes[header_len:]
+    return decode_vertex_groups(data, offsets, dtype, ncols)

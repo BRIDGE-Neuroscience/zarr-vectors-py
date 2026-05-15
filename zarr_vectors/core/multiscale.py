@@ -35,6 +35,96 @@ from zarr_vectors.constants import RESOLUTION_PREFIX
 from zarr_vectors.exceptions import MetadataError
 
 
+def upsert_level_transform(
+    root: FsGroup,
+    level: int,
+    *,
+    scale: list[float],
+    translation: list[float] | None = None,
+) -> None:
+    """Upsert one level's entry in the NGFF ``multiscales[0].datasets`` list.
+
+    This is the **authoritative** writer for per-level spatial transforms
+    under the 0.5+ format: ``bin_ratio`` lives as the ``scale`` factor
+    and ``bin_shape / 2`` lives as the ``translation`` offset.  Callers
+    in :mod:`zarr_vectors.core.store` invoke this inside
+    :func:`create_resolution_level` and :func:`add_resolution_level`
+    after writing the level's other attrs.
+
+    Args:
+        root: Root store group.
+        level: Resolution level index (``0`` for full resolution).
+        scale: Per-axis scale factor (= ``bin_ratio`` for that level).
+        translation: Optional per-axis translation offset (= ``bin_shape / 2``).
+            When all entries are zero, the translation transform is omitted.
+    """
+    attrs = root.attrs.to_dict()
+    ms = attrs.get("multiscales") or []
+    if not ms or not isinstance(ms, list):
+        # No NGFF block yet — nothing to upsert into.  This shouldn't
+        # happen for stores created by the current ``create_store`` (it
+        # seeds the block at create time), but handle it gracefully.
+        return
+    ms_entry = dict(ms[0])
+    datasets = list(ms_entry.get("datasets") or [])
+
+    transforms: list[dict[str, Any]] = [
+        {"type": "scale", "scale": [float(s) for s in scale]},
+    ]
+    if translation is not None and any(t != 0 for t in translation):
+        transforms.append({
+            "type": "translation",
+            "translation": [float(t) for t in translation],
+        })
+
+    path = f"{RESOLUTION_PREFIX}{level}"
+    new_entry = {"path": path, "coordinateTransformations": transforms}
+    found = False
+    for i, ds in enumerate(datasets):
+        if ds.get("path") == path:
+            datasets[i] = new_entry
+            found = True
+            break
+    if not found:
+        datasets.append(new_entry)
+        # Keep datasets sorted by level for deterministic on-disk output.
+        datasets.sort(key=lambda d: int(d.get("path", "0").lstrip(RESOLUTION_PREFIX) or 0))
+
+    ms_entry["datasets"] = datasets
+    attrs["multiscales"] = [ms_entry] + list(ms[1:])
+    root.attrs.update(attrs)
+
+
+def read_level_transform(
+    root: FsGroup,
+    level: int,
+) -> tuple[list[float] | None, list[float] | None]:
+    """Read ``(scale, translation)`` for a level from the NGFF block.
+
+    Returns ``(None, None)`` when the level has no entry in the NGFF
+    ``multiscales[0].datasets`` list — callers should fall back to the
+    legacy ``zarr_vectors_level.bin_ratio`` / ``bin_shape`` fields on
+    the level's own attrs.
+    """
+    ms = read_multiscale_metadata(root)
+    if ms is None:
+        return None, None
+    path = f"{RESOLUTION_PREFIX}{level}"
+    for ms_entry in ms:
+        for ds in ms_entry.get("datasets", []):
+            if ds.get("path") != path:
+                continue
+            scale: list[float] | None = None
+            translation: list[float] | None = None
+            for t in ds.get("coordinateTransformations", []):
+                if t.get("type") == "scale":
+                    scale = [float(s) for s in t.get("scale") or []]
+                elif t.get("type") == "translation":
+                    translation = [float(s) for s in t.get("translation") or []]
+            return scale, translation
+    return None, None
+
+
 def write_multiscale_metadata(root: FsGroup) -> dict[str, Any]:
     """Generate and write OME-Zarr multiscale metadata to root .zattrs.
 

@@ -16,7 +16,7 @@ import pytest
 from zarr_vectors.core.attr_chunking import assign_attribute_bins
 from zarr_vectors.core.store import open_store, read_level_metadata
 from zarr_vectors.exceptions import ArrayError
-from zarr_vectors.lazy.store import open_zvr
+from zarr_vectors.lazy.store import open_zv
 from zarr_vectors.types.graphs import read_graph, write_graph
 from zarr_vectors.types.lines import read_lines, write_lines
 from zarr_vectors.types.meshes import read_mesh, write_mesh
@@ -69,12 +69,12 @@ def _make_two_gene_cloud(seed: int = 0, n: int = 300):
 
 def test_points_attr_chunking_round_trip(tmp_path):
     pos, gene = _make_two_gene_cloud(seed=0, n=300)
-    store = tmp_path / "g.zvr"
+    store = tmp_path / "g.zv"
 
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
 
@@ -96,12 +96,12 @@ def test_points_attr_chunking_round_trip(tmp_path):
 
 def test_points_attr_chunking_full_read_returns_all(tmp_path):
     pos, gene = _make_two_gene_cloud(seed=1, n=400)
-    store = tmp_path / "g.zvr"
+    store = tmp_path / "g.zv"
 
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
     out = read_points(str(store))
@@ -110,12 +110,12 @@ def test_points_attr_chunking_full_read_returns_all(tmp_path):
 
 def test_points_attr_filter_selectivity(tmp_path):
     pos, gene = _make_two_gene_cloud(seed=2, n=600)
-    store = tmp_path / "g.zvr"
+    store = tmp_path / "g.zv"
 
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
 
@@ -129,11 +129,11 @@ def test_points_attr_filter_selectivity(tmp_path):
 
 def test_points_attr_filter_unknown_value_returns_empty(tmp_path):
     pos, gene = _make_two_gene_cloud(seed=3, n=200)
-    store = tmp_path / "g.zvr"
+    store = tmp_path / "g.zv"
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
     out = read_points(str(store), attribute_filter={"gene": "ZZZ"})
@@ -144,7 +144,7 @@ def test_points_chunk_by_attribute_missing_attribute_raises(tmp_path):
     pos = np.random.default_rng(0).uniform(0, 10, (50, 3)).astype("f4")
     with pytest.raises(ArrayError, match="must name a key"):
         write_points(
-            str(tmp_path / "x.zvr"), pos,
+            str(tmp_path / "x.zv"), pos,
             chunk_shape=(10.0, 10.0, 10.0),
             chunk_by_attribute="nonexistent",
         )
@@ -154,9 +154,9 @@ def test_points_chunk_by_attribute_rejects_float(tmp_path):
     pos = np.random.default_rng(0).uniform(0, 10, (50, 3)).astype("f4")
     with pytest.raises(ArrayError, match="categorical-only"):
         write_points(
-            str(tmp_path / "x.zvr"), pos,
+            str(tmp_path / "x.zv"), pos,
             chunk_shape=(10.0, 10.0, 10.0),
-            attributes={"score": np.random.default_rng(0).uniform(0, 1, 50)},
+            vertex_attributes={"score": np.random.default_rng(0).uniform(0, 1, 50)},
             chunk_by_attribute="score",
         )
 
@@ -164,7 +164,7 @@ def test_points_chunk_by_attribute_rejects_float(tmp_path):
 def test_points_attribute_filter_on_non_attr_store_raises(tmp_path):
     """attribute_filter only makes sense for attribute-chunked stores."""
     pos = np.random.default_rng(0).uniform(0, 10, (50, 3)).astype("f4")
-    store = tmp_path / "plain.zvr"
+    store = tmp_path / "plain.zv"
     write_points(str(store), pos, chunk_shape=(10.0, 10.0, 10.0))
     with pytest.raises(ArrayError, match="chunk_attribute_name"):
         read_points(str(store), attribute_filter={"gene": "A"})
@@ -172,11 +172,11 @@ def test_points_attribute_filter_on_non_attr_store_raises(tmp_path):
 
 def test_points_attribute_filter_mismatched_name_raises(tmp_path):
     pos, gene = _make_two_gene_cloud(seed=4, n=100)
-    store = tmp_path / "g.zvr"
+    store = tmp_path / "g.zv"
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
     with pytest.raises(ArrayError, match="does not match"):
@@ -204,7 +204,7 @@ def test_polylines_attr_chunking_splits_mixed_polyline(tmp_path):
         np.array(["A"] * 10),
         np.array(["A"] * 5 + ["B"] * 5),
     ]
-    store = tmp_path / "tr.zvr"
+    store = tmp_path / "tr.zv"
     write_polylines(
         str(store), polys,
         chunk_shape=(50.0, 50.0, 50.0),
@@ -239,7 +239,7 @@ def test_polylines_attr_chunking_chunk_keys_are_4d(tmp_path):
     rng = np.random.default_rng(5)
     polys = [rng.uniform(0, 100, (8, 3)).astype("f4") for _ in range(4)]
     labels = [np.array(["X"] * 8) if i % 2 == 0 else np.array(["Y"] * 8) for i in range(4)]
-    store = tmp_path / "tr.zvr"
+    store = tmp_path / "tr.zv"
     write_polylines(
         str(store), polys,
         chunk_shape=(50.0, 50.0, 50.0),
@@ -259,49 +259,49 @@ def test_polylines_attr_chunking_chunk_keys_are_4d(tmp_path):
 # ===================================================================
 
 
-def test_zvr_level_attribute_values(tmp_path):
+def test_zv_level_attribute_values(tmp_path):
     pos, gene = _make_two_gene_cloud(seed=6, n=120)
-    store = tmp_path / "g.zvr"
+    store = tmp_path / "g.zv"
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
-    zvr = open_zvr(str(store))
-    lvl = zvr[0]
+    zv = open_zv(str(store))
+    lvl = zv[0]
     assert lvl.chunk_attribute_name == "gene"
     assert lvl.attribute_values == ["A", "B"]
     assert lvl.chunk_dims is not None
     assert lvl.chunk_dims[0] == "gene"
 
 
-def test_zvr_level_read_attribute_chunk(tmp_path):
+def test_zv_level_read_attribute_chunk(tmp_path):
     pos, gene = _make_two_gene_cloud(seed=7, n=200)
-    store = tmp_path / "g.zvr"
+    store = tmp_path / "g.zv"
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
-    zvr = open_zvr(str(store))
-    a_groups = zvr[0].read_attribute_chunk("A")
+    zv = open_zv(str(store))
+    a_groups = zv[0].read_attribute_chunk("A")
     total_a_verts = sum(len(g) for g in a_groups)
     assert total_a_verts == int((gene == "A").sum())
 
 
-def test_zvr_level_read_attribute_chunk_unknown_value(tmp_path):
+def test_zv_level_read_attribute_chunk_unknown_value(tmp_path):
     pos, gene = _make_two_gene_cloud(seed=8, n=80)
-    store = tmp_path / "g.zvr"
+    store = tmp_path / "g.zv"
     write_points(
         str(store), pos,
         chunk_shape=(50.0, 50.0, 50.0),
-        attributes={"gene": gene},
+        vertex_attributes={"gene": gene},
         chunk_by_attribute="gene",
     )
-    zvr = open_zvr(str(store))
-    assert zvr[0].read_attribute_chunk("missing") == []
+    zv = open_zv(str(store))
+    assert zv[0].read_attribute_chunk("missing") == []
 
 
 # ===================================================================
@@ -322,12 +322,12 @@ def _make_categorised_lines(seed: int = 0, n: int = 12):
 
 def test_lines_attr_chunking_line_attribute_round_trip(tmp_path):
     eps, cat = _make_categorised_lines(seed=0, n=16)
-    store = tmp_path / "lines.zvr"
+    store = tmp_path / "lines.zv"
     write_lines(
         str(store), eps,
         chunk_shape=(50.0, 50.0, 50.0),
         bin_shape=(50.0, 50.0, 50.0),
-        line_attributes={"cat": cat},
+        object_attributes={"cat": cat},
         chunk_by_attribute="cat",
     )
     lm = read_level_metadata(open_store(str(store)), 0)
@@ -349,9 +349,9 @@ def test_lines_per_endpoint_attribute_must_match_per_line(tmp_path):
     bad = np.array([["A", "B"]] * 8)
     with pytest.raises(ArrayError, match="endpoints"):
         write_lines(
-            str(tmp_path / "x.zvr"), eps,
+            str(tmp_path / "x.zv"), eps,
             chunk_shape=(50.0, 50.0, 50.0),
-            attributes={"cat": bad},
+            vertex_attributes={"cat": bad},
             chunk_by_attribute="cat",
         )
 
@@ -360,7 +360,7 @@ def test_lines_chunk_by_attribute_missing_raises(tmp_path):
     eps, _ = _make_categorised_lines(seed=2, n=6)
     with pytest.raises(ArrayError, match="must name a key"):
         write_lines(
-            str(tmp_path / "x.zvr"), eps,
+            str(tmp_path / "x.zv"), eps,
             chunk_shape=(50.0, 50.0, 50.0),
             chunk_by_attribute="nonexistent",
         )
@@ -387,12 +387,12 @@ def _make_categorised_graph(seed: int = 0, n_objs: int = 4, per_obj: int = 5):
 
 def test_graph_attr_chunking_round_trip(tmp_path):
     pos, edges, obj_ids, cell_type = _make_categorised_graph(seed=0)
-    store = tmp_path / "graph.zvr"
+    store = tmp_path / "graph.zv"
     write_graph(
         str(store), pos, edges,
         chunk_shape=(50.0, 50.0, 50.0),
         object_ids=obj_ids,
-        node_attributes={"cell_type": cell_type},
+        vertex_attributes={"cell_type": cell_type},
         chunk_by_attribute="cell_type",
     )
     lm = read_level_metadata(open_store(str(store)), 0)
@@ -414,10 +414,10 @@ def test_graph_attr_chunking_rejects_mixed_object(tmp_path):
     cell_type[1] = "E"  # object 0 now has nodes "I", "E", "I", "I", "I"
     with pytest.raises(ArrayError, match="per-object uniformity"):
         write_graph(
-            str(tmp_path / "x.zvr"), pos, edges,
+            str(tmp_path / "x.zv"), pos, edges,
             chunk_shape=(50.0, 50.0, 50.0),
             object_ids=obj_ids,
-            node_attributes={"cell_type": cell_type},
+            vertex_attributes={"cell_type": cell_type},
             chunk_by_attribute="cell_type",
         )
 
@@ -430,11 +430,11 @@ def test_graph_attr_chunking_default_object_per_node(tmp_path):
     pos = rng.uniform(0, 100, (n, 3)).astype("f4")
     edges = np.array([[i, i + 1] for i in range(n - 1)], dtype=np.int64)
     cell_type = np.array(["A"] * 4 + ["B"] * 4)
-    store = tmp_path / "g.zvr"
+    store = tmp_path / "g.zv"
     write_graph(
         str(store), pos, edges,
         chunk_shape=(50.0, 50.0, 50.0),
-        node_attributes={"cell_type": cell_type},
+        vertex_attributes={"cell_type": cell_type},
         chunk_by_attribute="cell_type",
     )
     assert read_graph(str(store), attribute_filter={"cell_type": "A"})["node_count"] == 4
@@ -458,7 +458,7 @@ def test_mesh_attr_chunking_round_trip(tmp_path):
     obj_ids = np.array([0, 0, 0, 0, 1, 1, 1, 1], dtype=np.int64)
     tissue = np.array(["cortex"] * 4 + ["stem"] * 4)
 
-    store = tmp_path / "m.zvr"
+    store = tmp_path / "m.zv"
     write_mesh(
         str(store), verts, faces,
         chunk_shape=(50.0, 50.0, 50.0),
@@ -484,7 +484,7 @@ def test_mesh_attr_chunking_rejects_mixed_object(tmp_path):
     tissue = np.array(["cortex", "stem", "cortex", "cortex"])
     with pytest.raises(ArrayError, match="per-object uniformity"):
         write_mesh(
-            str(tmp_path / "x.zvr"), verts, faces,
+            str(tmp_path / "x.zv"), verts, faces,
             chunk_shape=(50.0, 50.0, 50.0),
             object_ids=obj_ids,
             vertex_attributes={"tissue": tissue},

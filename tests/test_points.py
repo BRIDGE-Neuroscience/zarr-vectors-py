@@ -54,7 +54,7 @@ class TestUndifferentiatedPoints:
         write_points(
             store, positions,
             chunk_shape=(50.0, 50.0, 50.0),
-            attributes={"intensity": intensity},
+            vertex_attributes={"intensity": intensity},
         )
 
         result = read_points(store, attribute_names=["intensity"])
@@ -260,7 +260,7 @@ class TestPointsEdgeCases:
         write_points(
             store, positions,
             chunk_shape=(100.0, 100.0, 100.0),
-            attributes={"color": color},
+            vertex_attributes={"color": color},
         )
 
         result = read_points(store)

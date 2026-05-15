@@ -126,7 +126,7 @@ class TestLinesAttributes:
         write_lines(
             store, endpoints,
             chunk_shape=(100.0, 100.0, 100.0),
-            line_attributes={"length": lengths},
+            object_attributes={"length": lengths},
         )
 
         # Verify store was created (attribute reading tested in full integration)

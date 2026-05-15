@@ -25,6 +25,8 @@ from zarr_vectors.constants import (
     LINKS_IMPLICIT_SEQUENTIAL,
     OBJIDX_IDENTITY,
     OBJIDX_STANDARD,
+    VERTEX_ATTRIBUTES,
+    VERTEX_GROUP_OFFSETS,
     VERTICES,
 )
 from zarr_vectors.core.arrays import (
@@ -97,7 +99,7 @@ def write_points(
     chunk_shape: ChunkShape | None = None,
     bin_shape: BinShape | None = None,
     bounds: tuple[list[float], list[float]] | None = None,
-    attributes: dict[str, npt.NDArray] | None = None,
+    vertex_attributes: dict[str, npt.NDArray] | None = None,
     object_ids: npt.NDArray[np.integer] | None = None,
     object_attributes: dict[str, npt.NDArray] | None = None,
     groups: dict[int, list[int]] | None = None,
@@ -106,6 +108,8 @@ def write_points(
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
     out_of_bounds: str = DEFAULT_OOB_POLICY,
+    # Deprecated alias for ``vertex_attributes``; will be removed.
+    attributes: dict[str, npt.NDArray] | None = None,
 ) -> dict[str, Any]:
     """Write a point cloud to a new ZV store.
 
@@ -116,14 +120,15 @@ def write_points(
             single chunk containing all points is used.
         bin_shape: Supervoxel bin edge lengths.  If None, defaults to
             ``chunk_shape`` (one bin per chunk — backward compatible).
-        attributes: Per-vertex attributes ``{name: array}``.
+        vertex_attributes: Per-vertex attributes ``{name: array}``.
+            (Spec name; replaces the deprecated ``attributes`` kwarg.)
         object_ids: ``(N,)`` integer per-point object assignment.
         object_attributes: Per-object attributes ``{name: array}``.
         groups: Group memberships ``{group_id: [object_id, ...]}``.
         group_attributes: Per-group attributes ``{name: array}``.
         dtype: Numpy dtype string for vertex positions.
         chunk_by_attribute: If set, the named per-vertex categorical
-            attribute (which must appear in ``attributes``) becomes the
+            attribute (which must appear in ``vertex_attributes``) becomes the
             **leading chunk axis**.  Chunk keys gain a prefix, e.g.
             ``gene_bin.z.y.x``.  Vertices with mixed values within the
             same object are split across multiple attribute chunks.
@@ -137,6 +142,22 @@ def write_points(
     Returns:
         Summary dict.
     """
+    # Back-compat: accept the legacy ``attributes`` kwarg.
+    if attributes is not None:
+        if vertex_attributes is not None:
+            raise TypeError(
+                "got both `attributes` and `vertex_attributes`; "
+                "pass only `vertex_attributes` (the spec name)."
+            )
+        import warnings
+        warnings.warn(
+            "`attributes` is deprecated; use `vertex_attributes` "
+            "(matches the on-disk `vertex_attributes/` directory).",
+            DeprecationWarning, stacklevel=2,
+        )
+        vertex_attributes = attributes
+    attributes = vertex_attributes  # internal alias for the rest of the body
+
     np_dtype = np.dtype(dtype)
     positions = np.asarray(positions, dtype=np_dtype)
     n_vertices, ndim = positions.shape
@@ -241,7 +262,7 @@ def write_points(
 
     arrays_present = [VERTICES]
     if attributes:
-        arrays_present.append("attributes")
+        arrays_present.append(VERTEX_ATTRIBUTES)
     if needs_objects:
         arrays_present.append("object_index")
 
@@ -519,7 +540,7 @@ def read_points(
         result: dict[str, Any] = {
             "positions": positions_out,
             "object_ids": np.concatenate(all_obj_labels) if all_obj_labels else np.array([], dtype=np.int64),
-            "attributes": {},
+            "vertex_attributes": {},
             "vertex_count": len(positions_out),
         }
         return result
@@ -571,129 +592,143 @@ def read_points(
     chunk_vg_targets: dict[ChunkCoords, list[int]] | None = None
     chunk_keys_set: set[ChunkCoords] = set()
 
-    if bbox is not None and has_bins:
-        # Bin-level targeting: only decode matching vertex groups
-        from zarr_vectors.spatial.chunking import (
-            bins_intersecting_bbox,
-            bin_to_chunk,
-            bin_to_vg_index,
-        )
-        target_bins = bins_intersecting_bbox(
-            np.asarray(bbox[0]), np.asarray(bbox[1]),
-            effective_bin,
-        )
-        # Group target bins by chunk
-        chunk_vg_targets = {}
-        for bc in target_bins:
-            cc = bin_to_chunk(bc, bins_per_chunk)
-            vgi = bin_to_vg_index(bc, cc, bins_per_chunk)
-            if cc not in chunk_vg_targets:
-                chunk_vg_targets[cc] = []
-            chunk_vg_targets[cc].append(vgi)
-
-        # Only read from chunks that have data
-        chunk_keys_set = set(chunk_keys)
-        all_positions = []
-        for cc, vg_indices in chunk_vg_targets.items():
-            if cc not in chunk_keys_set:
-                continue
-            for vgi in vg_indices:
-                try:
-                    vg = read_vertex_group(
-                        level_group, cc, vgi, dtype=dtype, ndim=ndim,
-                    )
-                    if len(vg) > 0:
-                        all_positions.append(vg)
-                except ArrayError:
-                    continue
-
-    elif bbox is not None:
-        # Chunk-level targeting (old stores without bins)
-        target_chunks = set(chunks_intersecting_bbox(
-            np.asarray(bbox[0]), np.asarray(bbox[1]),
-            root_meta.chunk_shape,
-        ))
-        chunk_keys = [k for k in chunk_keys if k in target_chunks]
-
-        all_positions = []
-        for chunk_coords in chunk_keys:
-            try:
-                groups = read_chunk_vertices(
-                    level_group, chunk_coords, dtype=dtype, ndim=ndim
-                )
-            except ArrayError:
-                continue
-            for vg in groups:
-                if len(vg) > 0:
-                    all_positions.append(vg)
-
-    else:
-        # Read all
-        all_positions = []
-        for chunk_coords in chunk_keys:
-            try:
-                groups = read_chunk_vertices(
-                    level_group, chunk_coords, dtype=dtype, ndim=ndim
-                )
-            except ArrayError:
-                continue
-            for vg in groups:
-                if len(vg) > 0:
-                    all_positions.append(vg)
-
-    if not all_positions:
-        return _empty_result(ndim)
-
-    positions_out = np.concatenate(all_positions, axis=0)
-
-    # Apply precise bbox filter (chunk-level is coarse)
-    if bbox is not None:
-        mask = np.all(
-            (positions_out >= bbox[0]) & (positions_out <= bbox[1]),
-            axis=1,
-        )
-        positions_out = positions_out[mask]
-
-    # Read attributes
-    attrs_out: dict[str, npt.NDArray] = {}
+    # Build the prefetch plan: VERTICES + VERTEX_GROUP_OFFSETS for every
+    # chunk we may touch, plus each requested attribute array.  Cache
+    # misses fall through to the sync ``read_bytes`` path so this is
+    # purely a perf optimisation — correctness is unaffected.
+    chunk_key_strs = [".".join(str(c) for c in cc) for cc in chunk_keys]
+    prefetch_plan: list[tuple[str, list[str]]] = [
+        (VERTICES, chunk_key_strs),
+        (VERTEX_GROUP_OFFSETS, chunk_key_strs),
+    ]
     if attribute_names:
         for attr_name in attribute_names:
-            attr_parts: list[npt.NDArray] = []
-            if chunk_vg_targets is not None:
-                # Bin-level bbox: read the same vertex groups as positions
-                for cc, vg_indices in chunk_vg_targets.items():
-                    if cc not in chunk_keys_set:
-                        continue
+            prefetch_plan.append((f"{VERTEX_ATTRIBUTES}/{attr_name}", chunk_key_strs))
+
+    with level_group.batched_reads(prefetch_plan):
+        if bbox is not None and has_bins:
+            # Bin-level targeting: only decode matching vertex groups
+            from zarr_vectors.spatial.chunking import (
+                bins_intersecting_bbox,
+                bin_to_chunk,
+                bin_to_vg_index,
+            )
+            target_bins = bins_intersecting_bbox(
+                np.asarray(bbox[0]), np.asarray(bbox[1]),
+                effective_bin,
+            )
+            # Group target bins by chunk
+            chunk_vg_targets = {}
+            for bc in target_bins:
+                cc = bin_to_chunk(bc, bins_per_chunk)
+                vgi = bin_to_vg_index(bc, cc, bins_per_chunk)
+                if cc not in chunk_vg_targets:
+                    chunk_vg_targets[cc] = []
+                chunk_vg_targets[cc].append(vgi)
+
+            # Only read from chunks that have data
+            chunk_keys_set = set(chunk_keys)
+            all_positions = []
+            for cc, vg_indices in chunk_vg_targets.items():
+                if cc not in chunk_keys_set:
+                    continue
+                for vgi in vg_indices:
                     try:
-                        attr_groups = read_chunk_attributes(
-                            level_group, attr_name, cc,
-                            dtype=np.float32, ncols=1,
+                        vg = read_vertex_group(
+                            level_group, cc, vgi, dtype=dtype, ndim=ndim,
                         )
-                        for vgi in vg_indices:
-                            if vgi < len(attr_groups) and len(attr_groups[vgi]) > 0:
-                                attr_parts.append(attr_groups[vgi])
+                        if len(vg) > 0:
+                            all_positions.append(vg)
                     except ArrayError:
                         continue
-            else:
-                for chunk_coords in chunk_keys:
-                    try:
-                        attr_groups = read_chunk_attributes(
-                            level_group, attr_name, chunk_coords,
-                            dtype=np.float32, ncols=1,
-                        )
-                        for ag in attr_groups:
-                            attr_parts.append(ag)
-                    except ArrayError:
-                        continue
-            if attr_parts:
-                attr_all = np.concatenate(attr_parts, axis=0)
-                if bbox is not None:
-                    attr_all = attr_all[mask]
-                attrs_out[attr_name] = attr_all
+
+        elif bbox is not None:
+            # Chunk-level targeting (old stores without bins)
+            target_chunks = set(chunks_intersecting_bbox(
+                np.asarray(bbox[0]), np.asarray(bbox[1]),
+                root_meta.chunk_shape,
+            ))
+            chunk_keys = [k for k in chunk_keys if k in target_chunks]
+
+            all_positions = []
+            for chunk_coords in chunk_keys:
+                try:
+                    groups = read_chunk_vertices(
+                        level_group, chunk_coords, dtype=dtype, ndim=ndim
+                    )
+                except ArrayError:
+                    continue
+                for vg in groups:
+                    if len(vg) > 0:
+                        all_positions.append(vg)
+
+        else:
+            # Read all
+            all_positions = []
+            for chunk_coords in chunk_keys:
+                try:
+                    groups = read_chunk_vertices(
+                        level_group, chunk_coords, dtype=dtype, ndim=ndim
+                    )
+                except ArrayError:
+                    continue
+                for vg in groups:
+                    if len(vg) > 0:
+                        all_positions.append(vg)
+
+        if not all_positions:
+            return _empty_result(ndim)
+
+        positions_out = np.concatenate(all_positions, axis=0)
+
+        # Apply precise bbox filter (chunk-level is coarse)
+        if bbox is not None:
+            mask = np.all(
+                (positions_out >= bbox[0]) & (positions_out <= bbox[1]),
+                axis=1,
+            )
+            positions_out = positions_out[mask]
+
+        # Read attributes
+        attrs_out: dict[str, npt.NDArray] = {}
+        if attribute_names:
+            for attr_name in attribute_names:
+                attr_parts: list[npt.NDArray] = []
+                if chunk_vg_targets is not None:
+                    # Bin-level bbox: read the same vertex groups as positions
+                    for cc, vg_indices in chunk_vg_targets.items():
+                        if cc not in chunk_keys_set:
+                            continue
+                        try:
+                            attr_groups = read_chunk_attributes(
+                                level_group, attr_name, cc,
+                                dtype=np.float32, ncols=1,
+                            )
+                            for vgi in vg_indices:
+                                if vgi < len(attr_groups) and len(attr_groups[vgi]) > 0:
+                                    attr_parts.append(attr_groups[vgi])
+                        except ArrayError:
+                            continue
+                else:
+                    for chunk_coords in chunk_keys:
+                        try:
+                            attr_groups = read_chunk_attributes(
+                                level_group, attr_name, chunk_coords,
+                                dtype=np.float32, ncols=1,
+                            )
+                            for ag in attr_groups:
+                                attr_parts.append(ag)
+                        except ArrayError:
+                            continue
+                if attr_parts:
+                    attr_all = np.concatenate(attr_parts, axis=0)
+                    if bbox is not None:
+                        attr_all = attr_all[mask]
+                    attrs_out[attr_name] = attr_all
 
     return {
         "positions": positions_out,
-        "attributes": attrs_out,
+        "vertex_attributes": attrs_out,
         "vertex_count": len(positions_out),
     }
 
@@ -702,6 +737,6 @@ def _empty_result(ndim: int) -> dict[str, Any]:
     """Return an empty result dict."""
     return {
         "positions": np.zeros((0, ndim), dtype=np.float32),
-        "attributes": {},
+        "vertex_attributes": {},
         "vertex_count": 0,
     }

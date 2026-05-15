@@ -14,7 +14,6 @@ from zarr_vectors.core.arrays import (
     create_groupings_attributes_array,
     create_link_attributes_array,
     create_links_array,
-    create_metanode_children_array,
     create_object_attributes_array,
     create_object_index_array,
     create_vertices_array,
@@ -27,7 +26,6 @@ from zarr_vectors.core.arrays import (
     read_cross_chunk_links,
     read_group_object_ids,
     read_groupings_attributes,
-    read_metanode_children,
     read_object_attributes,
     read_object_manifest,
     read_object_vertices,
@@ -39,7 +37,6 @@ from zarr_vectors.core.arrays import (
     write_cross_chunk_links,
     write_groupings,
     write_groupings_attributes,
-    write_metanode_children,
     write_object_attributes,
     write_object_index,
 )
@@ -487,43 +484,6 @@ class TestLinkAttributes:
         raw = lg.read_bytes("link_attributes/weight/0", key)
         arr = np.frombuffer(raw, dtype=np.float32)
         np.testing.assert_allclose(arr, [0.5, 0.8])
-
-
-# ===================================================================
-# Metanode children
-# ===================================================================
-
-class TestMetanodeChildren:
-
-    def test_basic(self, tmp_path: Path) -> None:
-        lg = _make_level_group(tmp_path)
-        create_metanode_children_array(lg)
-
-        children = {
-            0: [((0, 0, 0), 0), ((0, 0, 0), 1), ((0, 0, 0), 2)],
-            1: [((0, 0, 1), 0), ((0, 0, 1), 1)],
-            2: [((1, 0, 0), 0)],
-        }
-        write_metanode_children(lg, children, sid_ndim=3)
-
-        c0 = read_metanode_children(lg, metanode_id=0)
-        c1 = read_metanode_children(lg, metanode_id=1)
-        assert c0 == children[0]
-        assert c1 == children[1]
-
-        all_c = read_metanode_children(lg)
-        assert isinstance(all_c, dict)
-        assert all_c[2] == children[2]
-
-    def test_out_of_range(self, tmp_path: Path) -> None:
-        lg = _make_level_group(tmp_path)
-        create_metanode_children_array(lg)
-        write_metanode_children(lg, {0: [((0, 0, 0), 0)]}, sid_ndim=3)
-        try:
-            read_metanode_children(lg, metanode_id=99)
-            assert False
-        except ArrayError:
-            pass
 
 
 # ===================================================================

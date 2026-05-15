@@ -6,13 +6,15 @@ import numpy as np
 
 from zarr_vectors.encoding.ragged import (
     decode_object_index,
-    decode_paired_offsets,
+    decode_ragged_blob,
     decode_ragged_ints,
     decode_vertex_groups,
+    decode_vertex_offsets,
     encode_object_index,
-    encode_paired_offsets,
+    encode_ragged_blob,
     encode_ragged_ints,
     encode_vertex_groups,
+    encode_vertex_offsets,
 )
 from zarr_vectors.encoding.compression import (
     get_codec_pipeline,
@@ -207,44 +209,45 @@ class TestObjectIndexEncoding:
 
 
 # ---------------------------------------------------------------------------
-# Paired offsets round-trips
+# Vertex offsets round-trips (K×1 plain int64)
 # ---------------------------------------------------------------------------
 
-class TestPairedOffsets:
+class TestVertexOffsets:
 
     def test_basic(self) -> None:
         v_off = np.array([0, 36, 108], dtype=np.int64)
-        l_off = np.array([0, 24, 72], dtype=np.int64)
-        raw = encode_paired_offsets(v_off, l_off)
-        dec_v, dec_l = decode_paired_offsets(raw)
+        raw = encode_vertex_offsets(v_off)
+        dec_v = decode_vertex_offsets(raw)
         np.testing.assert_array_equal(dec_v, v_off)
-        np.testing.assert_array_equal(dec_l, l_off)
-
-    def test_no_links(self) -> None:
-        v_off = np.array([0, 36], dtype=np.int64)
-        l_off = np.array([-1, -1], dtype=np.int64)
-        raw = encode_paired_offsets(v_off, l_off)
-        dec_v, dec_l = decode_paired_offsets(raw)
-        np.testing.assert_array_equal(dec_v, v_off)
-        np.testing.assert_array_equal(dec_l, l_off)
 
     def test_empty(self) -> None:
-        v_off = np.array([], dtype=np.int64)
-        l_off = np.array([], dtype=np.int64)
-        raw = encode_paired_offsets(v_off, l_off)
-        dec_v, dec_l = decode_paired_offsets(raw)
-        assert len(dec_v) == 0
-        assert len(dec_l) == 0
+        raw = encode_vertex_offsets(np.array([], dtype=np.int64))
+        assert raw == b""
+        dec = decode_vertex_offsets(raw)
+        assert len(dec) == 0
 
-    def test_mismatched_lengths_raises(self) -> None:
-        try:
-            encode_paired_offsets(
-                np.array([0, 1], dtype=np.int64),
-                np.array([0], dtype=np.int64),
-            )
-            assert False, "Should have raised ArrayError"
-        except ArrayError:
-            pass
+
+# ---------------------------------------------------------------------------
+# Self-describing ragged blob (inline offset header) round-trips
+# ---------------------------------------------------------------------------
+
+class TestRaggedBlob:
+
+    def test_round_trip_ints(self) -> None:
+        groups = [
+            np.array([[0, 1], [1, 2], [2, 3]], dtype=np.int64),
+            np.array([[3, 4]], dtype=np.int64),
+        ]
+        blob = encode_ragged_blob(groups, np.dtype(np.int64))
+        decoded = decode_ragged_blob(blob, np.dtype(np.int64), ncols=2)
+        assert len(decoded) == 2
+        np.testing.assert_array_equal(decoded[0], groups[0])
+        np.testing.assert_array_equal(decoded[1], groups[1])
+
+    def test_empty(self) -> None:
+        blob = encode_ragged_blob([], np.dtype(np.int64))
+        decoded = decode_ragged_blob(blob, np.dtype(np.int64), ncols=2)
+        assert decoded == []
 
 
 # ---------------------------------------------------------------------------

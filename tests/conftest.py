@@ -48,14 +48,14 @@ def rng() -> np.random.Generator:
 def simple_points_3d(rng: np.random.Generator) -> dict:
     """100 random XYZ points in [0, 1000)³ with an intensity attribute.
 
-    Returns dict with keys: positions, attributes, chunk_shape.
+    Returns dict with keys: positions, vertex_attributes, chunk_shape.
     With chunk_shape=(500, 500, 500), points span ~8 chunks.
     """
     positions = rng.uniform(0, 1000, size=(100, 3)).astype(np.float32)
     intensity = rng.uniform(0, 1, size=(100,)).astype(np.float32)
     return {
         "positions": positions,
-        "attributes": {"intensity": intensity},
+        "vertex_attributes": {"intensity": intensity},
         "chunk_shape": (500.0, 500.0, 500.0),
     }
 

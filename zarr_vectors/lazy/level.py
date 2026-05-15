@@ -1,4 +1,4 @@
-"""ZVRLevel — lazy handle to a single resolution level."""
+"""ZVLevel — lazy handle to a single resolution level."""
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ from typing import Any
 from zarr_vectors.core.arrays import list_chunk_keys
 from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
 from zarr_vectors.core.store import FsGroup
-from zarr_vectors.lazy.arrays import ZVRAttributeCollection, ZVRVertexCollection, ZVRObjectIndex
+from zarr_vectors.lazy.arrays import ZVAttributeCollection, ZVVertexCollection, ZVObjectIndex
 from zarr_vectors.typing import ChunkCoords
 
 import numpy.typing as npt
 import numpy as np
 
 
-class ZVRLevel:
+class ZVLevel:
     """Lazy handle to one resolution level.
 
     Chunk listings are cached on first access.  Vertex and attribute
@@ -40,9 +40,9 @@ class ZVRLevel:
         self._root_meta = root_meta
         self._level_meta = level_meta
         self._chunk_keys_cache: list[ChunkCoords] | None = None
-        self._vertices_cache: ZVRVertexCollection | None = None
-        self._attributes_cache: dict[str, ZVRAttributeCollection] = {}
-        self._object_index_cache: ZVRObjectIndex | None = None
+        self._vertices_cache: ZVVertexCollection | None = None
+        self._attributes_cache: dict[str, ZVAttributeCollection] = {}
+        self._object_index_cache: ZVObjectIndex | None = None
 
     # ---------------------------------------------------------------
     # Metadata properties
@@ -226,10 +226,10 @@ class ZVRLevel:
     # ---------------------------------------------------------------
 
     @property
-    def vertices(self) -> ZVRVertexCollection:
+    def vertices(self) -> ZVVertexCollection:
         """Lazy vertex collection for this level."""
         if self._vertices_cache is None:
-            self._vertices_cache = ZVRVertexCollection(
+            self._vertices_cache = ZVVertexCollection(
                 level_group=self._group,
                 chunk_keys=self.chunk_keys,
                 ndim=self._root_meta.sid_ndim,
@@ -248,9 +248,9 @@ class ZVRLevel:
         """
         return _AttributeAccessor(self)
 
-    def _get_attribute(self, name: str) -> ZVRAttributeCollection:
+    def _get_attribute(self, name: str) -> ZVAttributeCollection:
         if name not in self._attributes_cache:
-            self._attributes_cache[name] = ZVRAttributeCollection(
+            self._attributes_cache[name] = ZVAttributeCollection(
                 level_group=self._group,
                 attr_name=name,
                 chunk_keys=self.chunk_keys,
@@ -258,10 +258,10 @@ class ZVRLevel:
         return self._attributes_cache[name]
 
     @property
-    def object_index(self) -> ZVRObjectIndex:
+    def object_index(self) -> ZVObjectIndex:
         """Lazy object index accessor."""
         if self._object_index_cache is None:
-            self._object_index_cache = ZVRObjectIndex(self._group)
+            self._object_index_cache = ZVObjectIndex(self._group)
         return self._object_index_cache
 
     # ---------------------------------------------------------------
@@ -274,7 +274,7 @@ class ZVRLevel:
         bbox: tuple[npt.NDArray, npt.NDArray] | None = None,
         object_ids: list[int] | None = None,
         group_ids: list[int] | None = None,
-    ) -> "ZVRView":
+    ) -> "ZVView":
         """Apply filter constraints, returning a lazy filtered view.
 
         Filters can be chained: ``level.filter(group_ids=[0]).filter(bbox=roi)``.
@@ -285,10 +285,10 @@ class ZVRLevel:
             group_ids: Keep only objects in these groups.
 
         Returns:
-            A :class:`ZVRView` with the specified constraints.
+            A :class:`ZVView` with the specified constraints.
         """
-        from zarr_vectors.lazy.views import ZVRView, FilterSpec
-        view = ZVRView(
+        from zarr_vectors.lazy.views import ZVView, FilterSpec
+        view = ZVView(
             self._group, self._root_meta, self._level_meta,
             self.chunk_keys, FilterSpec(),
         )
@@ -300,34 +300,34 @@ class ZVRLevel:
     # Mutation (write-back) handle
     # ---------------------------------------------------------------
 
-    def writer(self) -> "ZVRWriter":
-        """Return a :class:`ZVRWriter` for mutating this level.
+    def writer(self) -> "ZVWriter":
+        """Return a :class:`ZVWriter` for mutating this level.
 
         Use as an async or sync context manager::
 
-            async with zvr[0].writer() as w:
+            async with zv[0].writer() as w:
                 await w.add_attribute("normal", normals)
 
         Single-writer-only — concurrent writers on the same level can
         race on object_index sidecar batch numbering.
         """
-        from zarr_vectors.lazy.writer import ZVRWriter
-        return ZVRWriter(self)
+        from zarr_vectors.lazy.writer import ZVWriter
+        return ZVWriter(self)
 
     # ---------------------------------------------------------------
     # Geometry-specific collections
     # ---------------------------------------------------------------
 
     @property
-    def polylines(self) -> "ZVRPolylineCollection":
+    def polylines(self) -> "ZVPolylineCollection":
         """Lazy polyline collection for streamline/polyline geometry.
 
         Each polyline is accessible by object ID::
 
             level.polylines[42].compute()  # full streamline
         """
-        from zarr_vectors.lazy.views import ZVRPolylineCollection
-        return ZVRPolylineCollection(self._group, ndim=self._root_meta.sid_ndim)
+        from zarr_vectors.lazy.views import ZVPolylineCollection
+        return ZVPolylineCollection(self._group, ndim=self._root_meta.sid_ndim)
 
     def rechunk(
         self,
@@ -366,7 +366,7 @@ class ZVRLevel:
     def __repr__(self) -> str:
         bs = self.bin_shape or self._root_meta.effective_bin_shape
         return (
-            f"ZVRLevel({self._level_index}, "
+            f"ZVLevel({self._level_index}, "
             f"vertices={self.vertex_count}, "
             f"chunks={self.chunk_count}, "
             f"bin_shape={bs})"
@@ -376,10 +376,10 @@ class ZVRLevel:
 class _AttributeAccessor:
     """Dict-like proxy for lazy attribute access."""
 
-    def __init__(self, level: ZVRLevel) -> None:
+    def __init__(self, level: ZVLevel) -> None:
         self._level = level
 
-    def __getitem__(self, name: str) -> ZVRAttributeCollection:
+    def __getitem__(self, name: str) -> ZVAttributeCollection:
         return self._level._get_attribute(name)
 
     def __contains__(self, name: str) -> bool:

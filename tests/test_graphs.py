@@ -48,7 +48,7 @@ class TestSkeleton:
         pos = np.array([[50,50,50],[40,40,40],[60,60,60],[30,30,30],
                          [45,35,35],[65,65,65],[25,25,25]], dtype=np.float32)
         edges = np.array([[1,0],[2,0],[3,1],[4,1],[5,2],[6,3]], dtype=np.int64)
-        s = write_graph(str(tmp_path / "s.zv"), pos, edges, chunk_shape=(200.,200.,200.), is_tree=True)
+        s = write_graph(str(tmp_path / "s.zv"), pos, edges, chunk_shape=(200.,200.,200.), kind="skeleton")
         r = read_graph(str(tmp_path / "s.zv"))
         assert r["node_count"] == 7 and r["edge_count"] == 6
 
@@ -57,12 +57,12 @@ class TestSkeleton:
         edges = np.array([[1,0],[2,0]], dtype=np.int64)
         radius = np.array([5.0,3.0,3.0], dtype=np.float32)
         write_graph(str(tmp_path / "s.zv"), pos, edges, chunk_shape=(200.,200.,200.),
-                    is_tree=True, node_attributes={"radius": radius})
+                    kind="skeleton", vertex_attributes={"radius": radius})
 
     def test_cross_chunk(self, tmp_path: Path) -> None:
         pos = np.array([[10,50,50],[20,50,50],[30,50,50],[110,50,50],[120,50,50]], dtype=np.float32)
         edges = np.array([[1,0],[2,1],[3,2],[4,3]], dtype=np.int64)
-        s = write_graph(str(tmp_path / "s.zv"), pos, edges, chunk_shape=(100.,100.,100.), is_tree=True)
+        s = write_graph(str(tmp_path / "s.zv"), pos, edges, chunk_shape=(100.,100.,100.), kind="skeleton")
         assert s["cross_edge_count"] >= 1
         r = read_graph(str(tmp_path / "s.zv"))
         assert r["node_count"] == 5
@@ -72,7 +72,7 @@ class TestSkeleton:
         edges = np.array([[1,0],[2,1],[4,3]], dtype=np.int64)
         oids = np.array([0,0,0,1,1], dtype=np.int64)
         s = write_graph(str(tmp_path / "g.zv"), pos, edges, chunk_shape=(100.,100.,100.),
-                        is_tree=True, object_ids=oids)
+                        kind="skeleton", object_ids=oids)
         assert s["object_count"] == 2
 
 

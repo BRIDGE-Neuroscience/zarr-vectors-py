@@ -69,6 +69,16 @@ class ZVLevel:
         return None
 
     @property
+    def chunk_shape(self) -> tuple[float, ...]:
+        """Effective physical chunk shape for this level.
+
+        Returns the per-level override if set (v0.7+), else falls back
+        to ``RootMetadata.chunk_shape``.
+        """
+        from zarr_vectors.core.metadata import get_level_chunk_shape
+        return get_level_chunk_shape(self._root_meta, self._level_meta)
+
+    @property
     def bin_ratio(self) -> tuple[int, ...] | None:
         if self._level_meta is not None:
             return self._level_meta.bin_ratio

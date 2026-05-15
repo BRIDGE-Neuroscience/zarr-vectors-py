@@ -55,7 +55,11 @@ from zarr_vectors.core.attr_chunking import (
     compute_chunk_dim_names,
 )
 from zarr_vectors.constants import DEFAULT_OOB_POLICY
-from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
+from zarr_vectors.core.metadata import (
+    LevelMetadata,
+    RootMetadata,
+    get_level_chunk_shape,
+)
 from zarr_vectors.core.store import (
     _apply_out_of_bounds_policy,
     _create_or_open_store,
@@ -371,6 +375,13 @@ def read_mesh(
     level_group = get_resolution_level(root, level)
     ndim = root_meta.sid_ndim
 
+    # Per-level chunk_shape may override root (v0.7+).
+    try:
+        level_meta = read_level_metadata(root, level)
+    except Exception:
+        level_meta = None
+    level_chunk_shape = get_level_chunk_shape(root_meta, level_meta)
+
     dtype = np.float32
     try:
         vmeta = level_group.read_array_meta(VERTICES)
@@ -388,7 +399,7 @@ def read_mesh(
     # Determine chunks to read (intersection of physical keys, bbox-implied
     # set, and explicit chunks whitelist).
     chunk_keys = resolve_chunk_keys(
-        level_group, root_meta.chunk_shape, bbox=bbox, chunks=chunks,
+        level_group, level_chunk_shape, bbox=bbox, chunks=chunks,
     )
 
     if attribute_filter:

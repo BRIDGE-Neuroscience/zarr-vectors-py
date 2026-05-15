@@ -60,7 +60,11 @@ from zarr_vectors.core.attr_chunking import (
     compute_chunk_dim_names,
 )
 from zarr_vectors.constants import DEFAULT_OOB_POLICY
-from zarr_vectors.core.metadata import LevelMetadata, RootMetadata
+from zarr_vectors.core.metadata import (
+    LevelMetadata,
+    RootMetadata,
+    get_level_chunk_shape,
+)
 from zarr_vectors.core.store import (
     FsGroup,
     _apply_out_of_bounds_policy,
@@ -459,6 +463,13 @@ def read_points(
     ndim = root_meta.sid_ndim
     dtype = np.float32  # default; could read from array meta
 
+    # Per-level chunk_shape may override root (v0.7+).
+    try:
+        level_meta = read_level_metadata(root, level)
+    except Exception:
+        level_meta = None
+    level_chunk_shape = get_level_chunk_shape(root_meta, level_meta)
+
     # Read vertex dtype from metadata if available
     try:
         vmeta = level_group.read_array_meta(VERTICES)
@@ -482,7 +493,7 @@ def read_points(
     if chunks is not None:
         chunk_set = set(
             resolve_chunk_keys(
-                level_group, root_meta.chunk_shape,
+                level_group, level_chunk_shape,
                 bbox=bbox, chunks=chunks,
             )
         )
@@ -646,7 +657,7 @@ def read_points(
             # Chunk-level targeting (old stores without bins)
             target_chunks = set(chunks_intersecting_bbox(
                 np.asarray(bbox[0]), np.asarray(bbox[1]),
-                root_meta.chunk_shape,
+                level_chunk_shape,
             ))
             chunk_keys = [k for k in chunk_keys if k in target_chunks]
 

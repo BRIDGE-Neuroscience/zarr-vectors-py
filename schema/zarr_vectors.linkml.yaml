@@ -229,6 +229,7 @@ classes:
       - arrays_present
       - bin_shape
       - bin_ratio
+      - chunk_shape
       - object_sparsity
       - coarsening_method
       - parent_level
@@ -238,6 +239,14 @@ classes:
       - preserves_object_ids
       - inherited_num_objects
       - shared_fragments
+    slot_usage:
+      chunk_shape:
+        required: false
+        description: >
+          Per-level physical chunk size override.  When omitted, the
+          level inherits ``RootMetadata.chunk_shape``.  When present,
+          each axis must be a positive integer multiple of the root
+          chunk_shape (nested chunk grids).
 
   # ----- per-array .zattrs shapes (zv_array discriminator) --------------
 

@@ -9,8 +9,20 @@ everywhere in the package.
 # Format version
 # ---------------------------------------------------------------------------
 
-FORMAT_VERSION: str = "0.6.0"
+FORMAT_VERSION: str = "0.7.0"
 """Current ZV specification version.
+
+0.7.0: per-level ``chunk_shape``.  ``RootMetadata.chunk_shape`` remains
+the level-0 default; ``LevelMetadata`` gains an optional
+``chunk_shape`` field that, when set, overrides root for that level.
+Required invariant: per-level ``chunk_shape`` must be a positive
+integer multiple of the root ``chunk_shape`` along every axis (nested
+chunk grids).  This lets coarser pyramid levels use larger chunks the
+way OME-Zarr image pyramids grow physical chunk extent via voxel-size
+scaling.  Cross-level link arrays keep the single-chunk-key
+convention; the differing level's chunk coord is computed by integer
+division using the per-level chunk_shape ratio.  Hard break: 0.6.x
+stores are not readable; rewrite from source.
 
 0.6.0: fragment-index schema.  Replaces ``vertex_group_offsets`` with
 ``vertex_fragments`` and splits the v0.5 inline-header link blob into

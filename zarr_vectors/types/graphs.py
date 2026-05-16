@@ -121,6 +121,7 @@ def write_graph(
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
     out_of_bounds: str = DEFAULT_OOB_POLICY,
+    compressor: Any = None,
     # Deprecated aliases (will be removed):
     is_tree: bool | None = None,
     node_attributes: dict[str, npt.NDArray] | None = None,
@@ -369,7 +370,7 @@ def write_graph(
 
     # Collapse all per-array zarr.json + per-chunk byte writes into one
     # asyncio.gather (mirrors points.py:300).
-    with level_group.batched_writes():
+    with level_group.batched_writes(compressor=compressor):
         create_vertices_array(level_group, dtype=dtype)
         create_links_array(level_group, link_width=link_width, delta=0)
         create_object_index_array(level_group)

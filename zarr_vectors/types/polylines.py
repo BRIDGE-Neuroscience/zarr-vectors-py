@@ -114,6 +114,7 @@ def write_polylines(
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
     out_of_bounds: str = DEFAULT_OOB_POLICY,
+    compressor: Any = None,
 ) -> dict[str, Any]:
     """Write polylines/streamlines to a new zarr vectors store.
 
@@ -315,7 +316,7 @@ def write_polylines(
     idx_ndim = ndim + 1 if per_poly_attr_bins is not None else ndim
     # Collapse all per-array zarr.json + per-chunk byte writes into one
     # asyncio.gather (mirrors points.py:300).
-    with level_group.batched_writes():
+    with level_group.batched_writes(compressor=compressor):
         create_vertices_array(level_group, dtype=dtype)
         create_object_index_array(level_group)
         create_cross_chunk_links_array(level_group, delta=0)

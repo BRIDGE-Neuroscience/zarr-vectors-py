@@ -112,6 +112,7 @@ def write_points(
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
     out_of_bounds: str = DEFAULT_OOB_POLICY,
+    compressor: Any = None,
     # Deprecated alias for ``vertex_attributes``; will be removed.
     attributes: dict[str, npt.NDArray] | None = None,
 ) -> dict[str, Any]:
@@ -297,7 +298,7 @@ def write_points(
     # stores.  ``create_*_array`` calls only queue metadata while
     # batching is active.  See
     # :meth:`zarr_vectors.core.group.Group.batched_writes`.
-    with level_group.batched_writes():
+    with level_group.batched_writes(compressor=compressor):
         create_vertices_array(level_group, dtype=dtype)
 
         if attributes:

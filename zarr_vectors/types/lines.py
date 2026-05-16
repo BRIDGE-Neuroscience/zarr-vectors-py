@@ -93,6 +93,7 @@ def write_lines(
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
     out_of_bounds: str = DEFAULT_OOB_POLICY,
+    compressor: Any = None,
     # Deprecated aliases (will be removed):
     attributes: dict[str, npt.NDArray] | None = None,
     line_attributes: dict[str, npt.NDArray] | None = None,
@@ -299,7 +300,7 @@ def write_lines(
     # Collapse all per-array zarr.json PUTs + per-chunk byte writes into
     # one asyncio.gather (mirrors points.py:300).  Smaller win on local
     # FS, large win against object stores.
-    with level_group.batched_writes():
+    with level_group.batched_writes(compressor=compressor):
         create_vertices_array(level_group, dtype=dtype)
         create_object_index_array(level_group)
         create_cross_chunk_links_array(level_group, delta=0)

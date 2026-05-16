@@ -929,12 +929,13 @@ CHUNK_SHAPE_CELLS: list[tuple[str, str]] = [
 
 Fixed `N = 500_000` point cloud uniformly distributed in `[0, 1000)³`.
 Sweep `chunk_shape` ∈ `{50, 100, 200, 400, 800}` (uniform 3-tuples) and
-measure write, full read, **bbox read** (1% of volume), disk size, and
-chunk count.  `bin_shape = chunk_shape / 4` for every run.
+measure write time, full read, **single-vertex read** (one chunk via the
+lazy API), disk size, and chunk count.  `bin_shape = chunk_shape / 4`
+for every run.
 
-The bbox panel is the headline.  Expect a U-shape: tiny chunks pay
-per-file metadata overhead, huge chunks waste I/O on data the bbox
-didn't ask for.
+The single-vertex read is the headline.  Small chunks pay per-file
+metadata overhead per access; large chunks return a lot more data than
+the single vertex needed.  Expect a U-shape.
 """),
     ("code", SHARED_HELPERS + "\n\n" + STATS_HELPERS),
     ("md", "## 1 · Setup"),
@@ -945,7 +946,6 @@ from zarr_vectors.lazy import open_zv
 N           = 500_000
 CHUNK_SIZES = [50, 100, 200, 400, 800]
 DOMAIN      = 1000.0
-BBOX_V      = 0.01           # 1% volume read-bbox per run
 SEED        = 0
 """),
     ("md", "## 2 · Run the sweep"),
@@ -953,7 +953,7 @@ SEED        = 0
 rng = np.random.default_rng(SEED)
 positions = rng.uniform(0, DOMAIN, (N, 3)).astype(np.float32)
 
-metrics = ['write_s', 'read_all_s', 'read_bbox_s']
+metrics = ['write_s', 'read_all_s', 'read_one_s']
 raw = {m: np.zeros((len(CHUNK_SIZES), N_RUNS)) for m in metrics}
 sizes_MB    = np.zeros(len(CHUNK_SIZES))
 chunk_count = np.zeros(len(CHUNK_SIZES))
@@ -961,7 +961,6 @@ chunk_count = np.zeros(len(CHUNK_SIZES))
 for i, cs in enumerate(CHUNK_SIZES):
     chunk_shape = (float(cs),) * 3
     bin_shape   = (cs / 4.0,) * 3
-    edge = DOMAIN * (BBOX_V ** (1 / 3))
 
     for run in range(N_RUNS):
         store = _new_store(f'cs_{cs}_run{run}')
@@ -972,18 +971,22 @@ for i, cs in enumerate(CHUNK_SIZES):
         )
         t_r, _ = _time(read_points, store)
 
-        lo = rng.uniform(0, DOMAIN - edge, 3).astype(np.float32)
-        hi = (lo + edge).astype(np.float32)
-        zv = open_zv(store)
-        t_b, _ = _time(lambda: zv[0].filter(bbox=(lo, hi)).compute())
+        # Single-vertex (= one chunk via lazy API) read, like
+        # benchmarks/01_size_scaling.ipynb.  Open + chunk listing +
+        # one chunk decode.
+        def _read_one():
+            zv = open_zv(store)
+            keys = zv[0].vertices._chunk_keys  # noqa: SLF001
+            return zv[0].vertices[keys[0]].compute() if keys else None
+        t_o, _ = _time(_read_one)
 
-        raw['write_s'][i, run]     = t_w
-        raw['read_all_s'][i, run]  = t_r
-        raw['read_bbox_s'][i, run] = t_b
+        raw['write_s'][i, run]    = t_w
+        raw['read_all_s'][i, run] = t_r
+        raw['read_one_s'][i, run] = t_o
 
         if run == 0:
             sizes_MB[i]    = _store_bytes(store) / 1e6
-            chunk_count[i] = len(zv[0].chunk_keys)
+            chunk_count[i] = len(open_zv(store)[0].chunk_keys)
 
         shutil.rmtree(Path(store).parent, ignore_errors=True)
 
@@ -1002,26 +1005,38 @@ df = pd.DataFrame(rows)
     ("code", "df"),
     ("md", "## 4 · Plot"),
     ("code", """\
-fig, axes = plt.subplots(2, 2, figsize=(11, 7))
+fig, axes = plt.subplots(1, 3, figsize=(14, 4))
 
-def _line(ax, key, ylabel, title, color):
+def _ci_line(ax, key, color, label=None, linestyle='-'):
     mean = df[f'{key}_mean'].values
     hw   = df[f'{key}_hw'].values
     ax.fill_between(df['chunk_shape'], mean - hw, mean + hw,
                     color=color, alpha=0.2)
-    ax.loglog(df['chunk_shape'], mean, 'o-', color=color)
-    ax.set_xlabel('chunk_shape (per axis)')
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.grid(True, which='both', alpha=0.3)
+    ax.loglog(df['chunk_shape'], mean, marker='o', color=color,
+              linestyle=linestyle, label=label)
 
-_line(axes[0, 0], 'write_s',     's', 'Write time',       'C0')
-_line(axes[0, 1], 'read_all_s',  's', 'Read all',         'C1')
-_line(axes[1, 0], 'read_bbox_s', 's', f'Read bbox (V={BBOX_V*100}%)', 'C2')
+# Panel 1 — write time.
+ax = axes[0]
+_ci_line(ax, 'write_s', 'C0')
+ax.set_xlabel('chunk_shape (per axis)')
+ax.set_ylabel('s')
+ax.set_title('Write time')
+ax.grid(True, which='both', alpha=0.3)
 
-# Disk size + chunk count on the same axis.
-ax = axes[1, 1]
-ax.loglog(df['chunk_shape'], df['size_MB'], 'o-', color='C3', label='disk MB')
+# Panel 2 — read all (solid) + read one vertex (dashed) on the same axes.
+ax = axes[1]
+_ci_line(ax, 'read_all_s', 'C1', label='read all',     linestyle='-')
+_ci_line(ax, 'read_one_s', 'C2', label='read one vertex', linestyle='--')
+ax.set_xlabel('chunk_shape (per axis)')
+ax.set_ylabel('s')
+ax.set_title('Read time')
+ax.grid(True, which='both', alpha=0.3)
+ax.legend(loc='best')
+
+# Panel 3 — disk MB + chunk count on twin axes.
+ax = axes[2]
+ax.loglog(df['chunk_shape'], df['size_MB'], 'o-', color='C3',
+          label='disk MB')
 ax.set_xlabel('chunk_shape (per axis)')
 ax.set_ylabel('MB')
 ax.grid(True, which='both', alpha=0.3)
@@ -1029,9 +1044,9 @@ ax_r = ax.twinx()
 ax_r.loglog(df['chunk_shape'], df['chunk_count'], 's--', color='C4',
             label='chunk count')
 ax_r.set_ylabel('chunk count')
-ax.set_title('Disk MB and chunk count')
-ax.legend(loc='upper left')
-ax_r.legend(loc='lower right')
+ax.set_title('Disk size and chunk count')
+ax.legend(loc='upper right')
+ax_r.legend(loc='lower left')
 
 fig.suptitle(
     f'Chunk-shape sensitivity — point cloud (N = {N:,}, '
@@ -1048,16 +1063,18 @@ plt.tight_layout()
 
 COMPRESSION_CELLS: list[tuple[str, str]] = [
     ("md", """\
-# Compression / codec impact
+# Compression / codec impact across vertex count
 
-Fixed `N = 1_000_000` point cloud.  Sweep the `compressor=` kwarg
-(added in the production refactor) across five values and measure
-write time, read time, and disk MB.
+Sweep the `compressor=` kwarg across five codec configurations *and*
+vertex count `N`, plotted as lines on log-log axes with 95% confidence
+bands.  The library default is **no compression** (`BytesCodec` only)
+for the fastest cloud-write path; this benchmark surfaces what each
+compressed alternative buys you for what cost, as a function of scale.
 
 | Label | `compressor=` value |
 |-------|--------------------|
-| `none` | `'none'` — uncompressed chunks |
-| `zstd` (default) | `None` — zarr v3's default |
+| `none` (default) | `None` — uncompressed chunks, fast async PUT path |
+| `zstd` | `'zstd'` — zarr v3's default compressor (Zstd l0) |
 | `blosc_l1` | `[{...}]` Blosc + Zstd level 1, no shuffle |
 | `blosc_l5` | `[{...}]` Blosc + Zstd level 5, no shuffle |
 | `blosc_l5_bitshuffle` | `'blosc'` — Blosc + Zstd level 5 + BitShuffle |
@@ -1072,14 +1089,14 @@ for the kwarg semantics.
     ("code", """\
 from zarr_vectors.types.points import write_points, read_points
 
-N      = 1_000_000
-CHUNK  = (200.0, 200.0, 200.0)
-BIN    = (50.0,  50.0,  50.0)
-SEED   = 0
+SIZES = [10_000, 100_000, 1_000_000]
+CHUNK = (200.0, 200.0, 200.0)
+BIN   = (50.0,  50.0,  50.0)
+SEED  = 0
 
 CONFIGS = [
-    ('none',                'none'),
-    ('zstd',                None),
+    ('none',                None),
+    ('zstd',                'zstd'),
     ('blosc_l1',            [{'name': 'blosc', 'configuration': {
                                 'cname': 'zstd', 'clevel': 1,
                                 'shuffle': 'noshuffle',
@@ -1094,75 +1111,114 @@ CONFIGS = [
     ("md", "## 2 · Run the sweep"),
     ("code", """\
 rng = np.random.default_rng(SEED)
-positions = rng.uniform(0, 1000, (N, 3)).astype(np.float32)
 
+# raw[metric][config_label] is shape (len(SIZES), N_RUNS).
 metrics = ['write_s', 'read_all_s']
-raw = {m: np.zeros((len(CONFIGS), N_RUNS)) for m in metrics}
-disk_MB = np.zeros(len(CONFIGS))
+raw = {
+    m: {label: np.zeros((len(SIZES), N_RUNS)) for label, _ in CONFIGS}
+    for m in metrics
+}
+disk_MB = {label: np.zeros(len(SIZES)) for label, _ in CONFIGS}
 
-for i, (label, compressor) in enumerate(CONFIGS):
-    for run in range(N_RUNS):
-        store = _new_store(f'codec_{label}_run{run}')
-        t_w, _ = _time(
-            write_points, store, positions,
-            chunk_shape=CHUNK, bin_shape=BIN, compressor=compressor,
-        )
-        t_r, _ = _time(read_points, store)
-        raw['write_s'][i, run]    = t_w
-        raw['read_all_s'][i, run] = t_r
-        if run == 0:
-            disk_MB[i] = _store_bytes(store) / 1e6
-        shutil.rmtree(Path(store).parent, ignore_errors=True)
+for i, n in enumerate(SIZES):
+    positions = rng.uniform(0, 1000, (n, 3)).astype(np.float32)
+    for label, compressor in CONFIGS:
+        for run in range(N_RUNS):
+            store = _new_store(f'codec_{label}_n{n}_run{run}')
+            t_w, _ = _time(
+                write_points, store, positions,
+                chunk_shape=CHUNK, bin_shape=BIN, compressor=compressor,
+            )
+            t_r, _ = _time(read_points, store)
+            raw['write_s'][label][i, run]    = t_w
+            raw['read_all_s'][label][i, run] = t_r
+            if run == 0:
+                disk_MB[label][i] = _store_bytes(store) / 1e6
+            shutil.rmtree(Path(store).parent, ignore_errors=True)
 
+# Tidy long-form df: one row per (N, config) holding fold change vs the
+# ``none`` (uncompressed) baseline at the same N.  Time-metric folds are
+# computed per-run paired (same run index for both numerator and
+# denominator), then summarised as mean + 95% CI; disk fold is a single
+# deterministic measurement per (N, config).
 rows = []
-for i, (label, _) in enumerate(CONFIGS):
-    row = {'config': label, 'disk_MB': round(disk_MB[i], 2)}
-    for m in metrics:
-        mean, hw = _mean_ci95(raw[m][i])
-        row[f'{m}_mean'] = round(mean, 4)
-        row[f'{m}_hw']   = round(hw,   4)
-    rows.append(row)
+for i, n in enumerate(SIZES):
+    for label, _ in CONFIGS:
+        row = {'N': n, 'config': label}
+        for m in metrics:
+            # Pairwise ratio across runs: shape (N_RUNS,).
+            ratio = raw[m][label][i] / raw[m]['none'][i]
+            mean, hw = _mean_ci95(ratio)
+            row[f'{m}_fold_mean'] = round(mean, 4)
+            row[f'{m}_fold_hw']   = round(hw,   4)
+        row['disk_fold'] = round(disk_MB[label][i] / disk_MB['none'][i], 4)
+        rows.append(row)
 df = pd.DataFrame(rows)
 """),
     ("md", "## 3 · Results"),
     ("code", "df"),
     ("md", "## 4 · Plot"),
     ("code", """\
-fig, axes = plt.subplots(1, 3, figsize=(13, 4))
-x = np.arange(len(df))
-ROT = 20
+fig, axes = plt.subplots(1, 3, figsize=(14, 4))
 
-# Panel 1: write time.
-ax = axes[0]
-ax.bar(x, df['write_s_mean'], yerr=df['write_s_hw'],
-       capsize=3, color='C0')
-ax.set_xticks(x); ax.set_xticklabels(df['config'], rotation=ROT, ha='right')
-ax.set_ylabel('s')
-ax.set_title('Write time')
-ax.grid(True, axis='y', alpha=0.3)
+PANELS = [
+    ('Write time fold change',  'write_s_fold'),
+    ('Read time fold change',   'read_all_s_fold'),
+]
+COLORS = {
+    'none':                '0.5',          # gray reference line at 1.0
+    'zstd':                'C1',
+    'blosc_l1':            'C2',
+    'blosc_l5':            'C3',
+    'blosc_l5_bitshuffle': 'C4',
+}
 
-# Panel 2: read all time.
-ax = axes[1]
-ax.bar(x, df['read_all_s_mean'], yerr=df['read_all_s_hw'],
-       capsize=3, color='C1')
-ax.set_xticks(x); ax.set_xticklabels(df['config'], rotation=ROT, ha='right')
-ax.set_ylabel('s')
-ax.set_title('Read all')
-ax.grid(True, axis='y', alpha=0.3)
+def _plot_fold(ax, key_prefix, title, with_ci):
+    \"\"\"Plot fold-change lines per config on log-log axes.
 
-# Panel 3: disk MB.
-ax = axes[2]
-ax.bar(x, df['disk_MB'], color='C3')
-ax.set_xticks(x); ax.set_xticklabels(df['config'], rotation=ROT, ha='right')
-ax.set_ylabel('MB')
-ax.set_title('Disk size')
-ax.grid(True, axis='y', alpha=0.3)
+    ``key_prefix`` is ``'write_s_fold'``, ``'read_all_s_fold'``, or
+    ``'disk'``.  When ``with_ci``, draws a shaded 95% CI band around
+    each mean line (only valid for time metrics that are sampled
+    per-run).
+    \"\"\"
+    for label, _ in CONFIGS:
+        sub = df[df['config'] == label].sort_values('N')
+        if label == 'none':
+            # Self-ratio is exactly 1 by construction; draw a faint
+            # horizontal reference at y=1 instead of a redundant data
+            # series.
+            continue
+        if with_ci:
+            mean = sub[f'{key_prefix}_mean'].values
+            hw   = sub[f'{key_prefix}_hw'].values
+            ax.fill_between(
+                sub['N'], mean - hw, mean + hw,
+                color=COLORS[label], alpha=0.2,
+            )
+        else:
+            mean = sub[key_prefix].values
+        ax.loglog(
+            sub['N'], mean, 'o-',
+            color=COLORS[label], label=label,
+        )
+    ax.axhline(1.0, color=COLORS['none'], linestyle='--',
+               linewidth=1, label='none (1.0×)')
+    ax.set_xlabel('N (vertices)')
+    ax.set_ylabel('fold change vs none')
+    ax.set_title(title)
+    ax.grid(True, which='both', alpha=0.3)
 
-ratio = df.loc[df['config'] == 'none', 'disk_MB'].iloc[0] / \\
-        df.loc[df['config'] == 'blosc_l5_bitshuffle', 'disk_MB'].iloc[0]
+# Time panels — fold change with per-run paired CI.
+for ax, (title, key) in zip(axes[:2], PANELS):
+    _plot_fold(ax, key, title, with_ci=True)
+
+# Disk panel — deterministic single measurement; no CI.
+_plot_fold(axes[2], 'disk_fold', 'Disk size fold change', with_ci=False)
+
+axes[0].legend(loc='best', fontsize=8)
 fig.suptitle(
-    f'Compression impact — point cloud (N = {N:,}, '
-    f'{N_RUNS} runs, 95% CI) — blosc bitshuffle gives {ratio:.1f}× smaller disk',
+    f'Compression impact — fold change vs uncompressed default '
+    f'({N_RUNS} runs, 95% CI on time metrics)',
 )
 plt.tight_layout()
 """),

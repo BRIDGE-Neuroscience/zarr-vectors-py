@@ -70,8 +70,11 @@ def resolve_compressor(
 
     Args:
         value: One of:
-            - ``None`` — use zarr v3's default (``bytes`` + ``zstd``).
-            - ``"none"`` or ``False`` — no compression (``bytes`` only).
+            - ``None`` *(default)*, ``"none"``, or ``False`` — no
+              compression (``bytes`` only).  Keeps the fast async PUT
+              path active.
+            - ``"zstd"`` — zarr v3's default compressor (``bytes`` +
+              ``zstd``, level 0).  Forces the sync codec-encoding path.
             - ``"blosc"`` — Blosc(Zstd, BitShuffle, l5) shorthand
               matching ``codec_pipeline.md``.
             - ``list[dict]`` — explicit codec specs; the BytesCodec
@@ -85,10 +88,10 @@ def resolve_compressor(
     Raises:
         ValueError: For any other value shape.
     """
-    if value is None:
-        return [dict(_BYTES_SERIALIZER), dict(ZARR_V3_DEFAULT_ZSTD_CODEC)]
-    if value is False or value == "none":
+    if value is None or value is False or value == "none":
         return [dict(_BYTES_SERIALIZER)]
+    if value == "zstd":
+        return [dict(_BYTES_SERIALIZER), dict(ZARR_V3_DEFAULT_ZSTD_CODEC)]
     if value == "blosc":
         return [dict(_BYTES_SERIALIZER), dict(_BLOSC_BITSHUFFLE_L5_CODEC)]
     if isinstance(value, list):
@@ -100,7 +103,8 @@ def resolve_compressor(
             return [dict(c) for c in value]
         return [dict(_BYTES_SERIALIZER), *(dict(c) for c in value)]
     raise ValueError(
-        f"compressor must be None, 'none'/False, 'blosc', or list[dict]; got {value!r}"
+        f"compressor must be None, 'none'/False, 'zstd', 'blosc', or list[dict]; "
+        f"got {value!r}"
     )
 
 

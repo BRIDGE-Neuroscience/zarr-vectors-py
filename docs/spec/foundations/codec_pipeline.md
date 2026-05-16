@@ -103,18 +103,20 @@ write_points(
 `zarr-vectors-py` writes every chunk array with the **same codec
 pipeline**, set per-write via the `compressor=` kwarg on the public
 write functions (`write_points`, `write_graph`, `write_polylines`,
-`write_lines`, `write_mesh`). The default is **zarr v3's default
-compressor**: `BytesCodec` serializer + `ZstdCodec` (level 0,
-no checksum), matching what zarr 3.x's
-`default_compressors_v3` returns for any numeric array.
+`write_lines`, `write_mesh`). The **default is `BytesCodec`-only — no
+compression**. This keeps the fast async PUT path active, which is
+the original cloud-write design point of the batched writer
+(compression CPU is typically 10×+ smaller than cloud PUT latency, so
+the wins are negligible against object stores). Opt into compression
+explicitly when disk size matters more than throughput.
 
 Accepted `compressor=` values:
 
 | Value | Resulting `codecs` list |
 |-------|-------------------------|
-| `None` *(default)* | `[{"name": "bytes"}, {"name": "zstd", "configuration": {"level": 0, "checksum": false}}]` — zarr v3 default. |
-| `"none"` or `False` | `[{"name": "bytes"}]` — uncompressed; useful for high-latency object stores where compression CPU dominates. |
-| `"blosc"` | Blosc(Zstd, BitShuffle, l5) — historically what this spec recommended for `vertices/`. |
+| `None` *(default)*, `"none"`, or `False` | `[{"name": "bytes"}]` — uncompressed; fast async PUT path. |
+| `"zstd"` | `[{"name": "bytes"}, {"name": "zstd", "configuration": {"level": 0, "checksum": false}}]` — zarr v3's own default compressor.  Triggers the sync codec-encoding path. |
+| `"blosc"` | Blosc(Zstd, BitShuffle, l5) — what this spec historically recommended for `vertices/`.  Best ratio for float32 positions. |
 | `list[dict]` | Caller-supplied Zarr V3 codec specs, passed through verbatim. |
 
 Per-array-type codec selection (different codecs for `vertices/`

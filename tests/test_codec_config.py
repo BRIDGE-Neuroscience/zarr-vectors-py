@@ -3,8 +3,9 @@
 Covers each `compressor` shape accepted by
 :func:`zarr_vectors.encoding.compression.resolve_compressor`:
 
-* ``None`` — zarr v3's default (``bytes`` + ``zstd``).
-* ``"none"`` / ``False`` — uncompressed (``bytes`` only).
+* ``None`` / ``"none"`` / ``False`` — no compression (``bytes`` only).
+  This is the default; keeps the fast async PUT path.
+* ``"zstd"`` — zarr v3's default compressor (``bytes`` + ``zstd``).
 * ``"blosc"`` — Blosc(Zstd, BitShuffle, l5) shorthand.
 * Caller-supplied codec list.
 
@@ -59,15 +60,20 @@ def positions() -> np.ndarray:
     return rng.uniform(0, 1000, (5_000, 3)).astype(np.float32)
 
 
-def test_resolve_compressor_default_is_zarr_v3_default() -> None:
-    """``compressor=None`` resolves to zarr v3's default codec pipeline."""
-    codecs = resolve_compressor(None)
-    assert codecs == [{"name": "bytes"}, dict(ZARR_V3_DEFAULT_ZSTD_CODEC)]
+def test_resolve_compressor_default_is_bytes_only() -> None:
+    """``compressor=None`` resolves to BytesCodec-only (no compression).
 
-
-def test_resolve_compressor_none_string_disables_compression() -> None:
+    The default is the fast async PUT path; compression is opt-in.
+    """
+    assert resolve_compressor(None) == [{"name": "bytes"}]
     assert resolve_compressor("none") == [{"name": "bytes"}]
     assert resolve_compressor(False) == [{"name": "bytes"}]
+
+
+def test_resolve_compressor_zstd_shorthand() -> None:
+    """``compressor='zstd'`` resolves to zarr v3's default compressor."""
+    codecs = resolve_compressor("zstd")
+    assert codecs == [{"name": "bytes"}, dict(ZARR_V3_DEFAULT_ZSTD_CODEC)]
 
 
 def test_resolve_compressor_blosc_shorthand() -> None:
@@ -96,14 +102,14 @@ def test_resolve_compressor_rejects_invalid_values() -> None:
         resolve_compressor([{"missing_name_key": True}])
 
 
-def test_write_points_default_uses_zstd(positions: np.ndarray) -> None:
-    """Default ``compressor=None`` writes Zstd-compressed chunks."""
+def test_write_points_default_is_uncompressed(positions: np.ndarray) -> None:
+    """Default ``compressor=None`` writes BytesCodec-only chunks (no
+    compression).  Keeps the fast async PUT path active.
+    """
     store = _new_store("default")
     write_points(store, positions, chunk_shape=CHUNK, bin_shape=BIN)
     codecs = _read_first_chunk_codecs(store)
-    assert codecs[0]["name"] == "bytes"
-    assert codecs[1]["name"] == "zstd"
-    # Round-trip.
+    assert codecs == [{"name": "bytes"}]
     out = read_points(store)
     assert np.allclose(
         _sorted_positions(positions),
@@ -111,13 +117,15 @@ def test_write_points_default_uses_zstd(positions: np.ndarray) -> None:
     )
 
 
-def test_write_points_none_string_is_uncompressed(positions: np.ndarray) -> None:
-    store = _new_store("none_str")
+def test_write_points_zstd_round_trips(positions: np.ndarray) -> None:
+    """``compressor='zstd'`` writes Zstd-compressed chunks and round-trips."""
+    store = _new_store("zstd")
     write_points(
-        store, positions, chunk_shape=CHUNK, bin_shape=BIN, compressor="none",
+        store, positions, chunk_shape=CHUNK, bin_shape=BIN, compressor="zstd",
     )
     codecs = _read_first_chunk_codecs(store)
-    assert codecs == [{"name": "bytes"}]
+    assert codecs[0]["name"] == "bytes"
+    assert codecs[1]["name"] == "zstd"
     out = read_points(store)
     assert np.allclose(
         _sorted_positions(positions),
@@ -163,20 +171,20 @@ def test_write_points_custom_list_passes_through(positions: np.ndarray) -> None:
 
 
 def test_compression_reduces_disk_size(positions: np.ndarray) -> None:
-    """``compressor='none'`` produces a strictly larger store than the
-    Zstd default for the same input."""
+    """``compressor='zstd'`` produces a strictly smaller store than the
+    default (BytesCodec-only) for the same input."""
     def store_bytes(store: Path) -> int:
         return sum(f.stat().st_size for f in store.rglob("*") if f.is_file())
 
-    s_none = _new_store("size_none")
+    s_default = _new_store("size_default")
     write_points(
-        s_none, positions, chunk_shape=CHUNK, bin_shape=BIN, compressor="none",
+        s_default, positions, chunk_shape=CHUNK, bin_shape=BIN,
     )
     s_zstd = _new_store("size_zstd")
     write_points(
-        s_zstd, positions, chunk_shape=CHUNK, bin_shape=BIN, compressor=None,
+        s_zstd, positions, chunk_shape=CHUNK, bin_shape=BIN, compressor="zstd",
     )
-    assert store_bytes(s_zstd) < store_bytes(s_none), (
+    assert store_bytes(s_zstd) < store_bytes(s_default), (
         f"zstd store ({store_bytes(s_zstd)} B) was not smaller than "
-        f"uncompressed store ({store_bytes(s_none)} B)"
+        f"default uncompressed store ({store_bytes(s_default)} B)"
     )

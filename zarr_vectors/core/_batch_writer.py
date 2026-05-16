@@ -28,12 +28,12 @@ The on-disk layout matches what ``write_bytes`` produces.  Inner-array
 codecs are configurable per-batch via the ``codecs`` kwarg of
 :func:`flush_batch` (which the calling
 :meth:`zarr_vectors.core.group.Group.batched_writes` derives from its
-``compressor=`` argument).  ``None`` resolves to zarr v3's default
-(``bytes`` + ``zstd``), matching the sync fallback below.  This batch
-path historically forced ``BytesCodec``-only for cloud-write latency
-reasons; users who want to keep that behaviour can pass
-``compressor='none'`` or ``compressor=False`` at the
-``batched_writes`` boundary.
+``compressor=`` argument).  ``compressor=None`` (the default) resolves
+to ``BytesCodec``-only — no compression, fastest cloud-write path.
+Users who want compression can pass ``compressor='zstd'``,
+``'blosc'``, or a full codec-spec list; that opts in to the sync
+fallback below so zarr's encoder can run the codec pipeline before
+each PUT.
 """
 
 from __future__ import annotations
@@ -94,10 +94,10 @@ _EMPTY_INNER_ARRAY_META_TEMPLATE = (
 
 # Fallback codecs JSON used when ``flush_batch`` is called without an
 # explicit list (legacy callers).  Matches the project default of
-# zarr v3's compressor (``bytes`` + ``zstd``).
-_DEFAULT_CODECS_JSON = (
-    '[{"name":"bytes"},{"name":"zstd","configuration":{"level":0,"checksum":false}}]'
-)
+# BytesCodec-only — keeps the fast async PUT path active.  Callers who
+# want compression must pass ``compressor='zstd'`` / ``'blosc'`` / a
+# codec list at the ``batched_writes`` boundary.
+_DEFAULT_CODECS_JSON = '[{"name":"bytes"}]'
 
 
 def _codecs_json(codecs: list[dict[str, Any]] | None) -> str:

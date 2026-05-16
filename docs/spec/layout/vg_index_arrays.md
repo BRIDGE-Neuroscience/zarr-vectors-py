@@ -1,209 +1,409 @@
-# VG index arrays
+# Fragment-index arrays
+
+```{admonition} Format change in ZVF 0.6.0
+:class: note
+
+Prior to ZVF 0.6.0 the per-chunk spatial index was a fixed-shape
+`int64` array named `vertex_group_offsets/<i.j.k>` storing one
+`(offset, count)` row per bin. ZVF 0.6.0 replaced it with the
+binary **fragment-index** format described on this page. The
+semantic role is the same — locating vertices within a chunk —
+but the new format adds two capabilities: *explicit* (non-contiguous)
+fragments, and *fragment sharing* across object manifests at
+coarsened pyramid levels.
+
+0.5.x stores are not readable by 0.6+ readers; rewrite from source.
+```
 
 ## Terms
 
+**Fragment**
+: A logical grouping of rows inside one chunk's `vertices/<i.j.k>`
+  (or `links/0/<i.j.k>`) array. A fragment is either a contiguous
+  range of rows or an explicit list of row indices. At level 0 with
+  the default writer, each non-empty bin emits exactly one fragment;
+  at coarsened pyramid levels a fragment may represent a metavertex
+  shared between several objects' manifests.
+
+**Range fragment**
+: A fragment that owns a contiguous run `[start, start + count)` of
+  row indices into the chunk's payload array. The historical analogue
+  of a pre-0.6 `(offset, count)` row.
+
+**Explicit fragment**
+: A fragment that owns an arbitrary, non-contiguous list of row
+  indices. Enables a single chunk row to participate in more than
+  one fragment — the primitive behind shared metavertices at
+  coarsened levels.
+
+**Fragment index** (the array `vertex_fragments/<i.j.k>`)
+: The binary blob inside one chunk that describes the F fragments
+  in that chunk. Encoded in the v1 layout described below
+  (magic `'ZVFG'` = `0x5A56_4647`).
+
+**Range bitmap**
+: A bitmap of length F (padded to bytes) inside the fragment index,
+  where bit `f` is set iff fragment `f` is a range. Lets readers
+  classify a fragment in one bit lookup.
+
+**Range table**
+: The packed array of `(start, count)` int64 pairs, one row per
+  range fragment, stored in fragment-index order.
+
+**CSR (explicit)**
+: The compressed-sparse-row layout used for explicit fragments:
+  a `uint32 offsets[E+1]` array of running offsets, plus a flat
+  `int64 indices[T]` array of concatenated row indices.
+
+**Shared fragment**
+: A fragment named by more than one object's manifest. Stored once;
+  vertex rows are not duplicated. Marked at the level via
+  `LevelMetadata.shared_fragments=True` and at the store via the
+  `CAP_SHARED_FRAGMENTS` capability token.
+
 **Vertex group (VG)**
-: The set of all vertices within a single spatial bin within a single
-  spatial chunk. A VG is identified by a `(chunk_coord, bin_flat_index)`
-  pair. The vertices of a VG are stored as a contiguous slice of the
-  `vertices/` array for that chunk.
+: The *conceptual* unit "all vertices in one bin in one chunk".
+  See [Vertex groups and fragments](../object_model/vertex_groups.md).
+  At level 0 with the default writer, one non-empty VG ↔ one
+  range fragment. At coarsened levels the VG/bin model is supplanted
+  by the fragment as the addressing primitive.
 
-**VG index** (also: `vertex_group_offsets/`)
-: The Zarr array that maps each `(chunk_coord, bin_flat_index)` pair to
-  an `(offset, count)` pair in the `vertices/` chunk slice. This is the
-  primary spatial index structure of ZVF: a bounding-box query resolves to
-  a set of `(chunk_coord, bin_flat_index)` pairs, which are then looked up
-  in the VG index to retrieve the exact vertex slice.
+### What happened to `offset` and `count`?
 
-**`offset`**
-: The index of the first vertex of a VG within the `vertices/` chunk slice.
-  Combined with `count`, this gives the vertex slice `vertices[chunk][offset : offset + count]`.
+| Pre-0.6 | Post-0.6 |
+|---------|----------|
+| `vertex_group_offsets[chunk][b, 0]` (offset) | `range_table[r, 0]` (start) for the range fragment that represents bin `b` |
+| `vertex_group_offsets[chunk][b, 1]` (count) | `range_table[r, 1]` (count) |
+| `count == 0` (empty bin) | No fragment is emitted for that bin |
+| `count == -1` (fill, never written) | No fragment is emitted for that bin |
 
-**`count`**
-: The number of vertices in a VG. A `count` of `0` indicates an empty bin
-  (no vertices in this bin at this chunk). A `count` of `-1` (fill value)
-  indicates a bin that was never written (the chunk is sparse).
-
-**Bin flat index**
-: The C-order (row-major) ravel of the D-dimensional bin coordinate within
-  a chunk. For a chunk with `(4, 4, 4)` bins, the bin at coordinate
-  `(i, j, k)` has flat index `16i + 4j + k`.
-
-**VG order**
-: The ordering of vertices within a `vertices/` chunk slice: bin (0,0,…,0)
-  first, then (0,0,…,1), etc., in C-order bin index. Vertices within a
-  single bin may be in any order.
+In the new format, empty bins do not occupy a slot; the fixed
+`B_per_chunk × 16-byte` overhead of the pre-0.6 layout is gone.
+Variable-width fragments and arbitrary index lists become possible
+because the index no longer relies on a fixed-shape int64 table.
 
 ---
 
 ## Introduction
 
-The VG index is the core spatial acceleration structure of ZVF. Without it,
-a bounding-box query would require loading all vertices in every overlapping
-chunk and filtering client-side — equivalent to a full table scan. With it,
-the query engine knows exactly which byte ranges within each chunk contain
-relevant vertices and reads only those.
+The fragment index is the per-chunk spatial acceleration structure
+of ZVF. Without it, a bounding-box query would have to load every
+chunk's full vertex payload and filter client-side. With it, readers
+load only the byte ranges that overlap the query.
 
-The index is deliberately simple: a flat array of `(offset, count)` pairs,
-one per bin per chunk. This makes it fast to read and easy to implement, at
-the cost of a modest storage overhead (proportional to `bins_per_chunk`, not
-to the number of vertices).
+The format was rewritten in ZVF 0.6.0 for two reasons:
 
-This page describes the VG index encoding, the algorithm for resolving a
-bounding-box query using the index, and the rules for maintaining the index
-during writes.
+1. **Shared metavertices at coarsened levels.** When the pyramid
+   builder coarsens N objects whose paths share a metavertex, the
+   pre-0.6 design forced the metavertex's vertex row to be duplicated
+   per object. The new format lets each object's manifest *name* the
+   same fragment in the same chunk; the underlying vertex row is
+   stored once.
+
+2. **Eliminate fixed empty-bin overhead.** The pre-0.6
+   `vertex_group_offsets/` array stored a `(0, 0)` or `(-1, -1)`
+   row for every bin in every chunk — even bins that never held a
+   vertex. For sparse stores this dominated index size. The new
+   format stores only as many fragments as the chunk needs.
+
+Trade-off: parsing a fragment index requires a tiny decoder
+(presented below) instead of a single `int64` Zarr array read.
+Decode cost is dominated by a one-time O(F) prefix-popcount built
+lazily on first access; subsequent lookups are O(1).
+
+This page describes the byte layout, the decoder algorithm, and the
+read path that resolves an object's manifest down to vertex rows.
+See [`zarr_vectors.encoding.fragments`](../../api/index.rst) for the
+reference implementation.
 
 ---
 
 ## Technical reference
 
-### Array schema
+### On-disk byte layout (v1)
 
-The `vertex_group_offsets/` array is a standard Zarr array with:
+```
+HEADER (16 bytes)
+  uint32 magic            = 0x5A56_4647  ('ZVFG')
+  uint16 version          = 1
+  uint16 flags            = 0            (reserved)
+  uint32 num_fragments      F
+  uint32 num_range_fragments R           (popcount of bitmap; redundant)
+
+RANGE BITMAP
+  ceil(F/8) bytes, padded to next 8-byte boundary
+  bit f (LSB-first within byte f >> 3) = 1 iff fragment f is a range
+
+RANGE TABLE
+  R entries × 16 bytes
+  int64 start, int64 count   per range fragment, in fragment-index order
+
+EXPLICIT CSR (E = F − R)
+  uint32 explicit_offsets[E+1]   running offsets into explicit_indices
+  int64  explicit_indices[T]     concatenated indices, T = explicit_offsets[E]
+```
+
+An empty chunk (no fragments) is a 16-byte header-only blob with
+`F = 0`, `R = 0`, no bitmap, no range table, no CSR.
+
+### Header
+
+The 16-byte header is the struct `<IHHII` (little-endian: `uint32`,
+`uint16`, `uint16`, `uint32`, `uint32`). It is sized so that the
+subsequent range table (`int64` rows) is naturally 8-byte-aligned —
+the alignment also drives the bitmap-padding rule below.
+
+Invariant: `num_range_fragments == popcount(range_bitmap[0:F])`.
+Readers SHOULD validate this; the reference decoder raises on
+mismatch.
+
+### Range bitmap
+
+`ceil(F/8)` raw bytes, then zero-padded to the next 8-byte boundary
+so the following range table starts on an `int64`-aligned offset.
+Bits are LSB-first within each byte:
+
+```python
+is_range_f = (bitmap[f >> 3] >> (f & 7)) & 1
+```
+
+Padding bytes are zero on write; decoders MUST ignore them.
+
+### Range table
+
+`R` rows of 16 bytes each: `int64 start`, `int64 count`.
+
+```{important}
+**Row order matters.** Row `r` corresponds to the `r`-th *set bit*
+of the bitmap when scanned from `f = 0` upward — **not** to the
+`f`-th fragment. A naive reader that indexes `range_table[f]`
+will get the wrong row whenever any earlier fragment is explicit.
+The reference decoder uses a prefix-popcount of the bitmap to map
+`f → r` in O(1); see the decoder algorithm below.
+```
+
+`start` is the row index in `vertices/<chunk_coords>` of the first
+row of the fragment; `count` is the number of rows.
+
+### Explicit CSR
+
+For the `E = F − R` explicit fragments, indices are stored CSR-style:
+
+- `uint32 explicit_offsets[E+1]` — running offsets. Strictly
+  monotone non-decreasing. `explicit_offsets[0] == 0`.
+- `int64 explicit_indices[T]` — flat array of length
+  `T = explicit_offsets[E]`. The indices of explicit fragment with
+  *explicit-index* `e` (its position among explicit fragments, not
+  among all fragments) are `explicit_indices[offsets[e] : offsets[e+1]]`.
+
+Indices are **absolute row indices** into `vertices/<chunk_coords>`,
+not deltas, not bin-relative offsets. Indices MUST be non-negative
+and SHOULD lie in `[0, len(vertices[chunk]))`.
+
+A zero-length explicit fragment is legal (`offsets[e+1] == offsets[e]`)
+and is the way to round-trip an empty fragment that the writer wanted
+to keep distinguishable from an empty range.
+
+### Decoder algorithm
+
+The reference `FragmentIndex` class holds zero-copy views over the
+underlying bytes plus a lazy prefix-popcount cache. The cache is
+the only non-obvious piece:
+
+```python
+def _popcount_prefix(bitmap, F):
+    """O(F) prefix-popcount of the bitmap.
+    prefix[i] = number of range fragments in [0, i).
+    """
+    bits   = np.unpackbits(bitmap, bitorder="little")[:F].astype(np.int32)
+    prefix = np.empty(F + 1, dtype=np.int32)
+    prefix[0] = 0
+    np.cumsum(bits, out=prefix[1:])
+    return prefix
+```
+
+Built once on first access; subsequent fragment lookups are O(1):
+
+```python
+def is_range(f):
+    return (bitmap[f >> 3] >> (f & 7)) & 1
+
+def range(f):                            # range fragment f → (start, count)
+    r = prefix[f]                        # row in range_table
+    return range_table[r, 0], range_table[r, 1]
+
+def indices(f):                          # any fragment f → row indices
+    if is_range(f):
+        s, c = range(f)
+        return np.arange(s, s + c)
+    e = f - prefix[f]                    # explicit-index of f
+    a, b = csr_offsets[e], csr_offsets[e + 1]
+    return csr_indices[a:b]
+```
+
+`is_range(f)` is a single bit lookup and does not warm the cache.
+`range(f)` and `indices(f)` warm it on first call.
+
+### Query path: manifest → fragments → vertex rows
+
+To read all vertices belonging to one object:
+
+1. Decode the object's **manifest** from `object_index/data` — a
+   sequence of per-chunk blocks, each naming `(chunk_coords,
+   fragment_ref)` where `fragment_ref` is one of the three manifest
+   block modes (single / range / explicit). See
+   [Object manifest](../object_model/object_manifest.md) for the
+   manifest blob format.
+
+2. For each block, load the chunk's `vertex_fragments/<chunk_coords>`
+   blob and `decode_fragments` it.
+
+3. Resolve `fragment_ref` to a set of fragment indices `f`:
+   - mode 0 (single): `[fragment_ref]`
+   - mode 1 (range): `range(start, start + count)`
+   - mode 2 (explicit): the stored `int64` list
+
+4. For each `f`, compute the row indices via `fidx.indices(f)`.
+
+5. Read `vertices/<chunk_coords>[rows, :]` and concatenate across
+   blocks in manifest order.
+
+### Bounding-box query path
+
+For spatial (bbox) queries rather than per-object reads:
+
+**Level 0, default writer.** Each non-empty bin has emitted exactly
+one range fragment. The bbox query is:
+
+```python
+for chunk_coord in overlapping_chunks(bbox):
+    fidx = read_fragment_index(VERTEX_FRAGMENTS, chunk_coord)
+    for f in range(fidx.num_fragments):
+        start, count = fidx.range(f)
+        # Optional bin-bbox prefilter: the writer's fragment-order
+        # invariant lets readers map f → bin and skip bin bboxes
+        # outside the query without reading vertex rows.
+        verts = vertices[chunk_coord][start : start + count]
+        yield verts  # final point-in-bbox filter applied client-side
+```
+
+**Coarsened levels with `shared_fragments=True`.** The query walks
+every fragment in overlapping chunks; sharing is invisible to the
+spatial read path. A range fragment whose `count` covers a
+post-coarsening metavertex still resolves to one contiguous row
+slice. An explicit fragment's row list materialises via
+`fidx.indices(f)` and gather-loads from `vertices/<chunk_coord>`.
+
+### `vertex_fragments/` array schema
 
 | Property | Value |
 |----------|-------|
-| Dtype | `int64` |
-| Logical shape | `(*chunk_grid_shape, B_per_chunk, 2)` |
-| Zarr chunk shape | `(1, 1, …, 1, B_per_chunk, 2)` |
-| Fill value | `-1` |
+| zarr `node_type` | `array` |
+| dtype | `uint8` |
+| logical shape | one variable-length blob per chunk, addressed by chunk coordinate |
+| codec pipeline | none — chunks are written as opaque bytes via the FsGroup `write_bytes` path |
+| group metadata | `{"zv_array": "vertex_fragments", "encoding": "fragment_index_v1"}` |
 
-`B_per_chunk = product(chunk_shape[i] // bin_shape[i] for i in range(D))`.
+Each chunk holds one fragment-index blob in the v1 byte layout
+described above. The metadata `encoding: "fragment_index_v1"` tag
+identifies the format and is the discriminator that future versions
+of ZVF will rev when the binary layout changes.
 
-For a 3-D store with `chunk_shape = (200, 200, 200)` and `bin_shape =
-(50, 50, 50)`: `B_per_chunk = 4 × 4 × 4 = 64`.
+The blob is intentionally not compressed by default. It is already
+binary-packed (header + bitmap + dense int64 range table + uint32/int64
+CSR), and general-purpose compression typically adds latency to hot
+decode paths without meaningful ratio gain. Stores that must minimise
+on-disk size MAY wrap chunk writes in their own compression layer; the
+fragment-index format is independent of any outer compression.
 
-Each chunk of `vertex_group_offsets/` corresponds one-to-one with the same
-chunk in `vertices/`. The chunk at grid coordinate `(i, j, k)` in
-`vertex_group_offsets/` describes the bin layout of the vertices in chunk
-`(i, j, k)` of `vertices/`.
+### `link_fragments/` array schema
 
-### Entry encoding
+Identical structure, parallel role for the cross-chunk link arrays
+at `delta == 0`:
 
-For each bin at flat index `b` within a chunk, the VG index entry is:
+| Property | Value |
+|----------|-------|
+| zarr `node_type` | `array` |
+| dtype | `uint8` |
+| logical shape | one blob per chunk |
+| codec pipeline | none |
+| group metadata | `{"zv_array": "link_fragments", "encoding": "fragment_index_v1"}` |
 
-```
-vertex_group_offsets[*chunk_coord, b, 0] = offset  # first vertex index in this bin
-vertex_group_offsets[*chunk_coord, b, 1] = count   # number of vertices in this bin
-```
-
-Special values:
-
-| `count` value | Meaning |
-|---------------|---------|
-| `> 0` | Bin is non-empty; `count` vertices starting at `offset` |
-| `0` | Bin is empty (was written, but no vertices fell here) |
-| `-1` (fill value) | Bin was never written; treat as empty |
-
-`offset` is only meaningful when `count > 0`. When `count <= 0`, `offset`
-should be ignored by readers (it may be the fill value `-1`).
-
-### VG order invariant
-
-The vertices within a `vertices/` chunk slice are stored in VG order. This
-is a hard invariant that must be preserved by all write operations:
-
-1. Group vertices by their bin flat index (computed from their position and
-   the bin grid).
-2. Sort the groups in ascending bin flat index order.
-3. Concatenate the groups: bin 0 first, then bin 1, …, then bin B-1.
-4. Write the result as the `vertices/` chunk slice.
-5. Compute `offset` and `count` for each bin and write to
-   `vertex_group_offsets/`.
-
-A bin flat index is computed from a vertex position `p` as follows:
-
-```python
-def bin_flat_index(p, chunk_coord, chunk_shape, bin_shape):
-    # Position within the chunk (local coordinates)
-    local = p - np.array(chunk_coord) * np.array(chunk_shape)
-    # Bin coordinate within the chunk
-    bin_coord = np.floor(local / np.array(bin_shape)).astype(int)
-    # Bins-per-chunk shape
-    bpc_shape = tuple(int(c / b) for c, b in zip(chunk_shape, bin_shape))
-    # C-order ravel
-    return np.ravel_multi_index(bin_coord, bpc_shape)
-```
-
-### Bounding-box query algorithm
-
-Given a bounding box `(bbox_min, bbox_max)`:
-
-**Step 1 — Compute overlapping chunks.**
-```python
-chunk_min = np.floor(bbox_min / chunk_shape).astype(int)
-chunk_max = np.floor(bbox_max / chunk_shape).astype(int)
-# Iterate over all chunk coordinates in the range [chunk_min, chunk_max]
-```
-
-**Step 2 — For each overlapping chunk, compute overlapping bins.**
-```python
-# Lower-left corner of this chunk in physical space
-chunk_origin = chunk_coord * chunk_shape
-# Clip bbox to this chunk
-local_min = np.maximum(bbox_min - chunk_origin, 0)
-local_max = np.minimum(bbox_max - chunk_origin, chunk_shape)
-# Bin range
-bin_min = np.floor(local_min / bin_shape).astype(int)
-bin_max = np.floor(local_max / bin_shape).astype(int)
-# Iterate over all bin coordinates in [bin_min, bin_max]
-```
-
-**Step 3 — Read VG index entries for overlapping bins.**
-```python
-vg_index = zarr_open(f"0/vertex_group_offsets")[*chunk_coord]
-# Shape: (B_per_chunk, 2)
-for bin_coord in overlapping_bins:
-    b = ravel_multi_index(bin_coord, bpc_shape)
-    offset, count = vg_index[b]
-    if count > 0:
-        verts = zarr_open("0/vertices")[*chunk_coord, offset:offset+count, :]
-        yield verts
-```
-
-**Step 4 — Optional point-in-box filter.** Because bins may extend slightly
-beyond the requested bbox, a final point-in-box test filters vertices to
-strictly within `[bbox_min, bbox_max]`. This is a client-side operation
-after the I/O is complete.
+`link_fragments/<chunk_coords>` describes the fragment partition of
+`links/0/<chunk_coords>` rows. Present iff the geometry type has
+connectivity (polyline / streamline / graph / skeleton / mesh) and
+at least one chunk has been written. Cross-level link arrays
+(`delta != 0`) keep their inline self-describing header and do not
+have a `link_fragments/` sibling.
 
 ### Write-time invariants
 
-When a `vertices/` chunk slice is extended (e.g. because additional vertices
-are added to an existing chunk), the `vertex_group_offsets/` must be
-recomputed entirely for that chunk. It is not possible to append to a
-`vertices/` chunk and update only the affected VG index entries without
-re-sorting and re-offsetting the entire chunk.
+A writer SHALL maintain:
 
-This is why ZVF write functions buffer all vertices for a chunk in memory
-and write the chunk in a single pass. Streaming per-vertex writes to an
-on-disk ZVF store are not supported by `zarr-vectors-py`.
+1. **Magic and version.** Every blob begins with `'ZVFG'`
+   (`0x5A56_4647`) followed by `version = 1`.
+2. **Popcount agreement.** The header's `num_range_fragments` equals
+   the popcount of the range bitmap over the first `F` bits.
+3. **Bitmap padding.** Bytes beyond `ceil(F/8)` in the range bitmap
+   region are zero.
+4. **Range table order.** Row `r` of the range table corresponds to
+   the `r`-th set bit of the bitmap (scan order `f = 0, 1, …`).
+5. **CSR monotonicity.** `explicit_offsets[0] == 0` and
+   `explicit_offsets[i+1] >= explicit_offsets[i]`.
+6. **Index bounds.** Range fragments' `[start, start + count)` and
+   explicit fragments' indices lie in `[0, len(vertices[chunk_coords]))`.
+7. **Non-negative explicit indices.** Every entry of
+   `explicit_indices` is `>= 0`.
 
-### Attribute VG ordering
+At level 0, the default writer additionally emits one range fragment
+per non-empty bin in ascending bin-flat-index order, preserving the
+pre-0.6 VG order convention. At coarsened levels, fragment order
+follows the metavertex emission order chosen by the coarsening
+pipeline.
 
-The VG order invariant applies identically to all `attributes/<name>/` chunk
-slices: the `k`-th element of an attribute chunk corresponds to the `k`-th
-vertex in the `vertices/` chunk. No separate VG index is maintained for
-attributes; they piggyback on the `vertex_group_offsets/` of their parent
-resolution level.
+### Worked example
 
-### Memory layout summary
+A chunk holds three fragments:
 
-For a 3-D chunk with 64 bins and 4 200 vertices:
+- **Fragment 0** is a range starting at row 0, count 4 — the
+  vertices of one non-empty bin at level 0.
+- **Fragment 1** is explicit, with rows `[12, 7, 19]` — a shared
+  metavertex emitted by the coarsening pipeline that references
+  rows of `vertices/<chunk>` not contiguous in bin order.
+- **Fragment 2** is a range starting at row 20, count 8 — another
+  non-empty bin at level 0.
+
+So `F = 3`, `R = 2`, `E = 1`, `T = 3`. Annotated hex dump:
 
 ```
-vertices/  chunk (i,j,k):
-  [0:350]    → bin (0,0,0), 350 vertices
-  [350:701]  → bin (0,0,1), 351 vertices
-  [701:701]  → bin (0,0,2), 0 vertices (empty)
-  [701:1048] → bin (0,0,3), 347 vertices
-  …
-  [4050:4200]→ bin (3,3,3), 150 vertices
-
-vertex_group_offsets/ chunk (i,j,k):
-  [0]  = [0,   350]   → bin (0,0,0)
-  [1]  = [350, 351]   → bin (0,0,1)
-  [2]  = [0,   0]     → bin (0,0,2) — empty (offset ignored)
-  [3]  = [701, 347]   → bin (0,0,3)
-  …
-  [63] = [4050, 150]  → bin (3,3,3)
+offset  bytes                                       meaning
+------  ------------------------------------------  --------------------
+0x00    47 46 56 5A                                 magic 'ZVFG'
+0x04    01 00                                       version = 1
+0x06    00 00                                       flags = 0
+0x08    03 00 00 00                                 F = 3
+0x0C    02 00 00 00                                 R = 2
+0x10    05 00 00 00 00 00 00 00                     bitmap (bits 0,2 set;
+                                                    padded to 8 bytes)
+0x18    00 00 00 00 00 00 00 00                     range[0].start = 0
+0x20    04 00 00 00 00 00 00 00                     range[0].count = 4
+0x28    14 00 00 00 00 00 00 00                     range[1].start = 20
+0x30    08 00 00 00 00 00 00 00                     range[1].count = 8
+0x38    00 00 00 00                                 csr_offsets[0] = 0
+0x3C    03 00 00 00                                 csr_offsets[1] = 3
+0x40    0C 00 00 00 00 00 00 00                     csr_indices[0] = 12
+0x48    07 00 00 00 00 00 00 00                     csr_indices[1] = 7
+0x50    13 00 00 00 00 00 00 00                     csr_indices[2] = 19
 ```
+
+Total blob size: 88 bytes.
+
+Walking through `fidx.indices(1)`:
+
+1. `is_range(1)` reads bit 1 of byte 0 of the bitmap: `0x05 >> 1 & 1
+   = 0` → explicit.
+2. The lazy prefix-popcount yields `prefix = [0, 1, 1, 2]`.
+3. `e = 1 - prefix[1] = 1 - 1 = 0` — fragment 1 is the *zeroth*
+   explicit fragment.
+4. `a, b = csr_offsets[0], csr_offsets[1] = 0, 3`.
+5. Return `csr_indices[0:3] = [12, 7, 19]`. Done.

@@ -12,11 +12,15 @@ the store or encoding modules directly.
 
 from __future__ import annotations
 
+import warnings
 from contextlib import contextmanager
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
+import zarr
+from zarr.codecs import VLenBytesCodec
+from zarr.errors import UnstableSpecificationWarning
 
 from zarr_vectors.constants import (
     CROSS_CHUNK_LINK_ATTRIBUTES,
@@ -62,6 +66,18 @@ from zarr_vectors.typing import (
     CrossChunkLink,
     ObjectManifest,
 )
+
+
+# Discriminator written into ``object_index`` group attrs to identify
+# the ragged-array layout (one vlen-bytes zarr array named ``manifests``,
+# one entry per object_id).  Absent on legacy stores, which used a pair
+# of single-chunk ``data`` + ``offsets`` byte blobs.
+OBJECT_INDEX_LAYOUT_V1 = "vlen_manifests_v1"
+
+# Objects per zarr chunk of ``object_index/manifests``.  A single-object
+# read fetches only the chunk containing the requested oid, so this sets
+# the read amplification ceiling (~16K manifest blobs per fetch).
+OBJECT_INDEX_MANIFEST_BUCKET = 16_384
 
 
 # ===================================================================
@@ -575,26 +591,64 @@ def write_object_index(
     # short-circuits are reserved for writers that know they produce
     # ranges or fragment-list shapes — to be plumbed through the
     # higher-level write APIs in a future change.
-    blob_parts: list[bytes] = []
-    offsets_arr = np.empty(len(manifest_list), dtype=np.int64)
-    cur = 0
-    for i, manifest in enumerate(manifest_list):
+    manifest_blobs: list[bytes] = []
+    for manifest in manifest_list:
         blocks = [
             (tuple(int(c) for c in chunk_coords), int(vg_index))
             for chunk_coords, vg_index in manifest
         ]
-        blob = encode_object_manifest_blocks(blocks, sid_ndim=sid_ndim)
-        blob_parts.append(blob)
-        offsets_arr[i] = cur
-        cur += len(blob)
-    raw_bytes = b"".join(blob_parts)
-    level_group.write_bytes(OBJECT_INDEX, "data", raw_bytes)
-    level_group.write_bytes(OBJECT_INDEX, "offsets", offsets_arr.tobytes())
+        manifest_blobs.append(
+            encode_object_manifest_blocks(blocks, sid_ndim=sid_ndim)
+        )
+
+    _write_object_index_manifests(level_group, manifest_blobs)
     level_group.write_array_meta(OBJECT_INDEX, {
         "zv_array": "object_index",
         "num_objects": size,
         "sid_ndim": sid_ndim,
+        "layout": OBJECT_INDEX_LAYOUT_V1,
     })
+
+
+def _write_object_index_manifests(
+    level_group: FsGroup,
+    manifest_blobs: list[bytes],
+) -> None:
+    """Write ``object_index/manifests`` as a single ragged vlen-bytes array.
+
+    One zarr chunk holds ``OBJECT_INDEX_MANIFEST_BUCKET`` consecutive
+    objects, so a single-object read fetches at most one chunk regardless
+    of total ``num_objects`` — fixing the legacy O(num_objects) read
+    amplification.  Drops legacy ``object_index/{data,offsets}`` arrays
+    if they exist from a prior write.
+    """
+    n = len(manifest_blobs)
+    oi_group = level_group.zarr_group.require_group(OBJECT_INDEX)
+    for legacy in ("manifests", "data", "offsets"):
+        if legacy in oi_group:
+            del oi_group[legacy]
+
+    if n == 0:
+        return
+
+    chunk_size = min(OBJECT_INDEX_MANIFEST_BUCKET, n)
+    # zarr 3.x's variable-length bytes dtype lacks a finalised V3 spec
+    # (zarr-extensions tracks it); the warning is informational and ZVF
+    # is alpha — accept it and silence at the call site so writes stay
+    # quiet.  Revisit if the spec lands incompatibly.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UnstableSpecificationWarning)
+        arr = oi_group.create_array(
+            "manifests",
+            shape=(n,),
+            chunks=(chunk_size,),
+            dtype="bytes",
+            serializer=VLenBytesCodec(),
+        )
+        obj = np.empty(n, dtype=object)
+        for i, blob in enumerate(manifest_blobs):
+            obj[i] = blob
+        arr[:] = obj
 
 
 def write_object_attributes(
@@ -1155,15 +1209,19 @@ def read_object_manifest(
         raise ArrayError(
             f"Object ID {object_id} out of range [0, {num_objects})"
         )
-    with _maybe_batched_reads(level_group, [
-        (OBJECT_INDEX, ["data", "offsets"]),
-    ]):
-        raw = level_group.read_bytes(OBJECT_INDEX, "data")
-        offsets = np.frombuffer(
-            level_group.read_bytes(OBJECT_INDEX, "offsets"),
-            dtype=np.int64,
-        )
-    return _decode_one_manifest(raw, offsets, sid_ndim, object_id, num_objects)
+
+    if meta.get("layout") == OBJECT_INDEX_LAYOUT_V1:
+        manifests_arr = level_group.zarr_group[OBJECT_INDEX]["manifests"]
+        # Slice (then index) instead of scalar indexing: zarr 3.x vlen-bytes
+        # returns a 0-d object ndarray under ``arr[i]``, whose ``bytes()``
+        # is the array header — not the payload.  ``arr[i:i+1][0]`` is the
+        # actual bytes object and still fetches only the chunk holding i.
+        blob = manifests_arr[object_id:object_id + 1][0]
+    else:
+        blob = _legacy_read_object_blob(level_group, object_id, num_objects)
+
+    blocks = decode_object_manifest_blocks(blob, sid_ndim=sid_ndim)
+    return _expand_blocks(blocks)
 
 
 def read_all_object_manifests(
@@ -1178,6 +1236,19 @@ def read_all_object_manifests(
     sid_ndim = meta["sid_ndim"]
     num_objects = int(meta.get("num_objects", 0))
 
+    if meta.get("layout") == OBJECT_INDEX_LAYOUT_V1:
+        if num_objects == 0:
+            return []
+        manifests_arr = level_group.zarr_group[OBJECT_INDEX]["manifests"]
+        # Slicing yields a 1-D object ndarray whose elements are bytes
+        # directly (unlike scalar indexing — see read_object_manifest).
+        blobs = manifests_arr[:]
+        return [
+            _expand_blocks(decode_object_manifest_blocks(b, sid_ndim=sid_ndim))
+            for b in blobs
+        ]
+
+    # Legacy layout: single-chunk data + offsets byte blobs.
     with _maybe_batched_reads(level_group, [
         (OBJECT_INDEX, ["data", "offsets"]),
     ]):
@@ -1187,20 +1258,59 @@ def read_all_object_manifests(
             dtype=np.int64,
         )
     return [
-        _decode_one_manifest(raw, offsets, sid_ndim, i, num_objects)
+        _expand_blocks(
+            decode_object_manifest_blocks(
+                _slice_legacy_blob(raw, offsets, i, num_objects),
+                sid_ndim=sid_ndim,
+            ),
+        )
         for i in range(num_objects)
     ]
 
 
-def _decode_one_manifest(
-    data: bytes,
-    offsets: npt.NDArray[np.int64],
-    sid_ndim: int,
+def _legacy_read_object_blob(
+    level_group: FsGroup,
     object_id: int,
     num_objects: int,
+) -> bytes:
+    """Load one object's encoded manifest blob from the legacy
+    ``object_index/{data,offsets}`` byte-blob layout.
+
+    Reads the full ``data`` and ``offsets`` arrays (each a single-chunk
+    blob) and slices to the one object's byte range.  This is the cost
+    the vlen-bytes ``manifests`` layout was introduced to eliminate;
+    kept for backwards-compatible reads of pre-vlen stores.
+    """
+    with _maybe_batched_reads(level_group, [
+        (OBJECT_INDEX, ["data", "offsets"]),
+    ]):
+        raw = level_group.read_bytes(OBJECT_INDEX, "data")
+        offsets = np.frombuffer(
+            level_group.read_bytes(OBJECT_INDEX, "offsets"),
+            dtype=np.int64,
+        )
+    return _slice_legacy_blob(raw, offsets, object_id, num_objects)
+
+
+def _slice_legacy_blob(
+    data: bytes,
+    offsets: npt.NDArray[np.int64],
+    object_id: int,
+    num_objects: int,
+) -> bytes:
+    start = int(offsets[object_id])
+    end = (
+        int(offsets[object_id + 1])
+        if object_id + 1 < num_objects
+        else len(data)
+    )
+    return data[start:end]
+
+
+def _expand_blocks(
+    blocks: list[tuple[ChunkCoords, Any]],
 ) -> ObjectManifest:
-    """Slice + decode one object's manifest from the v0.6 block-encoded
-    ``object_index/data`` blob and expand to the legacy
+    """Expand v0.6 manifest blocks to the legacy
     ``[(chunk_coords, vg_index), ...]`` tuple list.
 
     Mode-1 (range) and mode-2 (explicit list) blocks expand to one
@@ -1210,13 +1320,6 @@ def _decode_one_manifest(
     :func:`zarr_vectors.encoding.fragments.decode_object_manifest_blocks`
     directly.
     """
-    start = int(offsets[object_id])
-    end = (
-        int(offsets[object_id + 1])
-        if object_id + 1 < num_objects
-        else len(data)
-    )
-    blocks = decode_object_manifest_blocks(data[start:end], sid_ndim=sid_ndim)
     out: ObjectManifest = []
     for chunk_coords, frag_ref in blocks:
         if isinstance(frag_ref, int):

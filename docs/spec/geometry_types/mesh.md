@@ -55,9 +55,10 @@ object (distinct connected surface) to its constituent chunks.
 | Array path | Required | Description |
 |-----------|----------|-------------|
 | `vertices/` | Yes | Vertex positions, shape `(N, D)` float32 per chunk |
-| `vertex_group_offsets/` | Yes | VG index |
+| `vertex_fragments/` | Yes | Fragment index over `vertices/` rows |
 | `links/<delta>/` | Yes | Triangle vertex triplets, shape `(F, 3)` int32 per chunk |
-| `object_index/` | Yes | Object (mesh surface) ID → primary chunk |
+| `link_fragments/` | Yes (`<delta>=0`) | Fragment index over `links/0/` rows |
+| `object_index/` | Yes | Per-object manifest blobs naming fragments |
 | `attributes/<name>/` | No | Per-vertex attributes (normals, UVs, colours) |
 | `object_attributes/<name>/` | No | Per-mesh attributes (volume, surface area) |
 
@@ -186,8 +187,8 @@ result = read_mesh("cells.zarrvectors", object_ids=[42, 107])
 
 ### Validation
 
-L1: `vertices/`, `vertex_group_offsets/`, `links/<delta>/`, `object_index/`
-exist.
+L1: `vertices/`, `vertex_fragments/`, `links/<delta>/`, `link_fragments/`
+(at `<delta>=0`), and `object_index/` exist.
 
 L3:
 - All positive face vertex indices are in `[0, N_chunk)`.

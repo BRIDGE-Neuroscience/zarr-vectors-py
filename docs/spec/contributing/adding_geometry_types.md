@@ -42,7 +42,8 @@ the RFC process (see [Spec change process](spec_change_process.md)).
 Decide:
 1. The type constant string (e.g. `"voxel_cloud"` for a new type).
 2. Which existing arrays it requires (all types need `vertices/` and
-   `vertex_group_offsets/`).
+   `vertex_fragments/`; types with intra-chunk connectivity also need
+   `link_fragments/`).
 3. What new arrays, if any, it introduces.
 4. Whether it has discrete objects (requires `object_index/`).
 5. Whether objects can span chunks (requires `cross_chunk_links/`).
@@ -69,7 +70,7 @@ REQUIRED_ARRAYS = {
     ...
     "voxel_cloud": [
         "vertices/",
-        "vertex_group_offsets/",
+        "vertex_fragments/",
         "links/voxel_ids/",      # new type-specific array
     ],
 }
@@ -126,16 +127,16 @@ def write_voxel_cloud(
     chunk_map = _partition_into_chunks(positions, chunk_shape)
 
     for chunk_coord, (chunk_verts, chunk_indices) in chunk_map.items():
-        # Sort into VG order
-        sorted_verts, order, vg_offsets = build_vg_index(
+        # Sort into VG order and emit one range fragment per non-empty bin
+        sorted_verts, order, fragments = build_level0_fragments(
             chunk_verts, chunk_coord, chunk_shape, bin_shape
         )
         # Write vertices
         _write_chunk_array(root, "0/vertices", chunk_coord,
                            sorted_verts)
-        # Write VG index
-        _write_chunk_array(root, "0/vertex_group_offsets",
-                           chunk_coord, vg_offsets)
+        # Write fragment index (binary blob, one per chunk)
+        _write_chunk_bytes(root, "0/vertex_fragments",
+                           chunk_coord, encode_fragments(fragments))
         # Write type-specific array
         sorted_voxel_ids = voxel_ids[chunk_indices][order]
         _write_chunk_array(root, "0/links/voxel_ids",
@@ -153,8 +154,12 @@ def write_voxel_cloud(
 
 Key invariants to maintain in the writer:
 - Vertices must be in VG order (bin-sorted) within each chunk.
-- `vg_offsets` must be computed from the sorted vertices.
+- The fragment list passed to `encode_fragments` must reference the
+  sorted vertex rows; emit one `(start, count)` range per non-empty bin.
 - All attribute arrays must be reordered with the same `order` permutation.
+
+See [`zarr_vectors.encoding.fragments`](../../api/index.rst) for
+`encode_fragments` and the canonical `build_level0_fragments` helper.
 
 ### Step 4 — Write the read function
 
@@ -170,10 +175,10 @@ def read_voxel_cloud(
     root = open_store(store_path, mode="r")
     _assert_geometry_type(root, GEOM_VOXEL_CLOUD)
 
-    verts, vg_offsets = _read_bbox_vgs(root, level, bbox)
+    verts, fragments = _read_bbox_fragments(root, level, bbox)
     voxel_ids = _read_bbox_array(root, level, "links/voxel_ids", bbox,
-                                 vg_offsets)
-    attrs = _read_attributes(root, level, attributes, vg_offsets)
+                                 fragments)
+    attrs = _read_attributes(root, level, attributes, fragments)
 
     return {
         "vertex_count": len(verts),

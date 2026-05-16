@@ -40,7 +40,7 @@ metanodes.
 | Array path | Required | Description |
 |-----------|----------|-------------|
 | `vertices/` | Yes | Vertex positions, shape `(N, D)` float32 per chunk |
-| `vertex_group_offsets/` | Yes | VG index, shape `(B, 2)` int64 per chunk |
+| `vertex_fragments/` | Yes | Fragment index — `uint8` blob per chunk; see [Fragment-index arrays](../layout/vg_index_arrays.md) |
 | `attributes/<name>/` | No | Per-vertex scalar or vector attributes |
 
 No `links/`, `object_index/`, `cross_chunk_links/`, or `object_attributes/`
@@ -131,7 +131,7 @@ Common choices:
 
 ### Validation rules
 
-L1: `vertices/` and `vertex_group_offsets/` exist at each declared level.
+L1: `vertices/` and `vertex_fragments/` exist at each declared level.
 
 L2:
 - No `links/`, `object_index/`, or `cross_chunk_links/` arrays are present.
@@ -139,8 +139,9 @@ L2:
   count at its level.
 
 L3:
-- For every non-empty chunk, `sum(vg_offsets[:, 1])` equals the number of
-  vertices in that chunk.
+- For every non-empty chunk, the sum of range-fragment `count` values
+  plus explicit-fragment index counts equals the number of vertex rows
+  in that chunk.
 - Attribute array length matches `vertices/` array length at every chunk.
 
 ### Multi-resolution behaviour

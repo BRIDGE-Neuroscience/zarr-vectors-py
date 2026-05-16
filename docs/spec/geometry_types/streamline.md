@@ -57,9 +57,10 @@ the distinction is in the metadata and semantic interpretation.
 | Array path | Required | Description |
 |-----------|----------|-------------|
 | `vertices/` | Yes | Streamline vertex positions |
-| `vertex_group_offsets/` | Yes | VG index |
+| `vertex_fragments/` | Yes | Fragment index over `vertices/` rows |
 | `links/<delta>/` | Yes | Intra-chunk consecutive vertex pairs |
-| `object_index/` | Yes | Object ID → primary chunk + VG offset |
+| `link_fragments/` | Yes (`<delta>=0`) | Fragment index over `links/0/` rows |
+| `object_index/` | Yes | Per-object manifest blobs naming fragments |
 | `cross_chunk_links/` | Yes* | Inter-chunk vertex connections |
 | `attributes/<name>/` | No | Per-vertex attributes (e.g. FA, MD per point) |
 | `object_attributes/<name>/` | No | Per-streamline attributes (e.g. mean FA, length) |

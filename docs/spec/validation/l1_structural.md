@@ -51,19 +51,19 @@ structurally incomplete and cannot be read by any ZVF reader.
 | `level_zarr_json` | `N/zarr.json` exists and declares `node_type: group` | Error |
 | `level_zattrs` | `N/.zattrs` exists and is valid JSON | Error |
 | `vertices_array` | `N/vertices/zarr.json` declares `node_type: array` | Error |
-| `vg_offsets_array` | `N/vertex_group_offsets/zarr.json` declares `node_type: array` | Error |
+| `vertex_fragments_array` | `N/vertex_fragments/zarr.json` declares `node_type: array` | Error |
 
 #### Type-specific array presence (based on `geometry_type` in root `.zattrs`)
 
 | Geometry type | Required arrays | Warning if absent |
 |---------------|----------------|-------------------|
-| `point_cloud` | `vertices/`, `vertex_group_offsets/` | `attributes/` if attributes were written at other levels |
-| `line` | + `links/<delta>/` | — |
-| `polyline` | + `links/<delta>/`, `object_index/` | `cross_chunk_links/<delta>/` if objects may span chunks |
-| `streamline` | + `links/<delta>/`, `object_index/` | `cross_chunk_links/<delta>/` |
-| `graph` | + `links/<delta>/`, `object_index/` | `cross_chunk_links/<delta>/` |
-| `skeleton` | + `links/<delta>/`, `object_index/` | `cross_chunk_links/<delta>/` |
-| `mesh` | + `links/<delta>/`, `object_index/` | — |
+| `point_cloud` | `vertices/`, `vertex_fragments/` | `attributes/` if attributes were written at other levels |
+| `line` | + `links/<delta>/`, `link_fragments/` (at `<delta>=0`) | — |
+| `polyline` | + `links/<delta>/`, `link_fragments/` (at `<delta>=0`), `object_index/` | `cross_chunk_links/<delta>/` if objects may span chunks |
+| `streamline` | + `links/<delta>/`, `link_fragments/` (at `<delta>=0`), `object_index/` | `cross_chunk_links/<delta>/` |
+| `graph` | + `links/<delta>/`, `link_fragments/` (at `<delta>=0`), `object_index/` | `cross_chunk_links/<delta>/` |
+| `skeleton` | + `links/<delta>/`, `link_fragments/` (at `<delta>=0`), `object_index/` | `cross_chunk_links/<delta>/` |
+| `mesh` | + `links/<delta>/`, `link_fragments/` (at `<delta>=0`), `object_index/` | — |
 
 #### Attribute sub-groups
 
@@ -93,7 +93,7 @@ PASS  level_0_exists          0/ group exists
 PASS  level_zarr_json [level=0]    0/zarr.json exists
 PASS  level_zattrs [level=0]       0/.zattrs exists
 PASS  vertices_array [level=0]     0/vertices/ is an array
-PASS  vg_offsets_array [level=0]   0/vertex_group_offsets/ is an array
+PASS  vertex_fragments_array [level=0]   0/vertex_fragments/ is an array
 PASS  object_index_array [level=0] 0/object_index/ is an array
 PASS  edges_array [level=0]        0/links/<delta>/ is an array
 ERROR cross_chunk_links [level=0]  0/cross_chunk_links/ missing;

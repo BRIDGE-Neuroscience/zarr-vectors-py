@@ -58,9 +58,10 @@ Identical to `graph` with `is_tree = true`.
 | Array path | Required | Description |
 |-----------|----------|-------------|
 | `vertices/` | Yes | Node positions (x, y, z) |
-| `vertex_group_offsets/` | Yes | VG index |
+| `vertex_fragments/` | Yes | Fragment index over `vertices/` rows |
 | `links/<delta>/` | Yes | Parent–child pairs `[child, parent]`; parent = `-1` for root |
-| `object_index/` | Yes | One entry per skeleton (one component = one object) |
+| `link_fragments/` | Yes (`<delta>=0`) | Fragment index over `links/0/` rows |
+| `object_index/` | Yes | One manifest blob per skeleton (one component = one object) |
 | `cross_chunk_links/` | Yes* | Edges crossing chunk boundaries |
 | `attributes/swc_type/` | Recommended | int32 per vertex: SWC compartment type |
 | `attributes/radius/` | Recommended | float32 per vertex: estimated radius |

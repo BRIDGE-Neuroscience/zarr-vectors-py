@@ -228,14 +228,6 @@ def write_mesh(
         chunk_attribute_values=attr_bin_values,
     )
     level_group = create_resolution_level(root, 0, level_meta)
-    create_vertices_array(level_group, dtype=dtype, encoding=encoding)
-    create_links_array(level_group, link_width=link_width, delta=0)
-    create_object_index_array(level_group)
-    create_cross_chunk_links_array(level_group, delta=0)
-
-    if vertex_attributes:
-        for name, data in vertex_attributes.items():
-            create_attribute_array(level_group, name, dtype=str(data.dtype))
 
     # Assign vertices to chunks.  When attribute-chunked, prefix each
     # spatial chunk key with the per-vertex bin.
@@ -262,74 +254,90 @@ def write_mesh(
 
     # Write vertices per chunk (one vertex group per chunk for simplicity)
     object_manifests: dict[int, ObjectManifest] = {}
-    for chunk_idx, chunk_coords in enumerate(chunk_list):
-        global_indices = chunk_assignments[chunk_coords]
-        chunk_verts = vertices[global_indices]
+    idx_ndim = ndim + 1 if vertex_attr_bins is not None else ndim
 
-        if encoding == ENCODING_DRACO and ndim == 3:
-            # Draco mode: encode positions + local faces together
-            local_faces_arr = intra_faces.get(chunk_coords)
-            _write_draco_chunk(
-                level_group, chunk_coords, chunk_verts,
-                local_faces_arr, draco_quantization_bits, np_dtype,
-            )
-        else:
-            write_chunk_vertices(level_group, chunk_coords, [chunk_verts], dtype=np_dtype)
-
-        # Track manifests: one vertex group per chunk per unique object in chunk
-        chunk_obj_ids = object_ids[global_indices]
-        for oid in np.unique(chunk_obj_ids):
-            oid_int = int(oid)
-            if oid_int not in object_manifests:
-                object_manifests[oid_int] = []
-            object_manifests[oid_int].append((chunk_coords, 0))
-
-        # Write vertex attributes
+    # Collapse all per-array zarr.json + per-chunk byte writes into one
+    # asyncio.gather (mirrors points.py:300).
+    with level_group.batched_writes():
+        create_vertices_array(level_group, dtype=dtype, encoding=encoding)
+        create_links_array(level_group, link_width=link_width, delta=0)
+        create_object_index_array(level_group)
+        create_cross_chunk_links_array(level_group, delta=0)
         if vertex_attributes:
             for name, data in vertex_attributes.items():
-                chunk_attrs = data[global_indices]
-                write_chunk_attributes(
-                    level_group, name, chunk_coords, [chunk_attrs],
-                    dtype=data.dtype,
+                create_attribute_array(level_group, name, dtype=str(data.dtype))
+        if object_attributes:
+            for _name in object_attributes:
+                create_object_attributes_array(level_group, _name)
+
+        for chunk_idx, chunk_coords in enumerate(chunk_list):
+            global_indices = chunk_assignments[chunk_coords]
+            chunk_verts = vertices[global_indices]
+
+            if encoding == ENCODING_DRACO and ndim == 3:
+                # Draco mode: encode positions + local faces together
+                local_faces_arr = intra_faces.get(chunk_coords)
+                _write_draco_chunk(
+                    level_group, chunk_coords, chunk_verts,
+                    local_faces_arr, draco_quantization_bits, np_dtype,
+                )
+            else:
+                write_chunk_vertices(
+                    level_group, chunk_coords, [chunk_verts], dtype=np_dtype,
                 )
 
-    # Write intra-chunk faces (raw mode)
-    if encoding != ENCODING_DRACO:
-        for chunk_coords in chunk_list:
-            if chunk_coords in intra_faces:
-                write_chunk_links(
-                    level_group, chunk_coords, [intra_faces[chunk_coords]], delta=0,
-                )
+            # Track manifests: one vertex group per chunk per unique object in chunk
+            chunk_obj_ids = object_ids[global_indices]
+            for oid in np.unique(chunk_obj_ids):
+                oid_int = int(oid)
+                if oid_int not in object_manifests:
+                    object_manifests[oid_int] = []
+                object_manifests[oid_int].append((chunk_coords, 0))
 
-    # Write cross-chunk faces as variable-width records under
-    # ``cross_chunk_links/<delta=0>/``.  Each record is a list of L
-    # ``(chunk_coords, local_vertex_idx)`` endpoints where L is the
-    # face arity (3 for triangles).  Faces of different arity are
-    # rejected; meshes are uniform-arity by construction.
-    idx_ndim = ndim + 1 if vertex_attr_bins is not None else ndim
-    if cross_faces:
-        face_arities = {len(f) for f in cross_faces}
-        if len(face_arities) != 1:
-            raise ArrayError(
-                f"cross-chunk faces have inconsistent arities {face_arities}; "
-                "meshes must be uniform-arity"
+            # Write vertex attributes
+            if vertex_attributes:
+                for name, data in vertex_attributes.items():
+                    chunk_attrs = data[global_indices]
+                    write_chunk_attributes(
+                        level_group, name, chunk_coords, [chunk_attrs],
+                        dtype=data.dtype,
+                    )
+
+        # Write intra-chunk faces (raw mode)
+        if encoding != ENCODING_DRACO:
+            for chunk_coords in chunk_list:
+                if chunk_coords in intra_faces:
+                    write_chunk_links(
+                        level_group, chunk_coords, [intra_faces[chunk_coords]], delta=0,
+                    )
+
+        # Write cross-chunk faces as variable-width records under
+        # ``cross_chunk_links/<delta=0>/``.  Each record is a list of L
+        # ``(chunk_coords, local_vertex_idx)`` endpoints where L is the
+        # face arity (3 for triangles).  Faces of different arity are
+        # rejected; meshes are uniform-arity by construction.
+        if cross_faces:
+            face_arities = {len(f) for f in cross_faces}
+            if len(face_arities) != 1:
+                raise ArrayError(
+                    f"cross-chunk faces have inconsistent arities {face_arities}; "
+                    "meshes must be uniform-arity"
+                )
+            write_cross_chunk_links(
+                level_group,
+                [list(face) for face in cross_faces],
+                sid_ndim=idx_ndim,
+                delta=0,
+                link_width=face_arities.pop(),
             )
-        write_cross_chunk_links(
-            level_group,
-            [list(face) for face in cross_faces],
-            sid_ndim=idx_ndim,
-            delta=0,
-            link_width=face_arities.pop(),
-        )
 
-    # Write object index
-    write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
+        # Write object index
+        write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
 
-    # Per-object attributes (Tier B): {name: (O,) or (O, C)}.
-    if object_attributes:
-        for _name, _data in object_attributes.items():
-            create_object_attributes_array(level_group, _name)
-            write_object_attributes(level_group, _name, np.asarray(_data))
+        # Per-object attributes (Tier B): {name: (O,) or (O, C)}.
+        if object_attributes:
+            for _name, _data in object_attributes.items():
+                write_object_attributes(level_group, _name, np.asarray(_data))
 
     _finalize_write(root, "write_mesh")
     return {

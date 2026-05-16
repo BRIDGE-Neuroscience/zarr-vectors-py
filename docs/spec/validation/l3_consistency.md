@@ -7,15 +7,18 @@
   in one array are logically consistent with values in another. L3 checks
   read all chunks of all arrays at each level.
 
-**VG arithmetic check**
-: Verification that the offsets and counts in `vertex_group_offsets/` are
-  self-consistent: no overlap between VG slices, no gap between consecutive
-  VG slices, total vertex count matches `vertices/` array length.
+**Fragment-index arithmetic check**
+: Verification that the fragment-index blob in `vertex_fragments/<chunk>`
+  is self-consistent: magic and version are correct, the range bitmap's
+  popcount matches the header's `R`, CSR offsets are monotone, and every
+  range fragment's `[start, start + count)` and every explicit fragment's
+  indices lie in `[0, vertex_count_in_chunk)`.
 
 **Manifest integrity**
-: Verification that every entry in `object_index/` references a valid,
-  non-empty VG, and that following `cross_chunk_links/` from each primary
-  VG reaches all vertices belonging to the object.
+: Verification that every block in `object_index/data` references a chunk
+  that exists at the level and a fragment that exists in that chunk's
+  `vertex_fragments/` blob, and that decoding the manifest yields exactly
+  one fragment per fragment reference (no out-of-range indices).
 
 **Attribute alignment**
 : Verification that the length of each `attributes/<name>/` chunk slice
@@ -40,23 +43,31 @@ full-size production stores unless a specific consistency issue is suspected.
 
 ## Technical reference
 
-### VG offset arithmetic checks
+### Fragment-index arithmetic checks
 
-For every non-empty chunk in `vertices/` and `vertex_group_offsets/`:
+For every non-empty chunk in `vertices/` and `vertex_fragments/`:
 
 | Check | Rule | Failure type |
 |-------|------|--------------|
-| `vg_offsets_non_negative` | All `count` values ≥ -1 (−1 = fill, 0 = empty, >0 = populated) | Error |
-| `vg_offsets_no_overlap` | No two VG slices `[offset, offset+count)` overlap | Error |
-| `vg_offsets_no_gap` | VG slices are contiguous: VG k starts where VG k-1 ends (or begins at 0 for the first non-empty VG) | Error |
-| `vg_offsets_total_count` | `sum(max(0, count) for all bins)` equals the number of vertices in this chunk | Error |
-| `vg_offsets_in_bounds` | `offset + count ≤ N_chunk` for all VGs | Error |
-| `vg_order_correct` | Vertices at indices `[offset, offset+count)` all have bin flat index equal to the VG's bin flat index | Error |
+| `frag_magic` | First 4 bytes equal `0x5A56_4647` (`'ZVFG'`) | Error |
+| `frag_version` | Header `version` field equals 1 | Error |
+| `frag_popcount` | Header `num_range_fragments` equals `popcount(bitmap[0:F])` | Error |
+| `frag_bitmap_padding` | Bitmap bytes beyond `ceil(F/8)` are zero | Warning |
+| `frag_csr_monotone` | `explicit_offsets[0] == 0` and `explicit_offsets[i+1] >= explicit_offsets[i]` | Error |
+| `frag_range_in_bounds` | Every range fragment's `start + count ≤ vertex_count_in_chunk` and `start >= 0` | Error |
+| `frag_indices_in_bounds` | Every explicit fragment's indices lie in `[0, vertex_count_in_chunk)` | Error |
+| `frag_indices_non_negative` | Every entry of `explicit_indices` is `>= 0` | Error |
+| `frag_vg_order` | At level 0 with `shared_fragments=False`: vertices in fragment `f`'s row slice all share the same bin flat index | Error |
 
-The VG order check is the most expensive: it requires computing the bin
-flat index of every vertex and comparing to the VG index. It runs by
-default at L3 but can be disabled with `skip_vg_order_check=True` for
-large stores where only offset arithmetic is needed:
+For `link_fragments/<chunk>`, the same checks apply with
+`vertex_count_in_chunk` replaced by `link_count_in_chunk` (rows of
+`links/0/<chunk>`).
+
+The `frag_vg_order` check is the most expensive: it requires computing the
+bin flat index of every vertex and comparing to the writer-emitted fragment
+order. It runs by default at L3 but can be disabled with
+`skip_vg_order_check=True` for large stores where only fragment-index
+arithmetic is needed:
 
 ```python
 result = validate("scan.zarrvectors", level=3, skip_vg_order_check=True)
@@ -76,10 +87,11 @@ For every chunk at every level:
 
 | Check | Rule | Failure type |
 |-------|------|--------------|
-| `obj_index_valid_chunks` | Every `chunk_flat` in `object_index/` is in `[0, product(chunk_grid_shape))` | Error |
-| `obj_index_valid_vg` | Every `vg_flat` in `object_index/` is in `[0, B_per_chunk)` | Error |
-| `obj_index_nonempty_vg` | The VG at each primary address has `count > 0` | Error |
-| `obj_index_unique` | No two objects share the same primary VG address | Error |
+| `obj_index_offsets_monotone` | `object_index/offsets` is monotonically non-decreasing and `offsets[0] == 0` | Error |
+| `obj_index_blob_decodes` | Every per-object manifest blob decodes via `decode_object_manifest_blocks` without error | Error |
+| `obj_index_valid_chunks` | Every block's `chunk_coords` names a chunk in the level's chunk grid | Error |
+| `obj_index_valid_fragments` | Every block's `fragment_index` (single mode), `[start, start + count)` (range mode), or index list (explicit mode) names fragments present in the chunk's `vertex_fragments/` blob | Error |
+| `obj_index_no_double_share` | When `LevelMetadata.shared_fragments == False`: no `(chunk_coords, fragment_index)` pair appears in more than one manifest | Error |
 
 ### Cross-chunk link checks
 
@@ -91,7 +103,7 @@ and validates each independently.
 | Check | Rule | Failure type |
 |-------|------|--------------|
 | `ccl_chunk_coords_arity` | Every endpoint's chunk-coord tuple has length `sid_ndim` | Error |
-| `ccl_src_chunk_exists` | For every `<delta>`: endpoint A's chunk_coords name a chunk present in the owning level's chunk grid (i.e. exists in `vertex_group_offsets/`) | Error |
+| `ccl_src_chunk_exists` | For every `<delta>`: endpoint A's chunk_coords name a chunk present in the owning level's chunk grid (i.e. exists in `vertex_fragments/`) | Error |
 | `ccl_tgt_chunk_exists` | For `delta == 0` only: endpoint B's chunk_coords name a chunk present in the owning level's chunk grid | Error |
 | `ccl_tgt_chunk_at_offset_level` | For `delta != 0`: endpoint B's chunk_coords are validated when the walker reaches level `source_level + delta` | Error |
 | `ccl_attribute_length` | For every `cross_chunk_link_attributes/<name>/<delta>/`: meta `num_links` matches the parallel `cross_chunk_links/<delta>/` meta | Error |
@@ -129,10 +141,10 @@ For polyline, streamline, graph, and skeleton types:
 Level 3 validation of scan.zarrvectors
 ========================================
 Checking 0 (125 chunks)…
-PASS  vg_offsets_non_negative [0]   all counts ≥ -1
-PASS  vg_offsets_no_overlap [0]     no VG slice overlaps
-PASS  vg_offsets_total_count [0]    vertex totals match
-PASS  vg_order_correct [0]          all vertices in correct VG order
+PASS  frag_magic [0]                all chunks: magic 0x5A56_4647 ✓
+PASS  frag_popcount [0]              all chunks: R == popcount(bitmap) ✓
+PASS  frag_range_in_bounds [0]      all range fragments in bounds
+PASS  frag_vg_order [0]             all vertices in correct VG order
 PASS  attr_length_matches [0]       intensity/: 125/125 chunks aligned
 ERROR ccl_different_chunks [0]      2 links found where src chunk == dst chunk
                                     (links at rows 14502, 87331)

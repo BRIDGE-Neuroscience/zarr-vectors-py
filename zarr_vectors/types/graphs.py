@@ -304,22 +304,7 @@ def write_graph(
         chunk_attribute_values=attr_bin_values,
     )
     level_group = create_resolution_level(root, 0, level_meta)
-
     link_width = 2
-    create_vertices_array(level_group, dtype=dtype)
-    create_links_array(level_group, link_width=link_width, delta=0)
-    create_object_index_array(level_group)
-    create_cross_chunk_links_array(level_group, delta=0)
-
-    if node_attributes:
-        for name, data in node_attributes.items():
-            create_attribute_array(level_group, name, dtype=str(data.dtype))
-
-    if edge_attributes:
-        for name, data in edge_attributes.items():
-            create_link_attributes_array(
-                level_group, name, dtype=str(data.dtype), delta=0,
-            )
 
     # Assign nodes to chunks.  When attribute-chunked, prefix each
     # spatial chunk key with the per-node bin so a single spatial cell
@@ -380,74 +365,92 @@ def write_graph(
 
     # Write vertices per chunk (one vertex group per object per chunk)
     object_manifests: dict[int, ObjectManifest] = {}
+    idx_ndim = ndim + 1 if node_attr_bins is not None else ndim
 
-    for chunk_idx, chunk_coords in enumerate(chunk_list):
-        global_indices = chunk_assignments[chunk_coords]
-        chunk_positions = positions[global_indices]
-        chunk_obj_ids = object_ids[global_indices]
-
-        unique_objs = np.unique(chunk_obj_ids)
-        vert_groups: list[npt.NDArray] = []
-        attr_groups: dict[str, list[npt.NDArray]] = {}
+    # Collapse all per-array zarr.json + per-chunk byte writes into one
+    # asyncio.gather (mirrors points.py:300).
+    with level_group.batched_writes():
+        create_vertices_array(level_group, dtype=dtype)
+        create_links_array(level_group, link_width=link_width, delta=0)
+        create_object_index_array(level_group)
+        create_cross_chunk_links_array(level_group, delta=0)
         if node_attributes:
-            for name in node_attributes:
-                attr_groups[name] = []
+            for name, data in node_attributes.items():
+                create_attribute_array(level_group, name, dtype=str(data.dtype))
+        if edge_attributes:
+            for name, data in edge_attributes.items():
+                create_link_attributes_array(
+                    level_group, name, dtype=str(data.dtype), delta=0,
+                )
+        if object_attributes:
+            for _name in object_attributes:
+                create_object_attributes_array(level_group, _name)
 
-        for obj_id in unique_objs:
-            mask = chunk_obj_ids == obj_id
-            vert_groups.append(chunk_positions[mask])
-            oid = int(obj_id)
-            if oid not in object_manifests:
-                object_manifests[oid] = []
-            object_manifests[oid].append((chunk_coords, len(vert_groups) - 1))
+        for chunk_idx, chunk_coords in enumerate(chunk_list):
+            global_indices = chunk_assignments[chunk_coords]
+            chunk_positions = positions[global_indices]
+            chunk_obj_ids = object_ids[global_indices]
+
+            unique_objs = np.unique(chunk_obj_ids)
+            vert_groups: list[npt.NDArray] = []
+            attr_groups: dict[str, list[npt.NDArray]] = {}
+            if node_attributes:
+                for name in node_attributes:
+                    attr_groups[name] = []
+
+            for obj_id in unique_objs:
+                mask = chunk_obj_ids == obj_id
+                vert_groups.append(chunk_positions[mask])
+                oid = int(obj_id)
+                if oid not in object_manifests:
+                    object_manifests[oid] = []
+                object_manifests[oid].append((chunk_coords, len(vert_groups) - 1))
+
+                if node_attributes:
+                    obj_global = global_indices[mask]
+                    for name, data in node_attributes.items():
+                        attr_groups[name].append(data[obj_global])
+
+            write_chunk_vertices(level_group, chunk_coords, vert_groups, dtype=np_dtype)
 
             if node_attributes:
-                obj_global = global_indices[mask]
-                for name, data in node_attributes.items():
-                    attr_groups[name].append(data[obj_global])
+                for name, groups_list in attr_groups.items():
+                    write_chunk_attributes(
+                        level_group, name, chunk_coords, groups_list,
+                        dtype=node_attributes[name].dtype,
+                    )
 
-        write_chunk_vertices(level_group, chunk_coords, vert_groups, dtype=np_dtype)
+        # Write intra-chunk links
+        for chunk_coords in chunk_list:
+            if chunk_coords in intra_edges:
+                local_edges = intra_edges[chunk_coords]
+                # One link group per chunk (all edges in one group)
+                write_chunk_links(level_group, chunk_coords, [local_edges], delta=0)
 
-        if node_attributes:
-            for name, groups_list in attr_groups.items():
-                write_chunk_attributes(
-                    level_group, name, chunk_coords, groups_list,
-                    dtype=node_attributes[name].dtype,
-                )
+                if edge_attr_to_store and edge_attributes:
+                    orig_idx = intra_edge_orig_indices.get(chunk_coords)
+                    if orig_idx is not None and len(orig_idx) > 0:
+                        for name, data in edge_attr_to_store.items():
+                            write_chunk_link_attributes(
+                                level_group, name, chunk_coords,
+                                [np.asarray(data[orig_idx])],
+                                dtype=data.dtype,
+                                delta=0,
+                            )
 
-    # Write intra-chunk links
-    for chunk_coords in chunk_list:
-        if chunk_coords in intra_edges:
-            local_edges = intra_edges[chunk_coords]
-            # One link group per chunk (all edges in one group)
-            write_chunk_links(level_group, chunk_coords, [local_edges], delta=0)
+        # Write cross-chunk links — widen sid_ndim when prefixed.
+        if all_cross_links:
+            write_cross_chunk_links(
+                level_group, all_cross_links, sid_ndim=idx_ndim, delta=0,
+            )
 
-            if edge_attr_to_store and edge_attributes:
-                orig_idx = intra_edge_orig_indices.get(chunk_coords)
-                if orig_idx is not None and len(orig_idx) > 0:
-                    for name, data in edge_attr_to_store.items():
-                        write_chunk_link_attributes(
-                            level_group, name, chunk_coords,
-                            [np.asarray(data[orig_idx])],
-                            dtype=data.dtype,
-                            delta=0,
-                        )
+        # Write object index
+        write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
 
-    # Write cross-chunk links — widen sid_ndim when prefixed.
-    idx_ndim = ndim + 1 if node_attr_bins is not None else ndim
-    if all_cross_links:
-        write_cross_chunk_links(
-            level_group, all_cross_links, sid_ndim=idx_ndim, delta=0,
-        )
-
-    # Write object index
-    write_object_index(level_group, object_manifests, sid_ndim=idx_ndim)
-
-    # Per-object attributes (Tier B): {name: (O,) or (O, C)}.
-    if object_attributes:
-        for _name, _data in object_attributes.items():
-            create_object_attributes_array(level_group, _name)
-            write_object_attributes(level_group, _name, np.asarray(_data))
+        # Per-object attributes (Tier B): {name: (O,) or (O, C)}.
+        if object_attributes:
+            for _name, _data in object_attributes.items():
+                write_object_attributes(level_group, _name, np.asarray(_data))
 
     _finalize_write(root, "write_graph" if not is_tree else "write_skeleton")
     return {
@@ -572,95 +575,74 @@ def read_graph(
     _batched_reads_cm = level_group.batched_reads(_prefetch_plan)
     _batched_reads_cm.__enter__()
     try:
-        # Read all vertices and build global index mapping
+        # Single O(K) pass: build chunk→global-offset map and concatenate
+        # all vertex groups.  The previous implementation walked
+        # ``chunk_keys`` three times (once for positions, once nested to
+        # recompute offsets for each chunk = O(K²), once for cross-chunk
+        # edges) — all redundant.
+        chunk_offsets: dict[ChunkCoords, int] = {}
         all_positions: list[npt.NDArray] = []
-        # Map (chunk_coords, local_idx) → global output index
-        global_idx_map: dict[tuple[ChunkCoords, int], int] = {}
-        current_global = 0
-
+        running = 0
         for chunk_coords in chunk_keys:
+            chunk_offsets[chunk_coords] = running
             try:
                 groups = read_chunk_vertices(
                     level_group, chunk_coords, dtype=dtype, ndim=ndim
                 )
             except ArrayError:
                 continue
-
             for vg in groups:
-                for local_i in range(len(vg)):
-                    global_idx_map[(chunk_coords, current_global + local_i)] = (
-                        current_global + local_i
-                    )
                 all_positions.append(vg)
-                current_global += len(vg)
+                running += len(vg)
 
         if not all_positions:
             return _empty_graph_result(ndim)
 
         positions_out = np.concatenate(all_positions, axis=0)
 
-        # Read intra-chunk edges
+        # Intra-chunk edges: O(1) offset lookup, vectorized remap.
         all_edges: list[npt.NDArray] = []
-        offset = 0
         for chunk_coords in chunk_keys:
-            try:
-                groups = read_chunk_vertices(
-                    level_group, chunk_coords, dtype=dtype, ndim=ndim
-                )
-            except ArrayError:
-                groups = []
-
             try:
                 link_groups = read_chunk_links(
                     level_group, chunk_coords, link_width=link_width, delta=0,
                 )
             except ArrayError:
-                link_groups = []
-
-            # Compute offset: sum of all vertex group sizes up to this chunk
-            chunk_offset = 0
-            for prev_cc in chunk_keys:
-                if prev_cc == chunk_coords:
-                    break
-                try:
-                    prev_groups = read_chunk_vertices(
-                        level_group, prev_cc, dtype=dtype, ndim=ndim
-                    )
-                    chunk_offset += sum(len(g) for g in prev_groups)
-                except ArrayError:
-                    pass
-
+                continue
+            chunk_offset = chunk_offsets[chunk_coords]
             for lg in link_groups:
                 if len(lg) > 0:
-                    remapped = lg.copy()
-                    remapped[:, 0] += chunk_offset
-                    remapped[:, 1] += chunk_offset
-                    all_edges.append(remapped)
+                    all_edges.append(
+                        (lg.astype(np.int64, copy=False) + chunk_offset)
+                    )
 
-            offset = chunk_offset + sum(len(g) for g in groups)
-
-        # Read cross-chunk edges (delta=0; cross-pyramid-level edges live
+        # Cross-chunk edges (delta=0; cross-pyramid-level edges live
         # under delta != 0 and are not part of a single-level read).
+        # Vectorized remap: build offset/local arrays first, then a
+        # single column_stack — avoids the per-edge ``np.array([[ga, gb]])``
+        # allocation in the original loop.
         try:
             ccl = read_cross_chunk_links(level_group, delta=0)
-            # Build chunk→offset map
-            chunk_offsets: dict[ChunkCoords, int] = {}
-            running = 0
-            for cc in chunk_keys:
-                chunk_offsets[cc] = running
-                try:
-                    grps = read_chunk_vertices(
-                        level_group, cc, dtype=dtype, ndim=ndim
-                    )
-                    running += sum(len(g) for g in grps)
-                except ArrayError:
-                    pass
-
-            for (chunk_a, vi_a), (chunk_b, vi_b) in ccl:
-                if chunk_a in chunk_offsets and chunk_b in chunk_offsets:
-                    ga = chunk_offsets[chunk_a] + vi_a
-                    gb = chunk_offsets[chunk_b] + vi_b
-                    all_edges.append(np.array([[ga, gb]], dtype=np.int64))
+            if ccl:
+                off_a: list[int] = []
+                off_b: list[int] = []
+                vi_a_list: list[int] = []
+                vi_b_list: list[int] = []
+                for (chunk_a, vi_a), (chunk_b, vi_b) in ccl:
+                    oa = chunk_offsets.get(chunk_a)
+                    ob = chunk_offsets.get(chunk_b)
+                    if oa is None or ob is None:
+                        continue
+                    off_a.append(oa)
+                    off_b.append(ob)
+                    vi_a_list.append(int(vi_a))
+                    vi_b_list.append(int(vi_b))
+                if off_a:
+                    remapped_cross = np.column_stack([
+                        np.asarray(off_a, dtype=np.int64) + np.asarray(vi_a_list, dtype=np.int64),
+                        np.asarray(off_b, dtype=np.int64) + np.asarray(vi_b_list, dtype=np.int64),
+                    ])
+                    all_edges.append(remapped_cross)
         except (ArrayError, Exception):
             pass
 
@@ -669,12 +651,15 @@ def read_graph(
             total_nodes = len(positions_out)
             # Start with implicit parents: parent[i] = i-1, parent[0] = -1
             parent_arr = np.arange(-1, total_nodes - 1, dtype=np.int64)
-            # Override with explicit branch links (stored in all_edges)
+            # Vectorized branch-link override: one fancy-index per block.
             for edge_block in all_edges:
-                for e in edge_block:
-                    child, par = int(e[0]), int(e[1])
-                    if 0 <= child < total_nodes:
-                        parent_arr[child] = par
+                if len(edge_block) == 0:
+                    continue
+                children = edge_block[:, 0].astype(np.int64, copy=False)
+                parents = edge_block[:, 1].astype(np.int64, copy=False)
+                valid = (children >= 0) & (children < total_nodes)
+                if valid.any():
+                    parent_arr[children[valid]] = parents[valid]
             # Build edge list from parent array
             all_edges = []
             mask = parent_arr >= 0
@@ -690,7 +675,7 @@ def read_graph(
         else:
             edges_out = np.zeros((0, 2), dtype=np.int64)
 
-        # Filter by bbox on positions
+        # Filter by bbox on positions — vectorized edge remap via LUT.
         if bbox is not None:
             bbox_min, bbox_max = np.asarray(bbox[0]), np.asarray(bbox[1])
             node_mask = np.all(
@@ -698,22 +683,22 @@ def read_graph(
                 axis=1,
             )
             if not np.all(node_mask):
+                n_total = len(positions_out)
                 keep_indices = np.flatnonzero(node_mask)
-                keep_set = set(keep_indices.tolist())
                 positions_out = positions_out[keep_indices]
-
-                # Remap edges
-                old_to_new = {int(old): new for new, old in enumerate(keep_indices)}
-                filtered_edges: list[list[int]] = []
-                for e in edges_out:
-                    s, d = int(e[0]), int(e[1])
-                    if s in old_to_new and d in old_to_new:
-                        filtered_edges.append([old_to_new[s], old_to_new[d]])
-                edges_out = (
-                    np.array(filtered_edges, dtype=np.int64)
-                    if filtered_edges
-                    else np.zeros((0, 2), dtype=np.int64)
-                )
+                if len(edges_out) > 0:
+                    remap = np.full(n_total, -1, dtype=np.int64)
+                    remap[keep_indices] = np.arange(
+                        len(keep_indices), dtype=np.int64,
+                    )
+                    new_src = remap[edges_out[:, 0]]
+                    new_dst = remap[edges_out[:, 1]]
+                    keep_mask = (new_src >= 0) & (new_dst >= 0)
+                    edges_out = np.stack(
+                        [new_src[keep_mask], new_dst[keep_mask]], axis=1,
+                    ).astype(np.int64, copy=False)
+                else:
+                    edges_out = np.zeros((0, 2), dtype=np.int64)
 
         return {
             "positions": positions_out,
@@ -756,20 +741,40 @@ def _reorder_tree(
     """
     n = len(positions)
 
-    # Build adjacency from edges
+    # Build adjacency from edges via numpy: sort by parent, then slice
+    # per-parent runs.  The previous ``for e in edges`` loop was ~O(M)
+    # Python iterations; this is one ``argsort`` + per-unique-parent
+    # ``.tolist()`` slice.
     children: dict[int, list[int]] = {i: [] for i in range(n)}
-    parent_of: dict[int, int] = {}
-    for e in edges:
-        a, b = int(e[0]), int(e[1])
-        # Convention: edge [child, parent]
-        children[b].append(a)
-        parent_of[a] = b
+    if len(edges) > 0:
+        e_children = edges[:, 0].astype(np.int64, copy=False)
+        e_parents = edges[:, 1].astype(np.int64, copy=False)
+        sort_idx = np.argsort(e_parents, kind="stable")
+        sorted_parents = e_parents[sort_idx]
+        sorted_children = e_children[sort_idx]
+        unique_parents, start_indices = np.unique(
+            sorted_parents, return_index=True,
+        )
+        end_indices = np.concatenate(
+            [start_indices[1:], np.array([len(sorted_parents)], dtype=np.int64)]
+        )
+        for parent, lo, hi in zip(
+            unique_parents.tolist(),
+            start_indices.tolist(),
+            end_indices.tolist(),
+        ):
+            children[parent] = sorted_children[lo:hi].tolist()
+    child_nodes_arr = (
+        edges[:, 0].astype(np.int64, copy=False) if len(edges) > 0 else np.array([], dtype=np.int64)
+    )
 
-    # Find root (node with no parent)
-    all_nodes = set(range(n))
-    child_nodes = set(parent_of.keys())
-    roots = all_nodes - child_nodes
-    root_node = min(roots) if roots else 0
+    # Find root (node with no parent) — vectorized set difference.
+    is_child = np.zeros(n, dtype=bool)
+    if len(child_nodes_arr) > 0:
+        in_range = (child_nodes_arr >= 0) & (child_nodes_arr < n)
+        is_child[child_nodes_arr[in_range]] = True
+    root_candidates = np.flatnonzero(~is_child)
+    root_node = int(root_candidates[0]) if len(root_candidates) > 0 else 0
 
     # DFS ordering
     order: list[int] = []

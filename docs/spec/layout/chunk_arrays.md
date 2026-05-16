@@ -61,8 +61,9 @@ declared maximum.
 
 Within each spatial chunk the vertices are stored in **VG order**: all
 vertices of bin (0,0,0) first, then bin (0,0,1), etc., in C-order bin
-index. The `vertex_group_offsets/` array encodes the start and length of
-each bin's vertices within this ordering (see [VG index arrays](vg_index_arrays.md)).
+index. The `vertex_fragments/` array encodes one fragment per non-empty
+bin describing its row range within this ordering (see
+[Fragment-index arrays](vg_index_arrays.md)).
 
 **Example:** a 3-D store with a chunk grid of shape `(5, 6, 4)` and up to
 65 536 vertices per chunk:
@@ -79,25 +80,31 @@ each bin's vertices within this ordering (see [VG index arrays](vg_index_arrays.
 }
 ```
 
-### `vertex_group_offsets/`
+### `vertex_fragments/`
 
-Stores the byte offset and length of each VG within the corresponding
-`vertices/` chunk slice. See [VG index arrays](vg_index_arrays.md) for a
-detailed description of the VG index structure.
+Stores the row partition of each `vertices/` chunk slice as a binary
+fragment-index blob. See [Fragment-index arrays](vg_index_arrays.md) for
+the full byte layout, the decoder algorithm, and worked examples.
 
 | Property | Value |
 |----------|-------|
-| Dtype | `int64` |
-| Logical shape | `(*chunk_grid_shape, B_per_chunk, 2)` |
-| Zarr chunk shape | `(1, 1, …, 1, B_per_chunk, 2)` |
-| Fill value | `-1` (indicates empty bin) |
-| Codec | `bytes → blosc(zstd, byteshuffle)` |
+| Dtype | `uint8` |
+| Layout | One opaque blob per chunk; addressed by chunk coordinate |
+| Codec | none (bytes written directly; see [Codec pipeline](../foundations/codec_pipeline.md)) |
+| `zv_array` metadata | `"vertex_fragments"`, `encoding == "fragment_index_v1"` |
 
-`B_per_chunk = product(chunk_shape[i] / bin_shape[i] for i in range(D))`.
+Each blob is a v1 fragment-index header (magic `'ZVFG'`) followed by a
+range bitmap, range table, and explicit CSR. At level 0 with the default
+writer, each non-empty bin emits one range fragment; at coarsened levels
+with `shared_fragments=True`, fragments may also represent metavertices
+shared between objects' manifests.
 
-The two values per bin are `[offset, count]` where `offset` is the index
-of the first vertex of this bin within the chunk's vertex slice, and
-`count` is the number of vertices in this bin.
+### `link_fragments/`
+
+Parallel structure for `links/0/<chunk>` rows. Same byte layout as
+`vertex_fragments/`; present only where the geometry type has connectivity
+and only at `<delta>=0`. Cross-level link arrays (`<delta> != 0`) keep
+their inline self-describing header.
 
 ### `links/<delta>/`
 
@@ -164,23 +171,19 @@ chunk `(i,j,l)` of `vertices/`.
 
 Present for: polyline, streamline, graph, skeleton, mesh.
 
-Maps each object ID to a `(chunk_flat_index, vg_offset)` pair identifying
-where the object's first VG is located.
+Stores one **manifest blob** per object enumerating every chunk the object
+touches and the fragments within each chunk. Two byte-keyed entries:
 
-| Property | Value |
-|----------|-------|
-| Dtype | `int64` |
-| Logical shape | `(n_objects, 2)` |
-| Zarr chunk shape | `(65536, 2)` |
-| Fill value | `-1` |
-| Codec | `bytes → blosc(zstd, byteshuffle)` |
+| Key | Contents |
+|-----|----------|
+| `data` | concatenated manifest blobs for all `num_objects` objects |
+| `offsets` | `int64` array of length `num_objects`; entry `i` is the byte offset of object `i`'s blob within `data` |
 
-`chunk_flat_index` is the C-order flat index of the object's primary chunk in
-the chunk grid. `vg_offset` is the index of the first VG belonging to this
-object within that chunk's `vertex_group_offsets/` slice.
+Group-level `zv_array` metadata: `"object_index"`, plus `num_objects` and
+`sid_ndim`. The arrays are written as opaque bytes (no Zarr codec pipeline).
 
-See [Object manifest](../object_model/object_manifest.md) for a detailed
-description of the object indexing mechanism.
+See [Object manifest](../object_model/object_manifest.md) for the
+manifest-blob byte layout and the read path.
 
 ### `object_attributes/<name>/`
 

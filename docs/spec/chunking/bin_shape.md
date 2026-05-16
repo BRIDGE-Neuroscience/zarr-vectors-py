@@ -209,7 +209,15 @@ L2:
 - `bin_ratio` values at every level are positive integers.
 
 L3:
-- The shape of `vertex_group_offsets/` at each level is consistent with
-  `B_per_chunk = product(chunk_shape[d] / effective_bin_shape[N][d])`.
-- For each non-empty chunk, `max(vg_offsets[:, 0] + vg_offsets[:, 1]) ≤
-  vertex_count_in_chunk`.
+- At level 0 with the default writer (i.e. when
+  `LevelMetadata.shared_fragments=False`), the range fragment count
+  `R` in each chunk's `vertex_fragments/<chunk_coords>` blob equals
+  that chunk's non-empty-bin count. `B_per_chunk =
+  product(chunk_shape[d] / effective_bin_shape[N][d])` remains the
+  upper bound on the total fragment count `F`.
+- For every range fragment, `start + count ≤ vertex_count_in_chunk`.
+  For every explicit fragment, all entries of the index list lie in
+  `[0, vertex_count_in_chunk)`.
+- At coarsened levels with `shared_fragments=True`, `F` is bounded
+  by the number of distinct metavertices in the chunk and has no
+  fixed relation to `B_per_chunk`.

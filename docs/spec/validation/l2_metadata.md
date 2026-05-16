@@ -81,14 +81,14 @@ in the store.
 |-------|------|--------------|
 | `vertices_dtype` | `vertices/` dtype is `float32` | Warning (other float types accepted with warning) |
 | `vertices_shape_dims` | `vertices/` last dimension equals `spatial_dims` | Error |
-| `vg_offsets_dtype` | `vertex_group_offsets/` dtype is `int64` | Error |
-| `vg_offsets_shape` | `vertex_group_offsets/` second-to-last dim equals `B_per_chunk` | Error |
-| `vg_offsets_last_dim` | `vertex_group_offsets/` last dim equals 2 | Error |
+| `vertex_fragments_dtype` | `vertex_fragments/` `.zattrs` declares `zv_array == "vertex_fragments"` and `encoding == "fragment_index_v1"` | Error |
+| `vertex_fragments_blob_magic` | Every non-empty chunk's blob starts with magic `0x5A56_4647` (`'ZVFG'`) and `version == 1` | Error |
+| `link_fragments_dtype` | `link_fragments/` (when present) `.zattrs` declares `zv_array == "link_fragments"` and `encoding == "fragment_index_v1"` | Error |
 | `links_dtype` | `links/<delta>/` `.zattrs` declares `dtype` as an integer type (`int32`/`int64`) | Warning if `int64` |
 | `links_link_width` | `links/<delta>/` `.zattrs` declares `link_width` ≥ 2 (2 for graph/poly/skeleton edges; 3 for triangle faces; 4 for quad faces) | Error |
 | `links_level_delta` | `links/<delta>/` `.zattrs` declares `level_delta` matching the path segment | Error |
-| `obj_index_dtype` | `object_index/` dtype is `int64` | Error |
-| `obj_index_shape` | `object_index/` last dim equals 2 | Error |
+| `obj_index_meta` | `object_index/` `.zattrs` declares `zv_array == "object_index"`, `num_objects` (int ≥ 0), and `sid_ndim` (positive int) | Error |
+| `obj_index_offsets_len` | `object_index/offsets` has length equal to `num_objects` and dtype `int64` | Error |
 | `ccl_meta` | `cross_chunk_links/<delta>/` `.zattrs` declares `num_links`, `sid_ndim`, `level_delta` | Error |
 | `ccl_attr_num_links` | `cross_chunk_link_attributes/<name>/<delta>/` `num_links` matches parallel CCL meta (0.4+) | Error |
 
@@ -125,7 +125,7 @@ PASS  level_0_present           multiscales contains level 0
 PASS  bin_ratio_consistent [1]  bin_shape [100,100,100] = base [50,50,50] × ratio [2,2,2] ✓
 PASS  scale_values [level=1]    scale [2.0,2.0,2.0] = bin_ratio [2,2,2] ✓
 PASS  translation_values [1]    translation [50,50,50] = bin_shape/2 [50,50,50] ✓
-PASS  vg_offsets_shape [0]      B_per_chunk = 64, last dim = 2 ✓
+PASS  vertex_fragments_dtype [0] zv_array = "vertex_fragments", encoding = "fragment_index_v1" ✓
 WARN  step_size_unit_valid       step_size_unit "voxels" not in recommended vocabulary
 PASS  sparsity_range [level=1]  0.5 in (0, 1] ✓
 

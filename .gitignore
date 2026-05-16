@@ -28,3 +28,5 @@ Thumbs.db
 htmlcov/
 .ipynb_checkpoints
 .claude/
+
+docs/_build/

@@ -893,6 +893,23 @@ def _create_or_open_store(
             local_root = _resolve_local_path(path)
             if local_root.exists() and local_root.is_dir() and any(local_root.iterdir()):
                 return open_store(path, mode="r+", backend=backend, **backend_kwargs)
+        else:
+            # Non-local URL (gs://, s3://, http(s)://, ...): we cannot
+            # cheaply probe for existence, so try ``open_store`` first
+            # and fall back to ``create_store`` on StoreError.  Mirrors
+            # the icechunk / pre-built-Store paths above.  Without this,
+            # ``write_points`` (and other type writers) against an
+            # existing remote store would silently re-run
+            # ``create_store(mode="w")`` and clobber the NGFF
+            # ``multiscales[0].axes`` block — the writer does not
+            # forward the user's ``axes=`` kwarg, so axis units written
+            # at create time would be replaced by unit-less defaults.
+            try:
+                return open_store(
+                    path, mode="r+", backend=backend, **backend_kwargs,
+                )
+            except StoreError:
+                pass
     return create_store(
         path, backend=backend, **creator_kwargs, **backend_kwargs,
     )

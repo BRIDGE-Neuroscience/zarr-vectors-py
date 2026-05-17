@@ -118,6 +118,145 @@ reference implementation.
 
 ---
 
+## Design rationale
+
+The fragment-index format makes three structural choices that are not
+obvious from the byte layout alone: it supports two fragment kinds
+(range and explicit), it discriminates between them with a one-bit-
+per-fragment bitmap rather than a tag inside each fragment, and it
+deliberately does *not* run a general-purpose compressor over the
+result. This section explains why.
+
+### When fragment sharing matters — and when it doesn't
+
+The "reuse" question is whether a single row of `vertices/<chunk>`
+(or `links/0/<chunk>`) can be named by more than one logical owner —
+two object manifests, or two adjacent bins, or a parent and a child
+in a pyramid. The answer depends on the level and on the writer:
+
+| Scenario | Sharing needed? | Why |
+|----------|----------------|-----|
+| Level 0, default writer | No | Each vertex belongs to exactly one bin; manifests refer to disjoint row ranges. A contiguous `(start, count)` per non-empty bin is sufficient. |
+| Level 0, custom writer that splits one bin across two manifests (e.g. a polyline with both endpoints in the same bin claimed by separate objects) | Yes, but rare | Almost always cheaper to duplicate the few rows than pay the explicit-fragment overhead. |
+| Coarsened pyramid level, no merging (`shared_fragments=False`) | No | Coarsening preserves disjoint manifests; only the spatial granularity changes. |
+| Coarsened pyramid level, metanode-style merging (`shared_fragments=True`) | **Yes — the dominant case the format exists for** | A coarsened metavertex commonly belongs to *N* parent objects' paths. Duplicating its vertex row *N* times costs N× storage for the row plus N× the bytes through the network on any bbox read that touches that chunk. |
+
+The metanode case drives the whole design. At level 0 the format
+collapses to "one range fragment per non-empty bin" — structurally
+identical to the pre-0.6 `(offset, count)` table for non-empty rows.
+At coarsened levels the same byte layout absorbs sharing without
+duplicating rows. The single format covers both cases without a
+mode switch at the level or chunk level — only at the per-fragment
+bit level.
+
+### Why two fragment kinds at all
+
+Storing every fragment as an explicit index list (the most general
+form) seems simpler. It isn't, for three reasons:
+
+1. **Storage cost.** A typical level-0 bin holds dozens to hundreds
+   of vertices. As a range fragment it costs 16 bytes regardless of
+   `count`. As an explicit list it costs 4 bytes (CSR offset slot) +
+   8 bytes × `count` — so `count = 50` is 404 bytes vs. 16 bytes, a
+   ~25× blowup on the *common case* in service of a feature only
+   coarsened levels need.
+
+2. **Decode cost.** Range fragments materialise as
+   `np.arange(start, start + count)` — zero allocation if the caller
+   just wants `vertices[start:start+count]`. Explicit fragments
+   require a gather load and a CSR offset lookup. Forcing every
+   fragment through the gather path adds per-fragment overhead that
+   compounds across thousands of fragments in a typical chunk.
+
+3. **Format predictability.** The level-0 stable case maps cleanly
+   to the pre-0.6 `(offset, count)` model and to other formats'
+   contiguous-row conventions (Arrow run-end, Parquet `RunLength`,
+   skeleton polyline conventions). Keeping that representation
+   first-class makes the format legible at a glance and makes
+   level-0 reads byte-identical in their per-chunk hot path to what
+   the pre-0.6 format produced.
+
+Conversely, forcing *every* fragment into a range would forbid the
+shared-metavertex case the rewrite was undertaken for. Hence two
+kinds, paid for only where they're earned.
+
+### Why the bitmap is the discriminator
+
+Given two kinds, the format needs a way for the reader to ask "what
+kind is fragment `f`?" before deciding which table to consult. Three
+plausible designs:
+
+| Design | Classify cost | Bytes for `F = 256` fragments, `E = 4` explicit | Random-access by `f` |
+|--------|--------------|----------------------------------------------|---------------------|
+| Per-fragment tag byte | O(1) | 256 B tags | O(1) |
+| List of explicit fragment IDs (sorted) | O(log E) bsearch | `4 × 4 = 16` B | Needs bsearch per query |
+| One-bit-per-fragment bitmap | O(1) | `256 / 8 = 32` B | O(1) bit test |
+| Detect dynamically from the indices | O(`count`) scan | 0 B but always-explicit storage | Forces all-explicit |
+
+The bitmap dominates: it's a constant fraction of the explicit-tag
+cost (1/8th the bytes), it preserves O(1) classification by fragment
+index (a single byte fetch + shift + mask), and it never forces a
+scan over the index list. The "list of explicit IDs" approach saves
+bytes when `E` is tiny, but loses the O(1) classify-by-`f` property
+that fragment lookup needs — readers wouldn't know "is `f = 137`
+explicit?" without a binary search.
+
+The bitmap pays its modest fixed cost (`ceil(F/8)` bytes) in
+exchange for *structural* compression: with one bit per fragment
+the format declares "this run is contiguous" without storing the
+run elements themselves. The range table then carries only two
+int64 values for that run, regardless of length. The combination
+— bitmap classifier + per-kind dense tables — is the structural
+analogue of run-length encoding, applied to fragment identities
+rather than to vertex values.
+
+### Why no outer compressor
+
+The blob is binary-packed already (8-byte-aligned header, dense
+bitmap, packed int64 ranges, CSR explicit). For typical fragment
+counts (tens to low hundreds per chunk), it's small — usually 100
+B to a few KB — and the *latency* cost of running a general
+decompressor (LZ4/Zstd/Blosc) on a bbox-query hot path dominates
+the bytes-saved gain. Specifically:
+
+- The range table and CSR indices carry near-incompressible payloads
+  (sparse int64 row indices into the chunk).
+- The bitmap is already near its entropy bound for the typical
+  case of "mostly ranges, scattered explicits".
+- Decode is on the read-amplification path: a bbox query in a
+  region with N overlapping chunks pays the decompression cost N
+  times before any vertex byte is touched.
+
+Stores that need to minimise on-disk size MAY wrap the chunk write
+in their own compression layer (e.g. an outer Zstd codec at the
+Zarr level or a content-addressed-blob layer above the kvstore).
+The fragment-index format is independent of that choice. Readers
+that don't know about the outer wrapper still parse the raw blob
+correctly once it's been unwrapped.
+
+### Reading the format as a compression scheme
+
+It is useful to think of the v1 layout as a small structural
+compression scheme rather than as a data structure:
+
+- The **bitmap** encodes a 1-bit "is this row range a constant
+  arithmetic progression?" flag per fragment — RLE-of-flags rather
+  than RLE-of-values.
+- The **range table** stores the two parameters (start, count) that
+  reconstruct the implicit arithmetic progression — a tight
+  parametric form.
+- The **CSR** stores the explicit override list for the fragments
+  where the parametric form doesn't apply.
+- The **header** carries the popcount that lets the decoder allocate
+  the popcount-prefix lookup in one pass.
+
+The reader pays the cost of the explicit override only when the
+writer chose to use it. The bitmap is what makes "is this a range?"
+a free question — and that, more than any specific byte saving, is
+the property the format exists to provide.
+
+---
+
 ## Technical reference
 
 ### On-disk byte layout (v1)

@@ -1,0 +1,140 @@
+name: Release
+
+# Manually-triggered release: bump the version (patch / minor / major)
+# from the latest ``v*`` git tag, create and push the new tag, build
+# sdist + wheel from that tagged commit, and publish to PyPI via
+# Trusted Publishing (OIDC — no API token in secrets).
+#
+# Before the first run, configure PyPI Trusted Publishing for project
+# ``zarr-vectors``:
+#   https://pypi.org/manage/account/publishing/
+# Pending publisher fields:
+#   PyPI project name:    zarr-vectors
+#   Owner:                AllenInstitute
+#   Repository name:      zarr-vectors-py
+#   Workflow filename:    release.yml
+#   Environment name:     pypi
+# Then create a ``pypi`` environment on the repo (Settings → Environments)
+# — empty deployment-protection rules are fine to start; add required
+# reviewers once you want a human approval gate before each upload.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        required: true
+        type: choice
+        options: [patch, minor, major]
+      dry-run:
+        description: "Compute version + build, but skip tag push and PyPI upload"
+        required: true
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+permissions:
+  contents: write       # to create + push the new tag and the GitHub release
+  id-token: write       # to authenticate to PyPI via OIDC (Trusted Publishing)
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: pypi   # required by PyPI Trusted Publishing
+    steps:
+      - name: Checkout (full history for setuptools-scm)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Tags don't fetch by default with shallow clones; depth: 0
+          # pulls the full ref history + tags so setuptools-scm can
+          # resolve the latest tag.
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compute next version
+        id: bump
+        run: |
+          set -euo pipefail
+          # Latest ``v*`` tag, sorted by semver (refname desc).  Default
+          # to ``v0.0.0`` when no release tags exist yet so the first
+          # patch bump produces ``v0.0.1``, first minor ``v0.1.0``,
+          # first major ``v1.0.0``.
+          LAST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          LAST_TAG="${LAST_TAG:-v0.0.0}"
+          VERSION="${LAST_TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<<"$VERSION"
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          NEW_TAG="v${NEW_VERSION}"
+          echo "last_tag=${LAST_TAG}"
+          echo "Computed new tag: ${NEW_TAG}"
+          {
+            echo "new_version=${NEW_VERSION}"
+            echo "new_tag=${NEW_TAG}"
+            echo "last_tag=${LAST_TAG}"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: inputs.dry-run != 'true'
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.bump.outputs.new_tag }}" \
+            -m "Release ${{ steps.bump.outputs.new_tag }}"
+          git push origin "${{ steps.bump.outputs.new_tag }}"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade build
+
+      - name: Build sdist + wheel
+        run: |
+          set -euo pipefail
+          rm -rf dist build *.egg-info
+          python -m build
+
+      - name: Verify built version matches the new tag
+        run: |
+          set -euo pipefail
+          # The sdist filename contains the version setuptools-scm resolved.
+          # On dry-run runs the tag isn't pushed, but it's been created
+          # locally and setuptools-scm still picks it up from the working
+          # tree; the only way the assertion fails is if the build saw a
+          # stale tag, which would indicate setuptools_scm misconfiguration.
+          BUILT="$(ls dist/zarr_vectors-*.tar.gz | head -n1 | sed -E 's/.*zarr_vectors-(.+)\.tar\.gz/\1/')"
+          EXPECTED="${{ steps.bump.outputs.new_version }}"
+          echo "Built version: ${BUILT}"
+          echo "Expected:      ${EXPECTED}"
+          if [ "${BUILT}" != "${EXPECTED}" ]; then
+            echo "::error::Built version ${BUILT} does not match expected ${EXPECTED}" >&2
+            exit 1
+          fi
+
+      - name: Publish to PyPI (Trusted Publishing)
+        if: inputs.dry-run != 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No ``with:`` block.  Trusted Publishing reads the OIDC token
+        # via ``id-token: write`` above and verifies the GitHub
+        # repo/workflow/environment matches the pending publisher
+        # configured at https://pypi.org/manage/account/publishing/.
+
+      - name: Create GitHub release
+        if: inputs.dry-run != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.bump.outputs.new_tag }}
+          name: ${{ steps.bump.outputs.new_tag }}
+          files: dist/*
+          generate_release_notes: true

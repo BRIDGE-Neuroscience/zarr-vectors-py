@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zarr-vectors"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Python utilities for the Zarr Vector Format (ZVF) — cloud-native storage for points, lines, streamlines, graphs, and meshes."
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
@@ -30,6 +30,13 @@ dependencies = [
     "zarr>=3.0; python_version >= '3.11'",
     "zarr>=2.18,<3; python_version < '3.11'",
 ]
+
+[project.urls]
+Homepage = "https://github.com/AllenInstitute/zarr-vectors-py"
+Documentation = "https://zarr-vectors-py.readthedocs.io"
+Repository = "https://github.com/AllenInstitute/zarr-vectors-py"
+Issues = "https://github.com/AllenInstitute/zarr-vectors-py/issues"
+Specification = "https://github.com/AllenInstitute/zarr_vectors"
 
 [project.optional-dependencies]
 draco = [
@@ -78,6 +85,15 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["zarr_vectors*"]
+
+[tool.setuptools_scm]
+# Derive the package version from git tags (e.g. ``v0.1.0`` → ``0.1.0``).
+# At build time setuptools-scm writes the resolved version to
+# ``zarr_vectors/_version.py`` so the installed package can expose it as
+# ``zarr_vectors.__version__`` without re-reading installed metadata at
+# import time.  The generated file is gitignored — the git tag is the
+# single source of truth.
+version_file = "zarr_vectors/_version.py"
 
 [tool.ruff]
 line-length = 100

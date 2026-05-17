@@ -9,6 +9,11 @@ build/
 dist/
 *.egg
 
+# setuptools-scm writes the resolved version here at build time; the
+# git tag is the single source of truth so this file is never checked
+# in.
+zarr_vectors/_version.py
+
 # Virtual envs
 .venv/
 venv/
@@ -29,4 +34,5 @@ htmlcov/
 .ipynb_checkpoints
 .claude/
 
-docs/_build/
+docs/_build
+*.prof

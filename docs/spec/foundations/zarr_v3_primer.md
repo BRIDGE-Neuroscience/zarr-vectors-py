@@ -50,7 +50,7 @@ on top of Zarr v3: every array inside a ZVF store is a standard Zarr v3
 array, and every group is a standard Zarr v3 group. A reader that understands
 only Zarr v3 can open any ZVF store, traverse its groups, and read raw array
 data — it simply would not know how to interpret the ZVF-specific conventions
-(the VG index, the object model, the multiscale metadata).
+(the fragment index, the object model, the multiscale metadata).
 
 This inheritance is intentional. It means ZVF benefits automatically from
 Zarr's broad ecosystem: cloud backends (S3, GCS, Azure), codec libraries

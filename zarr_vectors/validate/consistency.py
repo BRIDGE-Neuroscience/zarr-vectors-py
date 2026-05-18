@@ -43,7 +43,7 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
             continue
 
         total_verts = 0
-        chunk_vg_counts: dict[tuple, int] = {}
+        chunk_fragment_counts: dict[tuple, int] = {}
 
         # Resolve per-level chunk_shape (v0.7 may override root).
         from zarr_vectors.core.metadata import get_level_chunk_shape
@@ -72,12 +72,12 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
             int(round(cs / bs))
             for cs, bs in zip(level_chunk_shape, level_bin_shape)
         )
-        max_vgs = 1
+        max_fragments = 1
         for b in level_bins_per_chunk:
-            max_vgs *= b
+            max_fragments *= b
 
-        # Per-bin VG layout only applies to undifferentiated point-cloud stores.
-        # Polylines / lines / graphs / meshes use VGs to represent segments,
+        # Per-bin fragment layout only applies to undifferentiated point-cloud stores.
+        # Polylines / lines / graphs / meshes use fragments to represent segments,
         # endpoints, or per-object partitions — not bins.
         geom_types = meta.geometry_types or []
         is_point_cloud_only = (
@@ -87,7 +87,7 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
                 "skeleton", "mesh",
             ])
         )
-        # Also skip if the store has object_index (VGs are per-object, not per-bin)
+        # Also skip if the store has object_index (fragments are per-object, not per-bin)
         try:
             has_object_index = "object_index" in lg
         except Exception:
@@ -103,33 +103,33 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
                 result.add_error(f"{prefix}: chunk {ck} decode failed: {e}")
                 continue
 
-            chunk_vg_counts[ck] = len(groups)
+            chunk_fragment_counts[ck] = len(groups)
 
-            # Check VG count doesn't exceed bins_per_chunk
+            # Check fragment count doesn't exceed bins_per_chunk
             # (only for undifferentiated point clouds with explicit bins)
             has_bins = any(b > 1 for b in level_bins_per_chunk)
-            if check_bin_layout and has_bins and len(groups) > max_vgs:
+            if check_bin_layout and has_bins and len(groups) > max_fragments:
                 result.add_error(
-                    f"{prefix}: chunk {ck} has {len(groups)} VGs, "
-                    f"exceeds bins_per_chunk product {max_vgs}"
+                    f"{prefix}: chunk {ck} has {len(groups)} fragments, "
+                    f"exceeds bins_per_chunk product {max_fragments}"
                 )
 
-            for vi, vg in enumerate(groups):
-                if vg.ndim != 2 or vg.shape[1] != ndim:
-                    result.add_error(f"{prefix}: chunk {ck} vg[{vi}] shape {vg.shape}")
-                if len(vg) > 0 and np.any(~np.isfinite(vg)):
-                    result.add_warning(f"{prefix}: chunk {ck} vg[{vi}] NaN/Inf")
-                total_verts += len(vg)
+            for vi, fragment in enumerate(groups):
+                if fragment.ndim != 2 or fragment.shape[1] != ndim:
+                    result.add_error(f"{prefix}: chunk {ck} fragment[{vi}] shape {fragment.shape}")
+                if len(fragment) > 0 and np.any(~np.isfinite(fragment)):
+                    result.add_warning(f"{prefix}: chunk {ck} fragment[{vi}] NaN/Inf")
+                total_verts += len(fragment)
 
             # Spot-check bin bounds for point clouds only
             if check_bin_layout and has_bins and chunks_checked_for_bin_bounds < 3:
-                from zarr_vectors.spatial.chunking import vg_index_to_bin
+                from zarr_vectors.spatial.chunking import fragment_index_to_bin
                 chunks_checked_for_bin_bounds += 1
-                for vi, vg in enumerate(groups):
-                    if len(vg) == 0:
+                for vi, fragment in enumerate(groups):
+                    if len(fragment) == 0:
                         continue
                     try:
-                        bin_coords = vg_index_to_bin(vi, ck, level_bins_per_chunk)
+                        bin_coords = fragment_index_to_bin(vi, ck, level_bins_per_chunk)
                     except Exception:
                         continue
                     bin_lo = np.array(
@@ -140,13 +140,13 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
                     # Allow small tolerance for float rounding
                     tol = 1e-4
                     out_of_bin = np.any(
-                        (vg < bin_lo - tol) | (vg >= bin_hi + tol),
+                        (fragment < bin_lo - tol) | (fragment >= bin_hi + tol),
                         axis=1,
                     )
                     n_out = int(np.sum(out_of_bin))
                     if n_out > 0:
                         result.add_warning(
-                            f"{prefix}: chunk {ck} vg[{vi}] has {n_out} points "
+                            f"{prefix}: chunk {ck} fragment[{vi}] has {n_out} points "
                             f"outside bin {bin_coords} bounds"
                         )
 
@@ -168,11 +168,11 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
         try:
             manifests = read_all_object_manifests(lg)
             for oid, mf in enumerate(manifests):
-                for cc, vgi in mf:
-                    if cc not in chunk_vg_counts:
+                for cc, fragment_index in mf:
+                    if cc not in chunk_fragment_counts:
                         result.add_error(f"{prefix}: obj {oid} refs non-existent chunk {cc}")
-                    elif vgi >= chunk_vg_counts[cc]:
-                        result.add_error(f"{prefix}: obj {oid} refs vg_idx={vgi} >= {chunk_vg_counts[cc]}")
+                    elif fragment_index >= chunk_fragment_counts[cc]:
+                        result.add_error(f"{prefix}: obj {oid} refs fragment_idx={fragment_index} >= {chunk_fragment_counts[cc]}")
             result.add_pass(f"{prefix}: object_index validated ({len(manifests)} objects)")
         except Exception:
             pass
@@ -189,11 +189,11 @@ def validate_consistency(store_path: str | Path) -> ValidationResult:
             except Exception:
                 continue
             for (ca, _), (cb, _) in ccl:
-                if ca not in chunk_vg_counts:
+                if ca not in chunk_fragment_counts:
                     result.add_error(
                         f"{prefix}: ccl[delta={d}] refs non-existent chunk {ca}"
                     )
-                if d == 0 and cb not in chunk_vg_counts:
+                if d == 0 and cb not in chunk_fragment_counts:
                     result.add_error(
                         f"{prefix}: ccl[delta=0] refs non-existent chunk {cb}"
                     )

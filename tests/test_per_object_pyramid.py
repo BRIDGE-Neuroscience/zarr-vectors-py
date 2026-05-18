@@ -9,7 +9,7 @@ Covers the four invariants from the plan:
 * **I3** Chunk-neighbourhood containment —
   ``chunks(L+1, oid) ⊆ neighbouring_chunk_keys(chunks(L, oid), halo=1)``.
 * **I4** Shared-metavertex multiplicity — at least one metavertex is
-  referenced by ≥ 2 objects' manifests, and the on-disk vertex group
+  referenced by ≥ 2 objects' manifests, and the on-disk fragment
   count is strictly less than the sum of manifest-ref counts.
 """
 
@@ -170,7 +170,7 @@ def test_chunk_halo_containment(tmp_path):
 def test_shared_metavertices(tmp_path):
     """In a 30-polyline test with spatial overlap, at least one
     metavertex is referenced by ≥ 2 objects' manifests, and the
-    on-disk vertex group count is strictly less than total ref count."""
+    on-disk fragment count is strictly less than total ref count."""
     store = _build_store(tmp_path, seed=5, n=30)
     coarsen_level(str(store), source_level=0, target_level=1,
                   coarsen_factor=2.0, sparsity_factor=1.0, sparsity_seed=42)
@@ -186,13 +186,13 @@ def test_shared_metavertices(tmp_path):
         "is unique."
     )
 
-    # The on-disk vg count equals the number of unique refs (one vg per
+    # The on-disk fragment count equals the number of unique refs (one fragment per
     # metavertex).
     from zarr_vectors.core.arrays import list_chunk_keys
     on_disk = 0
     for cc in list_chunk_keys(lvl1):
-        vgs = read_chunk_vertices(lvl1, cc, dtype=np.float32, ndim=3)
-        on_disk += len(vgs)
+        fragments = read_chunk_vertices(lvl1, cc, dtype=np.float32, ndim=3)
+        on_disk += len(fragments)
     assert on_disk == len(unique_refs)
 
 

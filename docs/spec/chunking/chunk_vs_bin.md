@@ -52,10 +52,10 @@ Space
  ├─ Chunk grid (chunk_shape)          ← file layout, I/O unit
  │   ├─ Chunk (0,0,0) ─────────────────────────────────────────┐
  │   │   ├─ Bin grid (bin_shape)      ← spatial index, query unit │
- │   │   │   ├─ Bin (0,0,0) ──── VG ──── vertex slice             │
- │   │   │   ├─ Bin (0,0,1) ──── VG ──── vertex slice             │
- │   │   │   ├─ Bin (0,0,2) ──── VG ──── vertex slice             │
- │   │   │   ├─ Bin (0,0,3) ──── VG ──── vertex slice             │
+ │   │   │   ├─ Bin (0,0,0) ──── fragment ──── vertex slice             │
+ │   │   │   ├─ Bin (0,0,1) ──── fragment ──── vertex slice             │
+ │   │   │   ├─ Bin (0,0,2) ──── fragment ──── vertex slice             │
+ │   │   │   ├─ Bin (0,0,3) ──── fragment ──── vertex slice             │
  │   │   │   └─ … 60 more bins                                     │
  │   │   └── vertex_fragments ─────── fragment index               │
  │   └─────────────────────────────────────────────────────────────┘
@@ -65,9 +65,9 @@ Space
 
 A chunk is fetched as a single I/O operation. Within the chunk, the
 fragment index is used to locate exactly which vertex rows belong to
-each VG (and therefore to the query bbox). No client-side filtering
+each fragment (and therefore to the query bbox). No client-side filtering
 of all vertices in the chunk is required. See
-[Fragment-index arrays](../layout/vg_index_arrays.md) for the on-disk
+[Fragment-index arrays](../layout/fragment_index_arrays.md) for the on-disk
 layout.
 
 ### Worked example: query amplification
@@ -137,13 +137,13 @@ is appropriate when:
 
 - All queries read entire chunks (no spatial sub-selection needed).
 - The store will be processed sequentially without bbox queries.
-- The data is so sparse that there is at most one vertex per chunk (the VG
+- The data is so sparse that there is at most one vertex per chunk (the fragment
   index provides no benefit).
 - You are writing a store for compatibility with a reader that does not
-  understand the VG index.
+  understand the fragment index.
 
 One-bin-per-chunk mode is the default when `bin_shape` is omitted. It is
-fully supported and incurs no overhead beyond storing a trivial VG index
+fully supported and incurs no overhead beyond storing a trivial fragment index
 (one entry per chunk with `offset=0, count=N_chunk`).
 
 ### When to use many bins per chunk
@@ -155,7 +155,7 @@ Fine binning (`B_per_chunk` of 64–512) is appropriate when:
 - The data is dense and not all vertices in a chunk are relevant to a
   given query.
 
-The overhead of a fine VG index is modest: `B_per_chunk × 2 × 8 bytes` per
+The overhead of a fine fragment index is modest: `B_per_chunk × 2 × 8 bytes` per
 chunk (two int64 values per bin). For `B_per_chunk = 64`, this is
 1 024 bytes per chunk — negligible compared to the vertex data itself.
 

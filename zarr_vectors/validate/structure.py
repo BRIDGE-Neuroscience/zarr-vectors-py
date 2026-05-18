@@ -93,11 +93,11 @@ def validate_structure(store_path: str | Path) -> ValidationResult:
         else:
             result.add_error(f"{ln}/vertices/ missing")
 
-        vgo = level_dir / "vertex_group_offsets"
-        if vgo.exists() and vgo.is_dir():
-            result.add_pass(f"{ln}/vertex_group_offsets/ exists")
+        vfg = level_dir / "vertex_fragments"
+        if vfg.exists() and vfg.is_dir():
+            result.add_pass(f"{ln}/vertex_fragments/ exists")
         else:
-            result.add_warning(f"{ln}/vertex_group_offsets/ missing")
+            result.add_warning(f"{ln}/vertex_fragments/ missing")
 
         if any((level_dir / f).exists() for f in [".zattrs", "zarr.json"]):
             result.add_pass(f"{ln}/ has metadata")

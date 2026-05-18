@@ -94,7 +94,7 @@ See [Cross-chunk links](../object_model/cross_chunk_links.md).
 
 Each *connected component* of the graph is treated as one object, identified
 by an integer object ID. The `object_index/` maps each component's ID to
-its primary chunk and VG offset.
+its primary chunk and fragment offset.
 
 For single-component graphs (a common case), there is exactly one object
 (object ID 0). For multi-component graphs (e.g. a store containing many

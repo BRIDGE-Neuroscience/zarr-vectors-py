@@ -127,7 +127,7 @@ def write_voxel_cloud(
     chunk_map = _partition_into_chunks(positions, chunk_shape)
 
     for chunk_coord, (chunk_verts, chunk_indices) in chunk_map.items():
-        # Sort into VG order and emit one range fragment per non-empty bin
+        # Sort into fragment order and emit one range fragment per non-empty bin
         sorted_verts, order, fragments = build_level0_fragments(
             chunk_verts, chunk_coord, chunk_shape, bin_shape
         )
@@ -153,7 +153,7 @@ def write_voxel_cloud(
 ```
 
 Key invariants to maintain in the writer:
-- Vertices must be in VG order (bin-sorted) within each chunk.
+- Vertices must be in fragment order (bin-sorted) within each chunk.
 - The fragment list passed to `encode_fragments` must reference the
   sorted vertex rows; emit one `(start, count)` range per non-empty bin.
 - All attribute arrays must be reordered with the same `order` permutation.

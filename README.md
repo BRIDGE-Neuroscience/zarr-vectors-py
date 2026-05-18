@@ -34,12 +34,12 @@ dataset.zarrvectors/
 ├── .zattrs                          # root metadata: SID, CRS, conventions, base_bin_shape
 ├── 0/                    # full resolution (bin_ratio = 1,1,1)
 │   ├── vertices/                    # spatial positions (ragged per bin)
-│   ├── vertex_group_offsets/        # byte offsets for sub-bin random access
+│   ├── vertex_fragments/            # per-chunk fragment index (byte ranges)
 │   ├── links/                       # connectivity (edges, faces, parents)
 │   ├── attributes/                  # per-vertex data
 │   │   ├── intensity/
 │   │   └── gene_expression/
-│   ├── object_index/                # object ID → (chunk, vertex_group) mapping
+│   ├── object_index/                # object ID → (chunk, fragment) mapping
 │   ├── object_attributes/           # per-object metadata
 │   ├── groupings/                   # group ID → [object IDs]
 │   ├── groupings_attributes/        # per-group metadata

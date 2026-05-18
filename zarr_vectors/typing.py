@@ -56,14 +56,14 @@ BoundingBox: TypeAlias = tuple[npt.NDArray[np.floating], npt.NDArray[np.floating
 # Object/group reference types
 # ---------------------------------------------------------------------------
 
-VertexGroupIndex: TypeAlias = int
-"""Index of a vertex group within a spatial chunk (0-based)."""
+FragmentIndex: TypeAlias = int
+"""Index of a fragment within a spatial chunk (0-based)."""
 
-VertexGroupRef: TypeAlias = tuple[ChunkCoords, VertexGroupIndex]
-"""Reference to a vertex group: (chunk_coordinates, vertex_group_index)."""
+FragmentRef: TypeAlias = tuple[ChunkCoords, FragmentIndex]
+"""Reference to a fragment: (chunk_coordinates, fragment_index)."""
 
-ObjectManifest: TypeAlias = list[VertexGroupRef]
-"""Ordered list of vertex group references composing one object."""
+ObjectManifest: TypeAlias = list[FragmentRef]
+"""Ordered list of fragment references composing one object."""
 
 ObjectID: TypeAlias = int
 """Integer identifier for an object (streamline, neuron, mesh, cell, ...)."""

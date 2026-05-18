@@ -5,7 +5,7 @@ Connectivity is implicit sequential (vertex 0 → vertex 1), so no
 ``links`` array is needed.
 
 Lines that cross a chunk boundary are split into two single-vertex
-vertex groups in their respective chunks, with the ``object_index``
+fragments in their respective chunks, with the ``object_index``
 tracking both and a ``cross_chunk_links`` entry bridging them.
 """
 
@@ -36,7 +36,7 @@ from zarr_vectors.core.arrays import (
     read_chunk_vertices,
     read_cross_chunk_links,
     read_object_attributes,
-    read_vertex_group,
+    read_fragment,
     write_chunk_attributes,
     write_chunk_vertices,
     write_cross_chunk_links,
@@ -76,7 +76,7 @@ from zarr_vectors.typing import (
     ChunkShape,
     CrossChunkLink,
     ObjectManifest,
-    VertexGroupRef,
+    FragmentRef,
 )
 
 
@@ -93,6 +93,7 @@ def write_lines(
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
     out_of_bounds: str = DEFAULT_OOB_POLICY,
+    compressor: Any = None,
     # Deprecated aliases (will be removed):
     attributes: dict[str, npt.NDArray] | None = None,
     line_attributes: dict[str, npt.NDArray] | None = None,
@@ -273,33 +274,33 @@ def write_lines(
     cross_links: list[CrossChunkLink] = []
 
     # One Python pass over lines is unavoidable to preserve line-id-
-    # ordered vg_idx assignment, but each iteration is now just
+    # ordered fragment_idx assignment, but each iteration is now just
     # dict.setdefault + list.append — no per-line numpy indexing.
     for i in range(n_lines):
         ca = ca_tuples[i]
         if same_chunk[i]:
             bucket = chunk_groups.setdefault(ca, [])
-            vg_idx = len(bucket)
+            fragment_idx = len(bucket)
             bucket.append((i, endpoints[i]))  # (N=2, D)
-            object_manifests[i] = [(ca, vg_idx)]
+            object_manifests[i] = [(ca, fragment_idx)]
         else:
             cb = cb_tuples[i]
             bucket_a = chunk_groups.setdefault(ca, [])
-            vg_idx_a = len(bucket_a)
+            fragment_idx_a = len(bucket_a)
             bucket_a.append((i, endpoints[i, 0:1]))  # (1, D)
 
             bucket_b = chunk_groups.setdefault(cb, [])
-            vg_idx_b = len(bucket_b)
+            fragment_idx_b = len(bucket_b)
             bucket_b.append((i, endpoints[i, 1:2]))  # (1, D)
 
-            object_manifests[i] = [(ca, vg_idx_a), (cb, vg_idx_b)]
+            object_manifests[i] = [(ca, fragment_idx_a), (cb, fragment_idx_b)]
             cross_links.append(((ca, 0), (cb, 0)))
 
     idx_ndim = ndim + 1 if line_attr_bins is not None else ndim
     # Collapse all per-array zarr.json PUTs + per-chunk byte writes into
     # one asyncio.gather (mirrors points.py:300).  Smaller win on local
     # FS, large win against object stores.
-    with level_group.batched_writes():
+    with level_group.batched_writes(compressor=compressor):
         create_vertices_array(level_group, dtype=dtype)
         create_object_index_array(level_group)
         create_cross_chunk_links_array(level_group, delta=0)
@@ -420,7 +421,7 @@ def read_lines(
                     kept.append(oid)
         object_ids = kept
 
-    # Chunk-major read: decode each chunk's vertex groups *once*, then
+    # Chunk-major read: decode each chunk's fragments *once*, then
     # dispatch them to the requesting objects.  The per-object access
     # pattern would re-decode the vertex-fragment index for every line
     # touching a chunk — O(K_per_chunk * N_per_chunk) per chunk.  Reading
@@ -444,7 +445,7 @@ def read_lines(
         manifests = read_all_object_manifests(level_group)
 
         # Build a per-chunk dispatch table: chunk → list of
-        # (oid_local_idx, manifest_position, vg_index).  ``oid_local_idx``
+        # (oid_local_idx, manifest_position, fragment_index).  ``oid_local_idx``
         # indexes into the per-object output list, not the global oid
         # (which can be sparse).
         oid_outputs: list[list[npt.NDArray | None]] = []
@@ -459,8 +460,8 @@ def read_lines(
             slot = len(oid_outputs)
             oid_outputs.append([None] * len(manifest))
             oid_for_output.append(oid)
-            for mi, (cc, vgi) in enumerate(manifest):
-                chunk_dispatch.setdefault(cc, []).append((slot, mi, vgi))
+            for mi, (cc, fragment_index) in enumerate(manifest):
+                chunk_dispatch.setdefault(cc, []).append((slot, mi, fragment_index))
 
         # One read_chunk_vertices per chunk; copy slices into output slots.
         for cc, entries in chunk_dispatch.items():
@@ -470,9 +471,9 @@ def read_lines(
                 )
             except ArrayError:
                 continue
-            for slot, mi, vgi in entries:
-                if 0 <= vgi < len(groups):
-                    oid_outputs[slot][mi] = groups[vgi]
+            for slot, mi, fragment_index in entries:
+                if 0 <= fragment_index < len(groups):
+                    oid_outputs[slot][mi] = groups[fragment_index]
 
         result_endpoints: list[npt.NDArray] = []
         for slot_groups in oid_outputs:

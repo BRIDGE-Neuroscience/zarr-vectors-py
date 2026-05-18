@@ -59,11 +59,11 @@ per spatial chunk.
 density and chunk volume; the array is resized if a chunk exceeds the
 declared maximum.
 
-Within each spatial chunk the vertices are stored in **VG order**: all
+Within each spatial chunk the vertices are stored in **fragment order**: all
 vertices of bin (0,0,0) first, then bin (0,0,1), etc., in C-order bin
 index. The `vertex_fragments/` array encodes one fragment per non-empty
 bin describing its row range within this ordering (see
-[Fragment-index arrays](vg_index_arrays.md)).
+[Fragment-index arrays](fragment_index_arrays.md)).
 
 **Example:** a 3-D store with a chunk grid of shape `(5, 6, 4)` and up to
 65 536 vertices per chunk:
@@ -83,7 +83,7 @@ bin describing its row range within this ordering (see
 ### `vertex_fragments/`
 
 Stores the row partition of each `vertices/` chunk slice as a binary
-fragment-index blob. See [Fragment-index arrays](vg_index_arrays.md) for
+fragment-index blob. See [Fragment-index arrays](fragment_index_arrays.md) for
 the full byte layout, the decoder algorithm, and worked examples.
 
 | Property | Value |

@@ -7,7 +7,7 @@
 `zarr-vectors` is built *on top of* Zarr v3. A ZVF store is a valid Zarr v3
 store: all arrays inside it can be opened with the standard `zarr` Python
 library. `zarr-vectors` adds conventions on top of Zarr — the directory
-layout, the `.zattrs` schema, the VG index arrays, and the OME-Zarr-
+layout, the `.zattrs` schema, the fragment index arrays, and the OME-Zarr-
 compatible multiscale metadata. You could read the raw position arrays
 directly with `zarr.open()`, but you would not get the spatial indexing,
 object model, or multi-resolution support that `zarr-vectors` provides.
@@ -33,7 +33,7 @@ used by `zv-ngtools` to auto-detect the store type when loading layers.
 
 Yes. The underlying arrays are standard Zarr v3. However, `zarr.open()` will
 give you raw group and array objects; you will need to interpret the ZVF
-conventions manually (VG offsets, object index, multiscale metadata).
+conventions manually (fragment offsets, object index, multiscale metadata).
 For most use cases, the `zarr_vectors.types.*` read functions are more
 convenient.
 

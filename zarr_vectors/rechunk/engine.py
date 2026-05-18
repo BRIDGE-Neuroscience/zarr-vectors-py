@@ -262,8 +262,8 @@ def rechunk(
             manifest: ObjectManifest = []
             for scc, _ in sorted(obj_spatial.items()):
                 prefixed = (bin_idx,) + scc
-                vg_idx = 0  # single VG per chunk in rechunked stores
-                manifest.append((prefixed, vg_idx))
+                fragment_idx = 0  # single fragment per chunk in rechunked stores
+                manifest.append((prefixed, fragment_idx))
 
             object_manifests_out[global_obj_counter] = manifest
             global_obj_counter += 1

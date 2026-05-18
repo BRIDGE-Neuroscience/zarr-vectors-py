@@ -9,7 +9,7 @@ Per-chunk byte blobs are stored as tiny single-chunk 1D ``uint8`` Zarr
 arrays under a per-array Zarr group (Option G in the design doc):
 
     level/vertices/0.1.2          → Zarr 1D uint8 array, shape=(N,), chunks=(N,)
-    level/vertex_group_offsets/0.1.2  → likewise
+    level/vertex_fragments/0.1.2  → likewise
     level/object_index/data       → likewise (one blob per slot)
 
 Per-array metadata (the ``zv_array`` discriminator and friends) lives on
@@ -51,6 +51,12 @@ class Group:
     _pending_writes: list[tuple[str, str, bytes]] | None = None
     _pending_array_metas: dict[str, dict[str, Any]] | None = None
     _prefetch_cache: dict[tuple[str, str], bytes] | None = None
+    # Active codec spec for chunk-array writes, set by
+    # :meth:`batched_writes(compressor=...)`.  ``None`` means callers fall
+    # back to zarr v3's default codec pipeline (``bytes`` + ``zstd``).
+    # Consumed by :meth:`write_bytes` and the batched flush in
+    # :mod:`zarr_vectors.core._batch_writer`.
+    _active_codecs: list[dict[str, Any]] | None = None
 
     def __init__(self, zarr_group: zarr.Group) -> None:
         self._zarr = zarr_group
@@ -64,6 +70,7 @@ class Group:
         # Prefetch cache activated by :meth:`batched_reads`.  When set,
         # :meth:`read_bytes` looks here first before hitting the store.
         self._prefetch_cache = None
+        self._active_codecs = None
 
     @classmethod
     def _from_zarr(cls, zarr_group: zarr.Group) -> Group:
@@ -72,6 +79,7 @@ class Group:
         instance._pending_writes = None
         instance._pending_array_metas = None
         instance._prefetch_cache = None
+        instance._active_codecs = None
         return instance
 
     @classmethod
@@ -138,14 +146,26 @@ class Group:
         arr_group = self._zarr.require_group(array_name)
         if chunk_key in arr_group:
             del arr_group[chunk_key]
+        # When a session compressor is active we pass an explicit codec
+        # list to ``create_array``; otherwise zarr 3.x's default applies
+        # (which is ``bytes`` + ``zstd``).  See
+        # :func:`zarr_vectors.encoding.compression.resolve_compressor`.
+        from zarr_vectors.encoding.compression import codecs_for_create_array
+        extra_kwargs: dict[str, Any] = {}
+        if self._active_codecs is not None:
+            extra_kwargs["compressors"] = codecs_for_create_array(
+                self._active_codecs
+            )
         n = len(data)
         if n == 0:
             arr_group.create_array(
                 chunk_key, shape=(0,), chunks=(1,), dtype="uint8",
+                **extra_kwargs,
             )
             return
         a = arr_group.create_array(
             chunk_key, shape=(n,), chunks=(n,), dtype="uint8",
+            **extra_kwargs,
         )
         a[:] = np.frombuffer(data, dtype="uint8")
 
@@ -160,7 +180,7 @@ class Group:
 
         ``plan`` is a list of ``(array_name, [chunk_keys, ...])`` pairs
         — typically ``(VERTICES, list_chunk_keys(group, VERTICES))``
-        plus the parallel ``vertex_group_offsets`` and per-attribute
+        plus the parallel ``vertex_fragments`` and per-attribute
         arrays.  On entry every (array_name, chunk_key) pair is fetched
         in a single async gather; on exit the cache is dropped.
 
@@ -185,7 +205,7 @@ class Group:
                 *((f"{VERTEX_ATTRIBUTES}/{a}", chunk_keys) for a in attrs),
             ]):
                 for cc in chunk_keys:
-                    vgs = read_chunk_vertices(level_group, cc, ...)
+                    fragments = read_chunk_vertices(level_group, cc, ...)
         """
         if self._prefetch_cache is not None:
             raise StoreError("batched_reads() does not support nesting")
@@ -198,7 +218,7 @@ class Group:
             self._prefetch_cache = None
 
     @contextmanager
-    def batched_writes(self) -> Iterator[None]:
+    def batched_writes(self, compressor: Any = None) -> Iterator[None]:
         """Defer every :meth:`write_bytes` and :meth:`write_array_meta`
         call inside the block and flush them in a single
         :func:`asyncio.gather` on exit.
@@ -208,6 +228,16 @@ class Group:
         ``zarr.json`` PUT becomes one async task instead of one serial
         sync call, so the total wall time approaches one round-trip
         rather than ``N`` round-trips.
+
+        Args:
+            compressor: Codec selection applied to every chunk array
+                written inside the block.  See
+                :func:`zarr_vectors.encoding.compression.resolve_compressor`
+                for accepted values; the default ``None`` resolves to
+                zarr v3's default (``bytes`` + ``zstd``).
+                # TODO: per-array-type codec dict (vertices vs fragments
+                # vs links) — future work; today every chunk gets the
+                # same codec.
 
         Nesting is not supported and raises :class:`StoreError`.  Reads
         inside the block are unaffected and execute synchronously.
@@ -224,8 +254,12 @@ class Group:
         """
         if self._pending_writes is not None:
             raise StoreError("batched_writes() does not support nesting")
+        from zarr_vectors.encoding.compression import resolve_compressor
+
+        codecs = resolve_compressor(compressor)
         self._pending_writes = []
         self._pending_array_metas = {}
+        self._active_codecs = codecs
         try:
             yield
             pending_writes = self._pending_writes
@@ -241,12 +275,14 @@ class Group:
                     self._zarr,
                     pending_writes,
                     array_metas=pending_metas,
+                    codecs=codecs,
                 )
         finally:
             # On normal exit the queues are already None.  On an
             # exception, drop them so the Group stays usable.
             self._pending_writes = None
             self._pending_array_metas = None
+            self._active_codecs = None
 
     def read_bytes(self, array_name: str, chunk_key: str) -> bytes:
         # Batched-read mode (see :meth:`batched_reads`): serve from the

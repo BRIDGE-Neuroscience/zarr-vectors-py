@@ -195,7 +195,7 @@ class ZVLevel:
         )
 
     def read_attribute_chunk(self, value: Any) -> list[npt.NDArray]:
-        """Read all vertex groups for chunks whose attribute equals ``value``.
+        """Read all fragments for chunks whose attribute equals ``value``.
 
         Only valid on stores written with ``chunk_by_attribute`` (or
         rechunked by attribute).  Returns the concatenated vertex

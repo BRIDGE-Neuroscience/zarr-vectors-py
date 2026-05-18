@@ -12,7 +12,7 @@
 : The finest spatial subdivision in ZVF. Each bin is a rectangular region
   of physical space whose size is `bin_shape`. Bins tile the interior of
   each chunk exactly, with no gaps or overlaps. All vertices whose position
-  falls within a bin are stored together as a vertex group (VG).
+  falls within a bin are stored together as a fragment (fragment).
 
 **Bins per chunk (`B_per_chunk`)**
 : The total number of bins within a single chunk:
@@ -32,7 +32,7 @@
 
 **Divisibility constraint**
 : The requirement that `chunk_shape[d] % bin_shape[d] == 0` for all `d`.
-  Ensures bins tile chunks exactly, which is necessary for the VG index
+  Ensures bins tile chunks exactly, which is necessary for the fragment index
   to be well-defined. Validated at write time and by the L2 validator.
 
 ---
@@ -47,16 +47,16 @@ queries on large datasets.
 
 `bin_shape` is the parameter that controls this query granularity. A smaller
 `bin_shape` means finer spatial queries (less read amplification for small
-bboxes) but more bins per chunk (larger VG index, more index bookkeeping). A
+bboxes) but more bins per chunk (larger fragment index, more index bookkeeping). A
 larger `bin_shape` means coarser queries but lower index overhead.
 
 Unlike `chunk_shape`, `bin_shape` does not affect the physical file layout.
-Changing `bin_shape` requires only recomputing the VG index and re-sorting
+Changing `bin_shape` requires only recomputing the fragment index and re-sorting
 vertices within each chunk — the chunk files themselves stay the same size
 and location. Re-binning is exposed for point-cloud stores via
 [`zarr_vectors.rechunk.rebin_level(store_path, target_bin_shape, level=0)`](../../../zarr_vectors/rechunk/rebin.py);
 for other geometry types (polyline, streamline, graph, skeleton, mesh)
-the VG structure carries per-object semantics so a full
+the fragment structure carries per-object semantics so a full
 [rechunk](rechunking.md) is required instead.
 
 ---
@@ -181,7 +181,7 @@ per axis. This ensures the query reads only the relevant data while keeping
 For point cloud stores that will be queried at many scales (e.g. by a
 visualiser that pans and zooms), a smaller `bin_shape` (more bins) is
 preferable. For batch analysis that reads entire volumes sequentially, a
-larger `bin_shape` (fewer bins) reduces VG index overhead.
+larger `bin_shape` (fewer bins) reduces fragment index overhead.
 
 ### Effect on multiscale pyramids
 
@@ -193,7 +193,7 @@ contains up to 8× as many merged vertices.
 
 The `chunk_shape` never changes across levels. Only the bin grid changes.
 This means the file layout (one file per chunk) is identical at all levels;
-only the VG index and vertex positions differ.
+only the fragment index and vertex positions differ.
 
 ### Validation
 

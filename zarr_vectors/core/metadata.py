@@ -301,7 +301,7 @@ class RootMetadata:
         #                 were duplicated under
         #                 ``zarr_vectors.spatial_index_dims``; per-array
         #                 ``.zattrs`` carried a redundant ``dtype`` field.
-        #   - pre-0.6.0 : ``vertex_group_offsets`` instead of
+        #   - pre-0.6.0 : ``vertex_fragments`` instead of
         #                 ``vertex_fragments``; links carried an inline
         #                 self-describing header; ``object_index`` used
         #                 the flat quad encoding.
@@ -595,7 +595,7 @@ class LevelMetadata:
     (= ``parent_level.num_objects``).  Lets readers allocate lookup
     arrays without traversing parent metadata."""
     shared_fragments: bool = False
-    """True when per-chunk vertex groups represent metavertices that
+    """True when per-chunk fragments represent metavertices that
     may be referenced by multiple objects' manifests (the shared-
     metavertex case)."""
 

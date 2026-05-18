@@ -210,7 +210,8 @@
       "description": "Optional feature tokens a store advertises in :attr:`RootMetadata.format_capabilities`.  Open-set: new tokens will be added in future spec revisions; readers must tolerate unknown values.",
       "enum": [
         "preserved_object_ids",
-        "shared_vertex_groups",
+        "shared_fragments",
+        "fragment_index",
         "multiscale_links"
       ],
       "title": "FormatCapability",
@@ -344,6 +345,16 @@
             "null"
           ]
         },
+        "chunk_shape": {
+          "description": "Per-level physical chunk size override.  When omitted, the level inherits ``RootMetadata.chunk_shape``.  When present, each axis must be a positive integer multiple of the root chunk_shape (nested chunk grids).\n",
+          "items": {
+            "type": "number"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "coarsening_method": {
           "description": "How this level was generated (e.g. \"grid_metanode\").",
           "type": [
@@ -388,8 +399,8 @@
             "null"
           ]
         },
-        "shared_vertex_groups": {
-          "description": "True when per-chunk vertex groups may be referenced by multiple objects' manifests (shared metavertices in the per-object pyramid regime).  Readers MAY use this to short-circuit dedup work.\n",
+        "shared_fragments": {
+          "description": "True when per-chunk fragments may be referenced by multiple objects' manifests (shared metavertices in the per-object pyramid regime).  v0.6 successor to ``shared_vertex_groups``.  Readers MAY use this to short-circuit dedup work.\n",
           "type": [
             "boolean",
             "null"
@@ -517,7 +528,7 @@
       "type": "object"
     },
     "ObjectIndexConvention": {
-      "description": "How the object_id \u2192 vertex-group mapping is encoded.",
+      "description": "How the object_id \u2192 fragment mapping is encoded.",
       "enum": [
         "standard",
         "identity"
@@ -680,6 +691,8 @@
       "description": "Discriminator value for per-array ``.zattrs`` blocks (slot ``zv_array``).  Each writer in ``zarr_vectors/core/arrays.py`` stamps the corresponding tag.",
       "enum": [
         "vertices",
+        "vertex_fragments",
+        "link_fragments",
         "links",
         "attribute",
         "object_index",
@@ -697,7 +710,7 @@
   "$id": "https://w3id.org/zarr-vectors/schema/0.5",
   "$schema": "https://json-schema.org/draft/2019-09/schema",
   "additionalProperties": true,
-  "metamodel_version": "1.11.0",
+  "metamodel_version": "1.7.0",
   "title": "zarr_vectors",
   "type": "object",
   "version": null

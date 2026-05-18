@@ -206,28 +206,28 @@ def _per_object_coarsen(
     src_group = get_resolution_level(root, source_level)
 
     # --- Step 0: read source manifests + vertex positions ----------------
-    # Read source vertex positions, indexed by (chunk_coords, vg_idx).
-    src_vg_positions: dict[tuple[ChunkCoords, int], npt.NDArray] = {}
+    # Read source vertex positions, indexed by (chunk_coords, fragment_idx).
+    src_fragment_positions: dict[tuple[ChunkCoords, int], npt.NDArray] = {}
     for cc in list_chunk_keys(src_group, VERTICES):
         try:
-            vgs = read_chunk_vertices(src_group, cc, dtype=np.float32, ndim=ndim)
+            fragments = read_chunk_vertices(src_group, cc, dtype=np.float32, ndim=ndim)
         except ArrayError:
             continue
-        for vg_idx, vg in enumerate(vgs):
-            src_vg_positions[(cc, vg_idx)] = vg
+        for fragment_idx, fragment in enumerate(fragments):
+            src_fragment_positions[(cc, fragment_idx)] = fragment
 
     src_has_objects = "object_index" in src_group
     if src_has_objects:
         src_manifests = read_all_object_manifests(src_group)
     else:
         # No object_index — treat the level as one implicit object whose
-        # manifest enumerates every vg in chunk-major order.
+        # manifest enumerates every fragment in chunk-major order.
         implicit: list[tuple[ChunkCoords, int]] = []
         for cc in list_chunk_keys(src_group, VERTICES):
-            vg_idx = 0
-            while (cc, vg_idx) in src_vg_positions:
-                implicit.append((cc, vg_idx))
-                vg_idx += 1
+            fragment_idx = 0
+            while (cc, fragment_idx) in src_fragment_positions:
+                implicit.append((cc, fragment_idx))
+                fragment_idx += 1
         src_manifests = [implicit] if implicit else []
     n_src_objects = len(src_manifests)
     if n_src_objects == 0:
@@ -264,11 +264,11 @@ def _per_object_coarsen(
     for oid in keep_oids:
         manifest = src_manifests[oid]
         parts: list[np.ndarray] = []
-        for cc, vg_idx in manifest:
-            vg = src_vg_positions.get((cc, vg_idx))
-            if vg is None or len(vg) == 0:
+        for cc, fragment_idx in manifest:
+            fragment = src_fragment_positions.get((cc, fragment_idx))
+            if fragment is None or len(fragment) == 0:
                 continue
-            parts.append(np.asarray(vg, dtype=np.float32))
+            parts.append(np.asarray(fragment, dtype=np.float32))
         if not parts:
             per_object_positions[oid] = np.zeros((0, ndim), dtype=np.float32)
             continue
@@ -322,18 +322,18 @@ def _per_object_coarsen(
     # --- Step 4: chunk-assign metavertices ------------------------------
     chunk_assignments = assign_chunks(meta_positions, chunk_shape)
 
-    # --- Step 5: per-chunk vg layout (one vg per metavertex) ------------
+    # --- Step 5: per-chunk fragment layout (one fragment per metavertex) ------------
     metavertex_to_ref: dict[int, tuple[ChunkCoords, int]] = {}
     per_chunk_groups: dict[ChunkCoords, list[np.ndarray]] = {}
     for cc, indices in sorted(chunk_assignments.items()):
         # ``indices`` are metavertex indices that fell in this chunk.
-        for vg_idx, mv_idx in enumerate(indices.tolist()):
-            metavertex_to_ref[int(mv_idx)] = (cc, vg_idx)
+        for fragment_idx, mv_idx in enumerate(indices.tolist()):
+            metavertex_to_ref[int(mv_idx)] = (cc, fragment_idx)
             per_chunk_groups.setdefault(cc, []).append(
                 meta_positions[mv_idx:mv_idx + 1]
             )
 
-    # --- Step 6: write per-chunk vertex groups --------------------------
+    # --- Step 6: write per-chunk fragments --------------------------
     arrays_present = [VERTICES, "object_index"] if src_has_objects else [VERTICES]
     level_meta_initial = LevelMetadata(
         level=target_level,
@@ -492,17 +492,17 @@ def _emit_inline_cross_level_links(
     ))
     for cc in list_chunk_keys(src_group, VERTICES):
         try:
-            vgs = read_chunk_vertices(
+            fragments = read_chunk_vertices(
                 src_group, cc, dtype=np.float32, ndim=ndim,
             )
         except ArrayError:
             continue
-        for vg in vgs:
-            n_local = int(vg.shape[0])
+        for fragment in fragments:
+            n_local = int(fragment.shape[0])
             if n_local == 0:
                 continue
             local_bins = np.floor(
-                np.asarray(vg, dtype=np.float32) / bin_shape_arr,
+                np.asarray(fragment, dtype=np.float32) / bin_shape_arr,
             ).astype(np.int64)
             local_keys = np.ascontiguousarray(local_bins).view(key_dtype).ravel()
             for j in range(n_local):
@@ -602,10 +602,10 @@ def _reconstruct_chunk_assignments(
     cursor = 0
     for cc in chunk_keys:
         try:
-            vgs = read_chunk_vertices(level_group, cc, dtype=np.float32, ndim=ndim)
+            fragments = read_chunk_vertices(level_group, cc, dtype=np.float32, ndim=ndim)
         except ArrayError:
             continue
-        n = sum(int(vg.shape[0]) for vg in vgs)
+        n = sum(int(fragment.shape[0]) for fragment in fragments)
         if n == 0:
             continue
         assignments[cc] = np.arange(cursor, cursor + n, dtype=np.int64)

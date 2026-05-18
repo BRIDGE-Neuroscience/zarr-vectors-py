@@ -85,7 +85,7 @@ new_chunk_coord = tuple(
 ```
 
 Vertices are buffered per destination chunk. Once all vertices for a
-destination chunk have been collected, the chunk is sorted into VG order
+destination chunk have been collected, the chunk is sorted into fragment order
 (by new bin coordinate) and written.
 
 **Phase 2 — Attribute and link re-assignment.** Per-vertex attributes are
@@ -203,6 +203,6 @@ from zarr_vectors.validate import validate
 result = validate("scan_rechunked.zarrvectors", level=5)
 ```
 
-Pay particular attention to L3 checks (VG offset consistency) and L4 checks
+Pay particular attention to L3 checks (fragment offset consistency) and L4 checks
 (cross-chunk link validity), as these are most likely to expose bugs in
 the rechunking implementation.

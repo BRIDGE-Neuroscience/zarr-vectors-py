@@ -121,6 +121,7 @@ def write_graph(
     backend: str | None = None,
     chunk_by_attribute: str | None = None,
     out_of_bounds: str = DEFAULT_OOB_POLICY,
+    compressor: Any = None,
     # Deprecated aliases (will be removed):
     is_tree: bool | None = None,
     node_attributes: dict[str, npt.NDArray] | None = None,
@@ -363,13 +364,13 @@ def write_graph(
     else:
         all_cross_links = cross_links
 
-    # Write vertices per chunk (one vertex group per object per chunk)
+    # Write vertices per chunk (one fragment per object per chunk)
     object_manifests: dict[int, ObjectManifest] = {}
     idx_ndim = ndim + 1 if node_attr_bins is not None else ndim
 
     # Collapse all per-array zarr.json + per-chunk byte writes into one
     # asyncio.gather (mirrors points.py:300).
-    with level_group.batched_writes():
+    with level_group.batched_writes(compressor=compressor):
         create_vertices_array(level_group, dtype=dtype)
         create_links_array(level_group, link_width=link_width, delta=0)
         create_object_index_array(level_group)
@@ -576,7 +577,7 @@ def read_graph(
     _batched_reads_cm.__enter__()
     try:
         # Single O(K) pass: build chunk→global-offset map and concatenate
-        # all vertex groups.  The previous implementation walked
+        # all fragments.  The previous implementation walked
         # ``chunk_keys`` three times (once for positions, once nested to
         # recompute offsets for each chunk = O(K²), once for cross-chunk
         # edges) — all redundant.
@@ -591,9 +592,9 @@ def read_graph(
                 )
             except ArrayError:
                 continue
-            for vg in groups:
-                all_positions.append(vg)
-                running += len(vg)
+            for fragment in groups:
+                all_positions.append(fragment)
+                running += len(fragment)
 
         if not all_positions:
             return _empty_graph_result(ndim)

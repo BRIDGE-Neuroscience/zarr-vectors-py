@@ -15,7 +15,7 @@
   Object IDs are assigned at write time and are stable across reads.
 
 **Object manifest**
-: The set of `(chunk_coord, vg_indices)` pairs that together contain all
+: The set of `(chunk_coord, fragment_indices)` pairs that together contain all
   vertices of a given object. Encoded in the `object_index/` array. See
   [Object manifest](../object_model/object_manifest.md).
 
@@ -69,12 +69,12 @@ a single chunk each.
 ### Vertex ordering within a chunk
 
 For a polyline that contributes vertices to multiple bins within a chunk,
-its vertices appear in multiple VGs. Within each VG, vertices are stored in
+its vertices appear in multiple fragments. Within each fragment, vertices are stored in
 traversal order (from the start of the polyline toward the end).
 
-Across VGs within the same chunk, vertices may be interleaved with vertices
+Across fragments within the same chunk, vertices may be interleaved with vertices
 from other polylines. The `links/<delta>/` array stores the consecutive pairs
-for all polylines in the chunk, regardless of VG assignment.
+for all polylines in the chunk, regardless of fragment assignment.
 
 ### `links/<delta>/` for polylines
 
@@ -177,7 +177,7 @@ L1: `vertices/`, `vertex_fragments/`, `links/<delta>/`, `link_fragments/`
 
 L3:
 - Every object ID in `object_index/` is in `[0, n_objects)`.
-- For each object, all referenced VGs exist and contain at least one vertex.
+- For each object, all referenced fragments exist and contain at least one vertex.
 - `cross_chunk_links/` entries reference valid global vertex IDs.
 - No polyline has a gap (a vertex with no outgoing edge unless it is the
   last vertex of the polyline).

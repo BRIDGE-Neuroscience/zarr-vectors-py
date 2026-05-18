@@ -100,40 +100,43 @@ write_points(
 
 ### Per-array codec configuration
 
-Different arrays in a ZVF store may use different codec pipelines. The
-`zarr-vectors-py` defaults by array type are:
+`zarr-vectors-py` writes every chunk array with the **same codec
+pipeline**, set per-write via the `compressor=` kwarg on the public
+write functions (`write_points`, `write_graph`, `write_polylines`,
+`write_lines`, `write_mesh`). The **default is `BytesCodec`-only — no
+compression**. This keeps the fast async PUT path active, which is
+the original cloud-write design point of the batched writer
+(compression CPU is typically 10×+ smaller than cloud PUT latency, so
+the wins are negligible against object stores). Opt into compression
+explicitly when disk size matters more than throughput.
 
-| Array | Default codec | Rationale |
-|-------|---------------|-----------|
-| `vertices/` | `bytes → blosc(zstd, bitshuffle, l5)` | Float32 positions compress well with bitshuffle |
-| `vertex_fragments/` | none (opaque `uint8` blob) | Pre-packed fragment-index format; see note below |
-| `link_fragments/` | none (opaque `uint8` blob) | Parallel to `vertex_fragments/`; same rationale |
-| `links/<delta>/` | `bytes → blosc(zstd, byteshuffle, l5)` | Int32/Int64 index pairs; same codec for `link_width=2` (graph/poly) and `link_width=3` (mesh faces) — or Draco for mesh `delta=0` if `[draco]` installed |
-| `link_attributes/<name>/<delta>/` | `bytes → blosc(zstd, bitshuffle, l5)` | Varies by dtype; parallel to `links/<delta>/` |
-| `cross_chunk_links/<delta>/` | `bytes → blosc(zstd, byteshuffle, l3)` | Typically small flat blob |
-| `cross_chunk_link_attributes/<name>/<delta>/` | `bytes → blosc(zstd, bitshuffle, l5)` | Parallel to `cross_chunk_links/<delta>/data` (new in 0.4) |
-| `attributes/*` | `bytes → blosc(zstd, bitshuffle, l5)` | Varies by dtype |
-| `object_index/manifests` | `vlen-bytes` | One chunk per ~16K objects; random-access read fetches only the chunk holding the requested OID |
+Accepted `compressor=` values:
+
+| Value | Resulting `codecs` list |
+|-------|-------------------------|
+| `None` *(default)*, `"none"`, or `False` | `[{"name": "bytes"}]` — uncompressed; fast async PUT path. |
+| `"zstd"` | `[{"name": "bytes"}, {"name": "zstd", "configuration": {"level": 0, "checksum": false}}]` — zarr v3's own default compressor.  Triggers the sync codec-encoding path. |
+| `"blosc"` | Blosc(Zstd, BitShuffle, l5) — what this spec historically recommended for `vertices/`.  Best ratio for float32 positions. |
+| `list[dict]` | Caller-supplied Zarr V3 codec specs, passed through verbatim. |
+
+Per-array-type codec selection (different codecs for `vertices/`
+vs `vertex_fragments/` vs `links/`) is **future work** — today every
+chunk array in a single `write_*` call gets the same codec.
 
 ```{note}
-**`vertex_fragments/` and `link_fragments/` bypass the Zarr codec
-pipeline.** Each chunk is written as opaque `uint8` bytes via the
-FsGroup `write_bytes` path. The fragment-index format is already a
-packed binary layout (header + bitmap + dense range table +
-uint32/int64 CSR) with little redundancy for a general-purpose
-compressor to exploit, and adding a compression step introduces
-latency on hot decode paths. The arrays' group metadata carries
-`encoding: "fragment_index_v1"` to identify the on-disk format
-independently of any outer compression a backend might apply to the
-bytes themselves.
+**`vertex_fragments/` and `link_fragments/`** are pre-packed binary
+layouts (header + bitmap + dense range table + uint32/int64 CSR)
+with little redundancy for a general-purpose compressor to exploit.
+The chunk arrays still go through whatever `compressor=` was passed,
+but in practice these payloads gain little from compression and
+suffer the per-chunk codec overhead on hot decode paths. The arrays'
+group metadata carries `encoding: "fragment_index_v1"` to identify
+the on-disk format independently of any outer compression.
 
-**`object_index/manifests` uses the `vlen-bytes` codec.** Each entry
-is one object's encoded manifest blob; per-object random access reads
-only the zarr chunk containing the requested OID (~16K objects per
-chunk), not the whole index. The manifest-blob wire format itself is
-unchanged from earlier ZVF versions — only the on-disk container
-changed from a `data` + `offsets` byte-blob pair to a single ragged
-zarr array.
+**`object_index/manifests`** uses the `vlen-bytes` codec (variable-
+length byte array). Each entry is one object's encoded manifest blob;
+per-object random access reads only the zarr chunk containing the
+requested OID (~16K objects per chunk).
 
 The Zarr V3 specification for variable-length byte arrays is still
 in development (tracked at
@@ -146,7 +149,7 @@ Legacy stores written before this layout change have
 instead of `object_index/manifests`; readers in `zarr_vectors`
 auto-detect and handle both layouts.
 
-See [Fragment-index arrays](../layout/vg_index_arrays.md) for the
+See [Fragment-index arrays](../layout/fragment_index_arrays.md) for the
 fragment-index byte layout and
 [Object manifest](../object_model/object_manifest.md) for the
 manifest-blob format.

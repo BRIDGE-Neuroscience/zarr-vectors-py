@@ -220,7 +220,7 @@ class ZVWriter:
         )
 
         # Schedule one per-chunk write in parallel.  Each task reads the
-        # chunk's vertex groups to discover per-group sizes, slices the
+        # chunk's fragments to discover per-group sizes, slices the
         # values array, and emits the attribute bytes.
         async def _write_one(cc: ChunkCoords) -> None:
             start = offsets[cc]
@@ -232,7 +232,7 @@ class ZVWriter:
             if chunk_total == 0:
                 return
             chunk_values = arr[start:start + chunk_total]
-            # Split into groups aligned with the chunk's vertex groups.
+            # Split into groups aligned with the chunk's fragments.
             attr_groups: list[npt.NDArray] = []
             cursor = 0
             for s in sizes:
@@ -354,7 +354,7 @@ class ZVWriter:
         """Append new vertices (and new objects) to this level.
 
         Routes each vertex to its spatial chunk, reads the existing
-        chunk data, appends one vertex group per new object, and
+        chunk data, appends one fragment per new object, and
         rewrites the chunk.  Per-chunk RMW is parallelised over chunks
         via :func:`asyncio.gather`.
 
@@ -423,7 +423,7 @@ class ZVWriter:
         # group per **unique** object id present in the chunk; an
         # object whose vertices span multiple chunks gets multiple
         # manifest entries.
-        results: dict[ChunkCoords, dict[int, int]] = {}  # cc → {oid: vg_idx_added}
+        results: dict[ChunkCoords, dict[int, int]] = {}  # cc → {oid: fragment_idx_added}
 
         async def _rmw_chunk(cc: ChunkCoords, indices) -> None:
             sub_positions = positions[indices]
@@ -436,7 +436,7 @@ class ZVWriter:
             )
             existing_count = len(existing_groups)
 
-            # Append one new vertex group per unique object in this chunk.
+            # Append one new fragment per unique object in this chunk.
             chunk_assignments_per_oid: dict[int, int] = {}
             new_groups: list[npt.NDArray] = []
             for new_oid in np.unique(sub_oids):
@@ -459,8 +459,8 @@ class ZVWriter:
         # Build manifest entries per new object id.
         new_oids = set()
         for cc, oid_to_vg in results.items():
-            for oid, vg_idx in oid_to_vg.items():
-                self._pending_manifests.setdefault(oid, []).append((cc, vg_idx))
+            for oid, fragment_idx in oid_to_vg.items():
+                self._pending_manifests.setdefault(oid, []).append((cc, fragment_idx))
                 new_oids.add(oid)
 
         # sid_ndim for the index encoding: include the +1 for attribute
@@ -627,7 +627,7 @@ def _safe_read_chunk_vertices(
     dtype: np.dtype,
     ndim: int,
 ) -> list[npt.NDArray]:
-    """Read existing vertex groups; return ``[]`` if the chunk is missing."""
+    """Read existing fragments; return ``[]`` if the chunk is missing."""
     from zarr_vectors.core.arrays import _chunk_key
     if not level_group.chunk_exists("vertices", _chunk_key(cc)):
         return []
@@ -650,14 +650,14 @@ def _write_custom_subpath(
     Mirrors :func:`write_chunk_attributes` but with a configurable
     top-level subpath (e.g. ``"face_attributes"``).  Per-group byte
     offsets are derived at read time from the parallel
-    ``vertex_group_offsets`` table; no ``_offsets`` sibling is
+    ``vertex_fragments`` table; no ``_offsets`` sibling is
     written.
     """
     from zarr_vectors.core.arrays import _chunk_key
-    from zarr_vectors.encoding.ragged import encode_vertex_groups
+    from zarr_vectors.encoding.ragged import encode_ragged_floats
 
     dtype = np.dtype(dtype)
     key = _chunk_key(chunk_coords)
     full_name = f"{subpath}/{name}"
-    raw_bytes, _ = encode_vertex_groups(attr_groups, dtype)
+    raw_bytes, _ = encode_ragged_floats(attr_groups, dtype)
     level_group.write_bytes(full_name, key, raw_bytes)

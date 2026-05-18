@@ -38,7 +38,7 @@ class TestImports:
         from zarr_vectors.typing import (
             Vertices, Faces, Edges, ParentArray,
             ChunkCoords, ChunkShape, BoundingBox,
-            VertexGroupRef, ObjectManifest, CrossChunkLink,
+            FragmentRef, ObjectManifest, CrossChunkLink,
         )
 
     def test_import_constants(self) -> None:

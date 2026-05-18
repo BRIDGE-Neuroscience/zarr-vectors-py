@@ -31,7 +31,7 @@ The on-disk byte layout is fixed at version 1:
       uint32 explicit_offsets[E+1]   running offsets into explicit_indices
       int64  explicit_indices[T]     concatenated indices, T = explicit_offsets[E]
 
-The layout is designed so that :meth:`FragmentIndex.is_range` is a single
+The layout is designed so that :meth:`ChunkFragmentIndex.is_range` is a single
 bit lookup — no fragment payload has to be decoded to answer "is this
 fragment a contiguous range?".  Random access to a fragment's representation
 goes through a one-time prefix-popcount cache built lazily on first call.
@@ -225,7 +225,7 @@ def encode_fragments(
 
 
 @dataclass(frozen=True)
-class FragmentIndex:
+class ChunkFragmentIndex:
     """Decoded view of one chunk's fragment-index blob.
 
     The dataclass holds zero-copy numpy views onto the source bytes
@@ -333,7 +333,7 @@ class FragmentIndex:
         if self._popcount_cache:
             return self._popcount_cache[0]
         # One pass over the bitmap, then a cumulative sum.  This is
-        # O(F) once per FragmentIndex; subsequent queries are O(1).
+        # O(F) once per ChunkFragmentIndex; subsequent queries are O(1).
         f = self.num_fragments
         bits = np.unpackbits(
             self._bitmap, bitorder="little",
@@ -345,8 +345,8 @@ class FragmentIndex:
         return prefix
 
 
-def decode_fragments(raw: bytes) -> FragmentIndex:
-    """Parse a v1 fragment-index blob into a :class:`FragmentIndex`."""
+def decode_fragments(raw: bytes) -> ChunkFragmentIndex:
+    """Parse a v1 fragment-index blob into a :class:`ChunkFragmentIndex`."""
     if len(raw) < _HEADER_BYTES:
         raise ArrayError(
             f"Fragment-index blob too short: {len(raw)} < {_HEADER_BYTES}",
@@ -372,7 +372,7 @@ def decode_fragments(raw: bytes) -> FragmentIndex:
         )
 
     if f == 0:
-        return FragmentIndex(
+        return ChunkFragmentIndex(
             num_fragments=0,
             _bitmap=np.empty(0, dtype=np.uint8),
             _range_table=np.empty((0, 2), dtype=np.int64),
@@ -427,7 +427,7 @@ def decode_fragments(raw: bytes) -> FragmentIndex:
         raw, dtype=np.int64, count=t, offset=offset,
     ).copy()
 
-    return FragmentIndex(
+    return ChunkFragmentIndex(
         num_fragments=f,
         _bitmap=bitmap,
         _range_table=range_table,
@@ -440,12 +440,12 @@ def read_fragment_index(
     level_group,
     array_name: str,
     chunk_coords: tuple[int, ...],
-) -> FragmentIndex:
+) -> ChunkFragmentIndex:
     """Read and decode the fragment-index blob for one chunk.
 
     ``level_group`` is a :class:`zarr_vectors.core.group.FsGroup` (or
     equivalent) exposing :meth:`read_bytes` and
-    :meth:`chunk_exists`.  Returns an empty :class:`FragmentIndex` when
+    :meth:`chunk_exists`.  Returns an empty :class:`ChunkFragmentIndex` when
     the chunk's blob is absent — callers that need to distinguish
     "missing" from "empty fragment list" should check
     ``level_group.chunk_exists(array_name, chunk_key)`` first.

@@ -4,9 +4,9 @@
 :class: note
 
 Prior to ZVF 0.6.0 the `object_index/` array was a fixed-shape
-`(n_objects, 2)` `int64` table storing one *primary-VG address*
+`(n_objects, 2)` `int64` table storing one *primary-fragment address*
 per object; reading a multi-chunk object required walking
-`cross_chunk_links/` forwards from the primary VG. ZVF 0.6.0
+`cross_chunk_links/` forwards from the primary fragment. ZVF 0.6.0
 replaced this with a self-contained per-object manifest stored
 as a ragged `uint8` blob: every chunk the object touches, and
 every fragment within each chunk, is enumerated directly.
@@ -378,7 +378,7 @@ uniform shape (always an array of indices) can map over the result.
 - For every decoded block: `chunk_coords` is a valid chunk in the
   level's chunk grid.
 - For every decoded `fragment_index`: `fragment_index <
-  FragmentIndex.num_fragments` in the named chunk's
+  ChunkFragmentIndex.num_fragments` in the named chunk's
   `vertex_fragments/<chunk_coords>` blob.
 - For range mode: `start + count <=` the chunk's `num_fragments`.
 - When `shared_fragments == False` at this level: the union of

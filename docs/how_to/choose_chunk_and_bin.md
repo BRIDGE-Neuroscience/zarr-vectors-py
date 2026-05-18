@@ -97,7 +97,7 @@ per axis.
 
 ### Bins per chunk and index overhead
 
-The VG index is `B_per_chunk × 16 bytes` per chunk. For `bin_shape =
+The fragment index is `B_per_chunk × 16 bytes` per chunk. For `bin_shape =
 chunk_shape / 4` in 3-D: `B_per_chunk = 64`, index size = 1 KB per chunk.
 This is negligible compared to vertex data.
 

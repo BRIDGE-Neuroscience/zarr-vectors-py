@@ -90,7 +90,7 @@ Name: zarr_vectors
 | [FormatCapability](FormatCapability.md) | Optional feature tokens a store advertises in :attr:`RootMetadata |
 | [GeometryType](GeometryType.md) | The kind of geometry a store (or one of its sub-types) holds |
 | [LinksConvention](LinksConvention.md) | How intra-chunk links are represented for a polyline/graph/mesh |
-| [ObjectIndexConvention](ObjectIndexConvention.md) | How the object_id → vertex-group mapping is encoded |
+| [ObjectIndexConvention](ObjectIndexConvention.md) | How the object_id → fragment mapping is encoded |
 | [ZvArrayTag](ZvArrayTag.md) | Discriminator value for per-array `` |
 
 
@@ -3277,13 +3277,13 @@ Alias: dtype
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [VerticesMeta](VerticesMeta.md) | `` |  no  |
 | [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 | [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
+| [VerticesMeta](VerticesMeta.md) | `` |  no  |
+| [LinksMeta](LinksMeta.md) | `` |  no  |
 | [AttributeMeta](AttributeMeta.md) | `` |  no  |
 | [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
-| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
-| [LinksMeta](LinksMeta.md) | `` |  no  |
 
 
 
@@ -4681,8 +4681,8 @@ Alias: level_delta
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 | [LinksMeta](LinksMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 | [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
 | [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
 
@@ -6116,12 +6116,12 @@ Alias: name
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
-| [AttributeMeta](AttributeMeta.md) | `` |  no  |
-| [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
-| [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
-| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 | [Axis](Axis.md) | One axis of the spatial index |  no  |
+| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
+| [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
+| [AttributeMeta](AttributeMeta.md) | `` |  no  |
+| [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
 
 
 
@@ -6448,8 +6448,8 @@ Alias: num_links
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 | [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
+| [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  no  |
 
 
 
@@ -7116,7 +7116,7 @@ URI: [shex:iri](http://www.w3.org/ns/shex#iri)
 
 
 
-_How the object_id → vertex-group mapping is encoded._
+_How the object_id → fragment mapping is encoded._
 
 
 
@@ -7125,7 +7125,7 @@ URI: [zv:ObjectIndexConvention](https://w3id.org/zarr-vectors/schema/0.5/ObjectI
 ## Permissible Values
 | Value | Meaning | Description |
 | --- | --- | --- |
-| standard | None | Full ``object_index`` array maps each object to its VG refs |
+| standard | None | Full ``object_index`` array maps each object to its fragment refs |
 | identity | None | One object per vertex; only valid in single-chunk stores where the object_ind... |
 
 
@@ -7167,13 +7167,13 @@ URI: [zv:ObjectIndexConvention](https://w3id.org/zarr-vectors/schema/0.5/ObjectI
 <details>
 ```yaml
 name: ObjectIndexConvention
-description: How the object_id → vertex-group mapping is encoded.
+description: How the object_id → fragment mapping is encoded.
 from_schema: https://w3id.org/zarr-vectors/schema/0.5
 rank: 1000
 permissible_values:
   standard:
     text: standard
-    description: Full ``object_index`` array maps each object to its VG refs.
+    description: Full ``object_index`` array maps each object to its fragment refs.
   identity:
     text: identity
     description: 'One object per vertex; only valid in single-chunk stores where the
@@ -8116,8 +8116,8 @@ Alias: shape
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
 | [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  no  |
+| [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  no  |
 
 
 
@@ -8322,8 +8322,8 @@ Alias: sid_ndim
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  no  |
 | [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  no  |
+| [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  no  |
 
 
 
@@ -9235,16 +9235,16 @@ Alias: zv_array
 
 | Name | Description | Modifies Slot |
 | --- | --- | --- |
-| [VerticesMeta](VerticesMeta.md) | `` |  yes  |
-| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  yes  |
-| [AttributeMeta](AttributeMeta.md) | `` |  yes  |
-| [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  yes  |
-| [LinksMeta](LinksMeta.md) | `` |  yes  |
-| [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  yes  |
-| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  yes  |
 | [GroupingsMeta](GroupingsMeta.md) | `` |  yes  |
+| [LinkAttributeMeta](LinkAttributeMeta.md) | `` |  yes  |
 | [CrossChunkLinkAttributeMeta](CrossChunkLinkAttributeMeta.md) | `` |  yes  |
+| [ObjectAttributeMeta](ObjectAttributeMeta.md) | `` |  yes  |
+| [VerticesMeta](VerticesMeta.md) | `` |  yes  |
 | [ObjectIndexMeta](ObjectIndexMeta.md) | `` |  yes  |
+| [CrossChunkLinksMeta](CrossChunkLinksMeta.md) | `` |  yes  |
+| [LinksMeta](LinksMeta.md) | `` |  yes  |
+| [AttributeMeta](AttributeMeta.md) | `` |  yes  |
+| [GroupingsAttributeMeta](GroupingsAttributeMeta.md) | `` |  yes  |
 
 
 

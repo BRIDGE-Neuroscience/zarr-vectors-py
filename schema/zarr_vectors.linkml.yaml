@@ -41,10 +41,10 @@ enums:
         description: Skeleton convention — implicit sequential plus branch list.
 
   ObjectIndexConvention:
-    description: How the object_id → vertex-group mapping is encoded.
+    description: How the object_id → fragment mapping is encoded.
     permissible_values:
       standard:
-        description: Full ``object_index`` array maps each object to its VG refs.
+        description: Full ``object_index`` array maps each object to its fragment refs.
       identity:
         description: >
           One object per vertex; only valid in single-chunk stores

@@ -528,7 +528,7 @@
       "type": "object"
     },
     "ObjectIndexConvention": {
-      "description": "How the object_id \u2192 vertex-group mapping is encoded.",
+      "description": "How the object_id \u2192 fragment mapping is encoded.",
       "enum": [
         "standard",
         "identity"

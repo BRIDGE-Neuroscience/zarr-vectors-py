@@ -378,7 +378,7 @@ uniform shape (always an array of indices) can map over the result.
 - For every decoded block: `chunk_coords` is a valid chunk in the
   level's chunk grid.
 - For every decoded `fragment_index`: `fragment_index <
-  FragmentIndex.num_fragments` in the named chunk's
+  ChunkFragmentIndex.num_fragments` in the named chunk's
   `vertex_fragments/<chunk_coords>` blob.
 - For range mode: `start + count <=` the chunk's `num_fragments`.
 - When `shared_fragments == False` at this level: the union of

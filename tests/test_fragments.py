@@ -8,7 +8,7 @@ import pytest
 from zarr_vectors.encoding.fragments import (
     FRAGMENT_INDEX_MAGIC,
     FRAGMENT_INDEX_VERSION,
-    FragmentIndex,
+    ChunkFragmentIndex,
     decode_fragments,
     encode_fragments,
 )
@@ -20,7 +20,7 @@ from zarr_vectors.exceptions import ArrayError
 # ---------------------------------------------------------------------------
 
 
-def _roundtrip(fragments, **kwargs) -> FragmentIndex:
+def _roundtrip(fragments, **kwargs) -> ChunkFragmentIndex:
     raw = encode_fragments(fragments, **kwargs)
     return decode_fragments(raw)
 
@@ -127,10 +127,10 @@ def test_alignment_padding_F_eq_3() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _NoMaterializeFragmentIndex(FragmentIndex):
+class _NoMaterializeFragmentIndex(ChunkFragmentIndex):
     """Subclass that explodes if .indices / .range / .indices_view are called."""
 
-    def __init__(self, fi: FragmentIndex) -> None:
+    def __init__(self, fi: ChunkFragmentIndex) -> None:
         super().__init__(
             num_fragments=fi.num_fragments,
             _bitmap=fi._bitmap,

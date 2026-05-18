@@ -164,7 +164,7 @@ rows = fidx.indices(0)                 # row indices into vertices/<2.3.1>
 ```
 
 See [Fragment-index arrays](../../spec/layout/vg_index_arrays.md) for the
-byte layout and the full `FragmentIndex` API.
+byte layout and the full `ChunkFragmentIndex` API.
 
 ### Accessing object attributes without loading vertices
 

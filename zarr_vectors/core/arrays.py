@@ -46,7 +46,7 @@ from zarr_vectors.core.paths import (
 )
 from zarr_vectors.core.store import FsGroup
 from zarr_vectors.encoding.fragments import (
-    FragmentIndex,
+    ChunkFragmentIndex,
     decode_fragments,
     decode_object_manifest_blocks,
     encode_fragments,
@@ -1702,10 +1702,10 @@ def count_vertex_groups(
 def read_vertex_fragment_index(
     level_group: FsGroup,
     chunk_coords: ChunkCoords,
-) -> FragmentIndex:
+) -> ChunkFragmentIndex:
     """Read and decode the ``vertex_fragments/<chunk>`` blob.
 
-    Returns the v0.6 :class:`FragmentIndex` view describing how rows of
+    Returns the v0.6 :class:`ChunkFragmentIndex` view describing how rows of
     ``vertices/<chunk>`` partition into fragments.
     """
     key = _chunk_key(chunk_coords)
@@ -1716,7 +1716,7 @@ def read_vertex_fragment_index(
 def read_link_fragment_index(
     level_group: FsGroup,
     chunk_coords: ChunkCoords,
-) -> FragmentIndex:
+) -> ChunkFragmentIndex:
     """Read and decode the ``link_fragments/<chunk>`` blob (delta=0 only)."""
     key = _chunk_key(chunk_coords)
     raw = level_group.read_bytes(LINK_FRAGMENTS, key)

@@ -206,7 +206,7 @@ to keep distinguishable from an empty range.
 
 ### Decoder algorithm
 
-The reference `FragmentIndex` class holds zero-copy views over the
+The reference `ChunkFragmentIndex` class holds zero-copy views over the
 underlying bytes plus a lazy prefix-popcount cache. The cache is
 the only non-obvious piece:
 

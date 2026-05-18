@@ -74,16 +74,16 @@ def split_polyline_at_boundaries(
 
 def cross_chunk_links_for_segments(
     segments: list[tuple[ChunkCoords, npt.NDArray[np.floating]]],
-    vg_indices: list[int],
+    fragment_indices: list[int],
 ) -> list[CrossChunkLink]:
     """Compute cross-chunk links connecting adjacent polyline segments.
 
     The link connects the last vertex of segment k to the first vertex
-    of segment k+1 (using local indices within each vertex group).
+    of segment k+1 (using local indices within each fragment).
 
     Args:
         segments: Output of :func:`split_polyline_at_boundaries`.
-        vg_indices: Vertex group index assigned to each segment within
+        fragment_indices: Fragment index assigned to each segment within
             its chunk.  Must be same length as *segments*.
 
     Returns:
@@ -93,16 +93,16 @@ def cross_chunk_links_for_segments(
     Raises:
         ChunkingError: If lengths don't match.
     """
-    if len(vg_indices) != len(segments):
+    if len(fragment_indices) != len(segments):
         raise ChunkingError(
-            f"vg_indices length {len(vg_indices)} != segments length {len(segments)}"
+            f"fragment_indices length {len(fragment_indices)} != segments length {len(segments)}"
         )
 
     links: list[CrossChunkLink] = []
     for i in range(len(segments) - 1):
         chunk_a, verts_a = segments[i]
         chunk_b, verts_b = segments[i + 1]
-        # Last vertex of segment i (local index within vertex group)
+        # Last vertex of segment i (local index within fragment)
         last_idx_a = len(verts_a) - 1
         # First vertex of segment i+1
         first_idx_b = 0
@@ -132,7 +132,7 @@ def partition_edges(
             index into *chunk_coords_list* for vertex *i*.
         vertex_local_indices: ``(N,)`` array where
             ``vertex_local_indices[i]`` is vertex *i*'s local index
-            within its chunk's vertex group.
+            within its chunk's fragment.
         chunk_coords_list: Ordered list of unique chunk coordinates.
             ``vertex_chunks[i]`` indexes into this list.
 

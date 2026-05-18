@@ -1,6 +1,6 @@
 """Ragged array encoding and decoding for ZV spatial chunks.
 
-Each spatial chunk in a ZV store holds a variable number of vertex groups,
+Each spatial chunk in a ZV store holds a variable number of fragments,
 each of variable length.  This module serialises lists of numpy arrays into
 flat byte buffers with an accompanying offset array, and deserialises them
 back.
@@ -19,18 +19,18 @@ from zarr_vectors.exceptions import ArrayError
 
 
 # ---------------------------------------------------------------------------
-# Vertex group encoding (float positions, float/int attributes)
+# Ragged float encoding (vertex positions, float/int attributes)
 # ---------------------------------------------------------------------------
 
-def encode_vertex_groups(
+def encode_ragged_floats(
     groups: list[npt.NDArray],
     dtype: np.dtype,
 ) -> tuple[bytes, npt.NDArray[np.int64]]:
-    """Encode a list of vertex group arrays into a single byte buffer.
+    """Encode a list of ragged float arrays into a single byte buffer.
 
     Args:
         groups: List of arrays, each shape ``(N_k, D)`` or ``(N_k,)`` for
-            vertex group *k*.  All arrays must have the same number of
+            fragment *k*.  All arrays must have the same number of
             columns (D) and be castable to *dtype*.
         dtype: Target numpy dtype for serialisation.
 
@@ -71,17 +71,17 @@ def encode_vertex_groups(
     return b"".join(parts), np.array(offsets, dtype=np.int64)
 
 
-def decode_vertex_groups(
+def decode_ragged_floats(
     raw_bytes: bytes,
     offsets: npt.NDArray[np.int64],
     dtype: np.dtype,
     ncols: int,
 ) -> list[npt.NDArray]:
-    """Decode a byte buffer back into a list of vertex group arrays.
+    """Decode a byte buffer back into a list of ragged float arrays.
 
     Args:
         raw_bytes: The concatenated byte buffer produced by
-            :func:`encode_vertex_groups`.
+            :func:`encode_ragged_floats`.
         offsets: ``(K,)`` byte offset array.
         dtype: The numpy dtype used during encoding.
         ncols: Number of columns per row (e.g. 3 for XYZ positions).
@@ -144,7 +144,7 @@ def encode_ragged_ints(
 ) -> tuple[bytes, npt.NDArray[np.int64]]:
     """Encode ragged integer arrays into a byte buffer with offsets.
 
-    Identical to :func:`encode_vertex_groups` but with a default integer
+    Identical to :func:`encode_ragged_floats` but with a default integer
     dtype.  Used for link arrays, grouping arrays, and similar.
 
     Args:
@@ -152,9 +152,9 @@ def encode_ragged_ints(
         dtype: Integer dtype (default int64).
 
     Returns:
-        raw_bytes, offsets — same semantics as :func:`encode_vertex_groups`.
+        raw_bytes, offsets — same semantics as :func:`encode_ragged_floats`.
     """
-    return encode_vertex_groups(groups, dtype=dtype)
+    return encode_ragged_floats(groups, dtype=dtype)
 
 
 def decode_ragged_ints(
@@ -174,7 +174,7 @@ def decode_ragged_ints(
     Returns:
         List of integer arrays.
     """
-    return decode_vertex_groups(raw_bytes, offsets, dtype=dtype, ncols=ncols)
+    return decode_ragged_floats(raw_bytes, offsets, dtype=dtype, ncols=ncols)
 
 
 # v0.5 ``encode_object_index`` / ``decode_object_index`` and
@@ -205,7 +205,7 @@ def encode_ragged_blob(
     dtype: np.dtype,
 ) -> bytes:
     """Encode a list of ragged arrays with inline offset header."""
-    data_bytes, offsets = encode_vertex_groups(groups, dtype)
+    data_bytes, offsets = encode_ragged_floats(groups, dtype)
     k = len(offsets)
     header = np.empty(1 + k, dtype=np.int64)
     header[0] = k
@@ -231,4 +231,4 @@ def decode_ragged_blob(
         raw_bytes[8:header_len], dtype=np.int64,
     ).copy()
     data = raw_bytes[header_len:]
-    return decode_vertex_groups(data, offsets, dtype, ncols)
+    return decode_ragged_floats(data, offsets, dtype, ncols)

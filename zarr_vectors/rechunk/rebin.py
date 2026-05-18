@@ -1,14 +1,14 @@
 """Standalone re-binning workflow: change ``bin_shape`` without rechunking.
 
 ``bin_shape`` controls the supervoxel grid that subdivides each chunk
-into vertex groups (VGs).  Unlike ``chunk_shape``, changing ``bin_shape``
-does not alter the physical chunk file layout — only the in-chunk VG
-boundaries shift.  :func:`rebin_level` re-sorts vertices into new VGs
+into fragments (fragments).  Unlike ``chunk_shape``, changing ``bin_shape``
+does not alter the physical chunk file layout — only the in-chunk fragment
+boundaries shift.  :func:`rebin_level` re-sorts vertices into new fragments
 at a chosen resolution level and updates the declared bin shape on
 both the root and level metadata.
 
-Currently supported for **point clouds** only: VGs are re-derived
-from positions alone, so any per-object VG layout (polyline /
+Currently supported for **point clouds** only: fragments are re-derived
+from positions alone, so any per-object fragment layout (polyline /
 streamline / graph / mesh) cannot be preserved.  For those geometry
 types use :func:`zarr_vectors.rechunk.rechunk` instead, which
 re-derives object manifests.
@@ -52,10 +52,10 @@ def rebin_level(
     *,
     level: int = 0,
 ) -> dict[str, Any]:
-    """Re-sort vertices into new VG bins at the given level.
+    """Re-sort vertices into new fragment bins at the given level.
 
     Reads each chunk, re-bins its vertices into ``target_bin_shape``
-    supervoxel cells, and rewrites the chunk with one VG per occupied
+    supervoxel cells, and rewrites the chunk with one fragment per occupied
     bin.  Per-vertex attribute arrays are **not** touched — they remain
     aligned with the on-disk vertex order.  Because re-binning shuffles
     vertex order within a chunk, callers that have post-write per-vertex
@@ -84,9 +84,9 @@ def rebin_level(
     root_meta = read_root_metadata(root)
 
     # Re-binning preserves the chunk-key grid → we can only safely re-sort
-    # vertices within a chunk when the on-disk VG layout is derivable from
+    # vertices within a chunk when the on-disk fragment layout is derivable from
     # positions alone.  Point clouds with no object structure satisfy
-    # this; everything else carries per-object / per-bundle VG semantics
+    # this; everything else carries per-object / per-bundle fragment semantics
     # that we'd flatten irreversibly.
     if root_meta.geometry_types != [GEOM_POINT_CLOUD]:
         raise StoreError(
@@ -116,7 +116,7 @@ def rebin_level(
     bs = np.asarray(target_bin_shape, dtype=np.float64)
 
     for cc in chunk_keys:
-        # Flatten any existing VG structure: a point cloud's VGs are
+        # Flatten any existing fragment structure: a point cloud's fragments are
         # re-derived from positions, so we don't care about the old
         # grouping.
         try:
@@ -129,7 +129,7 @@ def rebin_level(
         if positions.shape[0] == 0:
             continue
 
-        # Re-bin into one VG per occupied bin, sorted by bin key for a
+        # Re-bin into one fragment per occupied bin, sorted by bin key for a
         # deterministic on-disk ordering.
         bin_assignments = assign_bins(positions, tuple(float(b) for b in bs))
         new_groups: list[npt.NDArray] = []

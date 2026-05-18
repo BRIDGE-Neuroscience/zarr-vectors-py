@@ -340,7 +340,7 @@ def create_store(
     ``create_store(path)`` produces a structurally valid "warm" shell:
     root group with format markers + default ``bounds``, a
     ``0/`` sub-group, and the empty ragged-vertex pair
-    ``0/vertices/`` + ``0/vertex_group_offsets/``.
+    ``0/vertices/`` + ``0/vertex_fragments/``.
 
     ``bounds`` is **mandatory** for every ZV store; when the caller does
     not pass one, the default ``([0,...,0], [128,...,128])`` is stamped
@@ -815,18 +815,18 @@ def _prune_vertices_outside_bounds(
                 continue
             new_groups: list[Any] = []
             changed = False
-            for vg in vert_groups:
-                if len(vg) == 0:
-                    new_groups.append(vg)
+            for fragment in vert_groups:
+                if len(fragment) == 0:
+                    new_groups.append(fragment)
                     continue
                 in_b = np.all(
-                    (vg >= new_min) & (vg <= new_max), axis=1,
+                    (fragment >= new_min) & (fragment <= new_max), axis=1,
                 )
                 if in_b.all():
-                    new_groups.append(vg)
+                    new_groups.append(fragment)
                 else:
                     changed = True
-                    new_groups.append(vg[in_b])
+                    new_groups.append(fragment[in_b])
             if changed:
                 write_chunk_vertices(level, chunk_key, new_groups, dtype=dtype)
 

@@ -9,7 +9,7 @@ Per-chunk byte blobs are stored as tiny single-chunk 1D ``uint8`` Zarr
 arrays under a per-array Zarr group (Option G in the design doc):
 
     level/vertices/0.1.2          → Zarr 1D uint8 array, shape=(N,), chunks=(N,)
-    level/vertex_group_offsets/0.1.2  → likewise
+    level/vertex_fragments/0.1.2  → likewise
     level/object_index/data       → likewise (one blob per slot)
 
 Per-array metadata (the ``zv_array`` discriminator and friends) lives on
@@ -180,7 +180,7 @@ class Group:
 
         ``plan`` is a list of ``(array_name, [chunk_keys, ...])`` pairs
         — typically ``(VERTICES, list_chunk_keys(group, VERTICES))``
-        plus the parallel ``vertex_group_offsets`` and per-attribute
+        plus the parallel ``vertex_fragments`` and per-attribute
         arrays.  On entry every (array_name, chunk_key) pair is fetched
         in a single async gather; on exit the cache is dropped.
 
@@ -205,7 +205,7 @@ class Group:
                 *((f"{VERTEX_ATTRIBUTES}/{a}", chunk_keys) for a in attrs),
             ]):
                 for cc in chunk_keys:
-                    vgs = read_chunk_vertices(level_group, cc, ...)
+                    fragments = read_chunk_vertices(level_group, cc, ...)
         """
         if self._prefetch_cache is not None:
             raise StoreError("batched_reads() does not support nesting")

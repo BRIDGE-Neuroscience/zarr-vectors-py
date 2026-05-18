@@ -3,13 +3,13 @@
 Supports three point cloud variants:
 
 1. **Undifferentiated** — no per-point object identity.  All points in
-   a chunk form a single vertex group.  No object_index.
+   a chunk form a single fragment.  No object_index.
 2. **Per-point objects** — each point is its own object (e.g. cell
-   centroids).  One vertex group per point per chunk.  Object index
-   maps point ID → (chunk, vg_index).
+   centroids).  One fragment per point per chunk.  Object index
+   maps point ID → (chunk, fragment_index).
 3. **Multi-point objects** — many points per object (e.g. transcript
    spots grouped into cells).  Points sharing an object_id are stored
-   in one vertex group per chunk.  Object index maps object → chunks.
+   in one fragment per chunk.  Object index maps object → chunks.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ from zarr_vectors.core.arrays import (
     read_object_attributes,
     read_object_manifest,
     read_object_vertices,
-    read_vertex_group,
+    read_fragment,
     write_chunk_attributes,
     write_chunk_vertices,
     write_groupings,
@@ -92,7 +92,7 @@ from zarr_vectors.typing import (
     ChunkCoords,
     ChunkShape,
     ObjectManifest,
-    VertexGroupRef,
+    FragmentRef,
 )
 
 
@@ -313,7 +313,7 @@ def write_points(
             create_object_index_array(level_group)
 
         if object_ids is not None:
-            # With objects: use per-object vertex groups per chunk (not per-bin)
+            # With objects: use per-object fragments per chunk (not per-bin)
             # This preserves correct object_index semantics for read_object_vertices.
             # When ``attr_bins`` is set the chunk key gains a leading attr-bin
             # dim and a single object's vertices may land in multiple keys.
@@ -344,19 +344,19 @@ def write_points(
                     for attr_name in attributes:
                         attr_groups_per_name[attr_name] = []
 
-                vg_idx = 0
+                fragment_idx = 0
                 for obj_id in unique_objs:
                     mask = chunk_obj_ids == obj_id
                     vert_groups.append(chunk_positions[mask])
                     oid = int(obj_id)
                     if oid not in object_manifests:
                         object_manifests[oid] = []
-                    object_manifests[oid].append((chunk_coords, vg_idx))
+                    object_manifests[oid].append((chunk_coords, fragment_idx))
                     if attributes:
                         obj_global = global_indices[mask]
                         for attr_name, attr_data in attributes.items():
                             attr_groups_per_name[attr_name].append(attr_data[obj_global])
-                    vg_idx += 1
+                    fragment_idx += 1
 
                 write_chunk_vertices(level_group, chunk_coords, vert_groups, dtype=np_dtype)
                 if attributes:
@@ -364,8 +364,8 @@ def write_points(
                         write_chunk_attributes(level_group, attr_name, chunk_coords, groups_list,
                                                dtype=attributes[attr_name].dtype)
         else:
-            # Undifferentiated: use per-bin vertex groups
-            for chunk_coords, vg_dict in sorted(chunked_bins.items()):
+            # Undifferentiated: use per-bin fragments
+            for chunk_coords, fragment_dict in sorted(chunked_bins.items()):
                 vert_groups_bin: list[npt.NDArray] = [
                     np.zeros((0, ndim), dtype=np_dtype) for _ in range(total_bins_per_chunk)
                 ]
@@ -378,11 +378,11 @@ def write_points(
                             for _ in range(total_bins_per_chunk)
                         ]
 
-                for vg_idx, global_indices in vg_dict.items():
-                    vert_groups_bin[vg_idx] = positions[global_indices]
+                for fragment_idx, global_indices in fragment_dict.items():
+                    vert_groups_bin[fragment_idx] = positions[global_indices]
                     if attributes:
                         for attr_name, attr_data in attributes.items():
-                            attr_groups_per_name_bin[attr_name][vg_idx] = attr_data[global_indices]
+                            attr_groups_per_name_bin[attr_name][fragment_idx] = attr_data[global_indices]
 
                 write_chunk_vertices(level_group, chunk_coords, vert_groups_bin, dtype=np_dtype)
                 if attributes:
@@ -514,23 +514,23 @@ def read_points(
             # Optionally restrict the manifest to listed chunks.
             if chunk_set is not None:
                 manifest = [
-                    (cc, vgi) for (cc, vgi) in manifest if cc in chunk_set
+                    (cc, fragment_index) for (cc, fragment_index) in manifest if cc in chunk_set
                 ]
             if not manifest:
                 continue
 
-            for chunk_coords, vg_index in manifest:
+            for chunk_coords, fragment_index in manifest:
                 try:
-                    vg = read_vertex_group(
-                        level_group, chunk_coords, vg_index,
+                    fragment = read_fragment(
+                        level_group, chunk_coords, fragment_index,
                         dtype=dtype, ndim=ndim,
                     )
                 except ArrayError:
                     continue
-                n_pts = len(vg)
+                n_pts = len(fragment)
                 if n_pts == 0:
                     continue
-                all_positions.append(vg)
+                all_positions.append(fragment)
                 all_obj_labels.append(np.full(n_pts, oid, dtype=np.int64))
 
         if not all_positions:
@@ -601,7 +601,7 @@ def read_points(
     bins_per_chunk = root_meta.bins_per_chunk
     has_bins = any(b > 1 for b in bins_per_chunk)
 
-    chunk_vg_targets: dict[ChunkCoords, list[int]] | None = None
+    chunk_fragment_targets: dict[ChunkCoords, list[int]] | None = None
     chunk_keys_set: set[ChunkCoords] = set()
 
     # Build the prefetch plan: VERTICES + VERTEX_FRAGMENTS for every
@@ -619,38 +619,38 @@ def read_points(
 
     with level_group.batched_reads(prefetch_plan):
         if bbox is not None and has_bins:
-            # Bin-level targeting: only decode matching vertex groups
+            # Bin-level targeting: only decode matching fragments
             from zarr_vectors.spatial.chunking import (
                 bins_intersecting_bbox,
                 bin_to_chunk,
-                bin_to_vg_index,
+                bin_to_fragment_index,
             )
             target_bins = bins_intersecting_bbox(
                 np.asarray(bbox[0]), np.asarray(bbox[1]),
                 effective_bin,
             )
             # Group target bins by chunk
-            chunk_vg_targets = {}
+            chunk_fragment_targets = {}
             for bc in target_bins:
                 cc = bin_to_chunk(bc, bins_per_chunk)
-                vgi = bin_to_vg_index(bc, cc, bins_per_chunk)
-                if cc not in chunk_vg_targets:
-                    chunk_vg_targets[cc] = []
-                chunk_vg_targets[cc].append(vgi)
+                fragment_index = bin_to_fragment_index(bc, cc, bins_per_chunk)
+                if cc not in chunk_fragment_targets:
+                    chunk_fragment_targets[cc] = []
+                chunk_fragment_targets[cc].append(fragment_index)
 
             # Only read from chunks that have data
             chunk_keys_set = set(chunk_keys)
             all_positions = []
-            for cc, vg_indices in chunk_vg_targets.items():
+            for cc, fragment_indices in chunk_fragment_targets.items():
                 if cc not in chunk_keys_set:
                     continue
-                for vgi in vg_indices:
+                for fragment_index in fragment_indices:
                     try:
-                        vg = read_vertex_group(
-                            level_group, cc, vgi, dtype=dtype, ndim=ndim,
+                        fragment = read_fragment(
+                            level_group, cc, fragment_index, dtype=dtype, ndim=ndim,
                         )
-                        if len(vg) > 0:
-                            all_positions.append(vg)
+                        if len(fragment) > 0:
+                            all_positions.append(fragment)
                     except ArrayError:
                         continue
 
@@ -670,9 +670,9 @@ def read_points(
                     )
                 except ArrayError:
                     continue
-                for vg in groups:
-                    if len(vg) > 0:
-                        all_positions.append(vg)
+                for fragment in groups:
+                    if len(fragment) > 0:
+                        all_positions.append(fragment)
 
         else:
             # Read all
@@ -684,9 +684,9 @@ def read_points(
                     )
                 except ArrayError:
                     continue
-                for vg in groups:
-                    if len(vg) > 0:
-                        all_positions.append(vg)
+                for fragment in groups:
+                    if len(fragment) > 0:
+                        all_positions.append(fragment)
 
         if not all_positions:
             return _empty_result(ndim)
@@ -706,9 +706,9 @@ def read_points(
         if attribute_names:
             for attr_name in attribute_names:
                 attr_parts: list[npt.NDArray] = []
-                if chunk_vg_targets is not None:
-                    # Bin-level bbox: read the same vertex groups as positions
-                    for cc, vg_indices in chunk_vg_targets.items():
+                if chunk_fragment_targets is not None:
+                    # Bin-level bbox: read the same fragments as positions
+                    for cc, fragment_indices in chunk_fragment_targets.items():
                         if cc not in chunk_keys_set:
                             continue
                         try:
@@ -716,9 +716,9 @@ def read_points(
                                 level_group, attr_name, cc,
                                 dtype=np.float32, ncols=1,
                             )
-                            for vgi in vg_indices:
-                                if vgi < len(attr_groups) and len(attr_groups[vgi]) > 0:
-                                    attr_parts.append(attr_groups[vgi])
+                            for fragment_index in fragment_indices:
+                                if fragment_index < len(attr_groups) and len(attr_groups[fragment_index]) > 0:
+                                    attr_parts.append(attr_groups[fragment_index])
                         except ArrayError:
                             continue
                 else:

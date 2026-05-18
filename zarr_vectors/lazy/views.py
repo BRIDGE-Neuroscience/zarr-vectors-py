@@ -22,7 +22,7 @@ from zarr_vectors.core.arrays import (
     read_all_object_manifests,
     read_chunk_vertices,
     read_object_vertices,
-    read_vertex_group,
+    read_fragment,
 )
 from zarr_vectors.core.store import FsGroup
 from zarr_vectors.core.metadata import RootMetadata, LevelMetadata
@@ -149,7 +149,7 @@ class ZVView:
             bins_per_chunk = self._root_meta.bins_per_chunk
             if any(b > 1 for b in bins_per_chunk):
                 from zarr_vectors.spatial.chunking import (
-                    bins_intersecting_bbox, bin_to_chunk, bin_to_vg_index,
+                    bins_intersecting_bbox, bin_to_chunk, bin_to_fragment_index,
                 )
                 effective_bin = self._root_meta.effective_bin_shape
                 target_bins = set(bins_intersecting_bbox(
@@ -211,10 +211,10 @@ class ZVView:
                 )
             except Exception:
                 continue
-            for vg in verts_list:
-                if len(vg) > 0:
-                    all_positions.append(vg)
-                    all_oids.append(np.full(len(vg), oid, dtype=np.int64))
+            for fragment in verts_list:
+                if len(fragment) > 0:
+                    all_positions.append(fragment)
+                    all_oids.append(np.full(len(fragment), oid, dtype=np.int64))
 
         if not all_positions:
             return {"positions": np.zeros((0, ndim), dtype=dtype),
@@ -255,23 +255,23 @@ class ZVView:
 
         if has_bins and self._spec.target_bins is not None:
             # Bin-level read
-            from zarr_vectors.spatial.chunking import bin_to_chunk, bin_to_vg_index
-            chunk_vg_targets: dict[ChunkCoords, list[int]] = {}
+            from zarr_vectors.spatial.chunking import bin_to_chunk, bin_to_fragment_index
+            chunk_fragment_targets: dict[ChunkCoords, list[int]] = {}
             for bc in self._spec.target_bins:
                 cc = bin_to_chunk(bc, bins_per_chunk)
-                vgi = bin_to_vg_index(bc, cc, bins_per_chunk)
-                if cc not in chunk_vg_targets:
-                    chunk_vg_targets[cc] = []
-                chunk_vg_targets[cc].append(vgi)
+                fragment_index = bin_to_fragment_index(bc, cc, bins_per_chunk)
+                if cc not in chunk_fragment_targets:
+                    chunk_fragment_targets[cc] = []
+                chunk_fragment_targets[cc].append(fragment_index)
 
-            for cc, vg_indices in chunk_vg_targets.items():
+            for cc, fragment_indices in chunk_fragment_targets.items():
                 if cc not in chunk_keys_set:
                     continue
-                for vgi in vg_indices:
+                for fragment_index in fragment_indices:
                     try:
-                        vg = read_vertex_group(self._group, cc, vgi, dtype=dtype, ndim=ndim)
-                        if len(vg) > 0:
-                            all_positions.append(vg)
+                        fragment = read_fragment(self._group, cc, fragment_index, dtype=dtype, ndim=ndim)
+                        if len(fragment) > 0:
+                            all_positions.append(fragment)
                     except Exception:
                         continue
         else:
@@ -279,9 +279,9 @@ class ZVView:
             for ck in active_chunks:
                 try:
                     groups = read_chunk_vertices(self._group, ck, dtype=dtype, ndim=ndim)
-                    for vg in groups:
-                        if len(vg) > 0:
-                            all_positions.append(vg)
+                    for fragment in groups:
+                        if len(fragment) > 0:
+                            all_positions.append(fragment)
                 except Exception:
                     continue
 
@@ -336,7 +336,7 @@ class ZVPolylineCollection:
     """Lazy collection of polylines accessible by object ID.
 
     Each polyline is reconstructed by following its object_index
-    manifest and concatenating vertex groups from the relevant chunks.
+    manifest and concatenating fragments from the relevant chunks.
 
     Args:
         group: Resolution level FsGroup.

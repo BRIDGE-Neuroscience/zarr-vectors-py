@@ -18,7 +18,7 @@ from zarr_vectors.core.arrays import (
     read_chunk_attributes,
     read_chunk_vertices,
     read_object_vertices,
-    read_vertex_group,
+    read_fragment,
 )
 from zarr_vectors.core.store import FsGroup
 from zarr_vectors.typing import ChunkCoords
@@ -258,7 +258,7 @@ class ZVObjectIndex:
         """Get the manifest for a single object.
 
         Returns:
-            List of ``(chunk_coords, vg_index)`` tuples.
+            List of ``(chunk_coords, fragment_index)`` tuples.
         """
         manifests = self._ensure_loaded()
         if object_id < 0 or object_id >= len(manifests):
@@ -278,13 +278,13 @@ class ZVObjectIndex:
 
 
 @dask_delayed
-def _read_chunk_all_vgs(
+def _read_chunk_all_fragments(
     group: FsGroup,
     chunk_coords: ChunkCoords,
     dtype: np.dtype,
     ndim: int,
 ) -> npt.NDArray[np.floating]:
-    """Read all vertex groups from a chunk and concatenate."""
+    """Read all fragments from a chunk and concatenate."""
     try:
         groups = read_chunk_vertices(group, chunk_coords, dtype=dtype, ndim=ndim)
         non_empty = [g for g in groups if len(g) > 0]
@@ -351,7 +351,7 @@ def _delayed_read_chunk(
     ndim: int,
 ) -> Any:
     """Create a delayed read for a single chunk's vertices."""
-    return _read_chunk_all_vgs(group, chunk_coords, dtype, ndim)
+    return _read_chunk_all_fragments(group, chunk_coords, dtype, ndim)
 
 
 def _delayed_read_attribute(

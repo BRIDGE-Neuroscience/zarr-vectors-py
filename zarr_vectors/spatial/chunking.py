@@ -320,12 +320,12 @@ def chunk_to_bin_range(
     return lo, hi
 
 
-def bin_to_vg_index(
+def bin_to_fragment_index(
     bin_coords: BinCoords,
     chunk_coords: ChunkCoords,
     bins_per_chunk: tuple[int, ...],
 ) -> int:
-    """Linearise an intra-chunk bin coordinate to a vertex group index.
+    """Linearise an intra-chunk bin coordinate to a fragment index.
 
     Uses row-major (C-order) linearisation within the chunk's bin grid.
 
@@ -335,7 +335,7 @@ def bin_to_vg_index(
         bins_per_chunk: Bins per chunk per dimension.
 
     Returns:
-        Integer vertex group index within the chunk.
+        Integer fragment index within the chunk.
     """
     ndim = len(bins_per_chunk)
     # Compute local bin offset within the chunk
@@ -351,17 +351,17 @@ def bin_to_vg_index(
     return idx
 
 
-def vg_index_to_bin(
-    vg_index: int,
+def fragment_index_to_bin(
+    fragment_index: int,
     chunk_coords: ChunkCoords,
     bins_per_chunk: tuple[int, ...],
 ) -> BinCoords:
-    """Convert a vertex group index back to a global bin coordinate.
+    """Convert a fragment index back to a global bin coordinate.
 
-    Inverse of :func:`bin_to_vg_index`.
+    Inverse of :func:`bin_to_fragment_index`.
 
     Args:
-        vg_index: Linearised vertex group index within the chunk.
+        fragment_index: Linearised fragment index within the chunk.
         chunk_coords: Parent chunk coordinate.
         bins_per_chunk: Bins per chunk per dimension.
 
@@ -370,7 +370,7 @@ def vg_index_to_bin(
     """
     ndim = len(bins_per_chunk)
     local: list[int] = [0] * ndim
-    remaining = vg_index
+    remaining = fragment_index
     for d in range(ndim - 1, -1, -1):
         local[d] = remaining % bins_per_chunk[d]
         remaining //= bins_per_chunk[d]
@@ -403,10 +403,10 @@ def group_bins_by_chunk(
     bin_assignments: dict[BinCoords, npt.NDArray[np.intp]],
     bins_per_chunk: tuple[int, ...],
 ) -> dict[ChunkCoords, dict[int, npt.NDArray[np.intp]]]:
-    """Group bin assignments into chunks with linearised vertex group indices.
+    """Group bin assignments into chunks with linearised fragment indices.
 
     Takes the output of :func:`assign_bins` and organises it by chunk.
-    Each entry maps a vertex group index (linearised bin position within
+    Each entry maps a fragment index (linearised bin position within
     the chunk) to the array of global vertex indices in that bin.
 
     Args:
@@ -414,16 +414,16 @@ def group_bins_by_chunk(
         bins_per_chunk: Bins per chunk per dimension.
 
     Returns:
-        ``{chunk_coords: {vg_index: global_vertex_indices}}``.
+        ``{chunk_coords: {fragment_index: global_vertex_indices}}``.
     """
     result: dict[ChunkCoords, dict[int, npt.NDArray[np.intp]]] = {}
 
     for bc, indices in bin_assignments.items():
         cc = bin_to_chunk(bc, bins_per_chunk)
-        vg_idx = bin_to_vg_index(bc, cc, bins_per_chunk)
+        fragment_idx = bin_to_fragment_index(bc, cc, bins_per_chunk)
 
         if cc not in result:
             result[cc] = {}
-        result[cc][vg_idx] = indices
+        result[cc][fragment_idx] = indices
 
     return result

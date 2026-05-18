@@ -6,7 +6,7 @@ Supports two encoding modes:
   (L=3 for triangles, L=4 for quads).  Faces spanning chunk boundaries
   go into ``cross_chunk_links/``.
 
-- **Draco**: each vertex group is encoded as a Draco bitstream containing
+- **Draco**: each fragment is encoded as a Draco bitstream containing
   both positions and faces.  ``links/`` may be omitted.
 """
 
@@ -253,7 +253,7 @@ def write_mesh(
         faces, vertex_chunks, vertex_local, chunk_list
     )
 
-    # Write vertices per chunk (one vertex group per chunk for simplicity)
+    # Write vertices per chunk (one fragment per chunk for simplicity)
     object_manifests: dict[int, ObjectManifest] = {}
     idx_ndim = ndim + 1 if vertex_attr_bins is not None else ndim
 
@@ -287,7 +287,7 @@ def write_mesh(
                     level_group, chunk_coords, [chunk_verts], dtype=np_dtype,
                 )
 
-            # Track manifests: one vertex group per chunk per unique object in chunk
+            # Track manifests: one fragment per chunk per unique object in chunk
             chunk_obj_ids = object_ids[global_indices]
             for oid in np.unique(chunk_obj_ids):
                 oid_int = int(oid)
@@ -465,9 +465,9 @@ def read_mesh(
                 groups = read_chunk_vertices(
                     level_group, chunk_coords, dtype=dtype, ndim=ndim
                 )
-                for vg in groups:
-                    all_positions.append(vg)
-                    running += len(vg)
+                for fragment in groups:
+                    all_positions.append(fragment)
+                    running += len(fragment)
             except ArrayError:
                 pass
 

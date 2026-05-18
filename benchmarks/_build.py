@@ -629,151 +629,246 @@ else:
 
 PYRAMID_CELLS: list[tuple[str, str]] = [
     ("md", """\
-# Pyramid construction scaling
+# Pyramid construction — per coarsening factor, per build mode
 
-Time `coarsen_level` for **point clouds** (vertex-only) and **graphs**
-(N nodes + edges) at increasing vertex count `N`, comparing three
-uniform coarsening ratios `R ∈ {2, 4, 8}` over 3 levels (resulting
-pyramids span level 0 / 1 / 2 / 3).
+Fixed `N = 1_000_000`.  For point clouds and graphs (`N` nodes + ~3N/2
+edges) we sweep coarsening ratio `R ∈ {2, 4, 8}` over three pyramid
+levels (resulting pyramids span level 0 / 1 / 2 / 3) and three
+**cross-level link storage modes**:
 
-Each `(N, R, geometry)` cell is averaged over **`N_RUNS = 10` runs**;
-the plot shows the mean with a shaded **95% confidence interval**
-(Student's t, df=9).
+| `cross_level_storage` | meaning |
+| --- | --- |
+| `"none"`     | no cross-resolution links |
+| `"implicit"` | cross-chunk links only across resolutions (one direction: finer → coarser, `+Δ`) |
+| `"explicit"` | full multires links: both `+Δ` (finer level) and `-Δ` (coarser level) |
 
-Per-level timings come from `coarsen_level(source, target,
-coarsen_factor=R, sparsity_factor=1.0)` called in a loop — same
-work as `build_pyramid(factors=[(R, 1)]*3)` but with one timing per
-hop. `coarsen_level`'s default `cross_level_storage="none"` isolates
-raw coarsening cost; full `build_pyramid` runs with
-`cross_level_storage="explicit"` and is moderately slower.
+Per `(geom, R, mode, level)` we collect: total build time, vertex
+count, total link rows on disk (`cross_chunk_links/<Δ>/data` +
+`links/<Δ>/<chunk_key>` across every Δ), per-level disk size, and
+read-all-vertices time.
 
-Runtime: ~15–30 minutes on a laptop (the 1 M tier dominates).
+Build timing is averaged over `N_BUILD_RUNS = 5`; read timing over
+`N_BUILD_RUNS × N_READ_RUNS = 15` samples (Student's t 95 % CI).
+Vertex counts, link counts and disk sizes are deterministic given
+the fixed seed, so they are captured once on `run == 0`.
+
+Runtime: ~15–25 minutes on a laptop.
 """),
     ("code", SHARED_HELPERS + "\n\n" + STATS_HELPERS),
     ("md", "## 1 · Setup"),
     ("code", """\
-from zarr_vectors.types.points import write_points
-from zarr_vectors.types.graphs import write_graph
-from zarr_vectors.multiresolution.coarsen import coarsen_level
+import zarr
+from zarr_vectors.types.points  import write_points, read_points
+from zarr_vectors.types.graphs  import write_graph,  read_graph
+from zarr_vectors.multiresolution.coarsen import build_pyramid
+from zarr_vectors.core.store    import open_store, read_level_metadata
 
-SIZES  = [10_000, 100_000, 1_000_000]
-RATIOS = [2, 4, 8]
-N_LVLS = 3                    # builds levels 1, 2, 3 from level 0
-CHUNK  = (200.0, 200.0, 200.0)
-BIN    = (50.0,  50.0,  50.0)
-SEED   = 0
+N       = 1_000_000
+RATIOS  = [2, 4, 8]
+MODES   = ['none', 'implicit', 'explicit']
+N_LVLS  = 3                   # builds levels 1, 2, 3 from level 0
+CHUNK   = (200.0, 200.0, 200.0)
+BIN     = (50.0,  50.0,  50.0)
+SEED    = 0
+N_BUILD_RUNS = 5
+N_READ_RUNS  = 3
+
+
+def _level_link_count(store_path, level):
+    \"\"\"Total link rows on disk at a pyramid level.
+
+    Sums rows across every ``Δ`` and every chunk:
+      - ``<level>/cross_chunk_links/<Δ>/data`` — one array per Δ
+      - ``<level>/links/<Δ>/<chunk_key>``    — one array per chunk per Δ
+    \"\"\"
+    grp = zarr.open_group(str(store_path), path=str(level), mode='r')
+    total = 0
+    for family in ('cross_chunk_links', 'links'):
+        if family not in grp:
+            continue
+        for delta_seg in grp[family]:
+            sub = grp[family][delta_seg]
+            for name in sub:
+                arr = sub[name]
+                try:
+                    total += int(arr.shape[0])
+                except Exception:
+                    continue
+    return total
 """),
     ("md", "## 2 · Run the sweep"),
     ("code", """\
 rng = np.random.default_rng(SEED)
+positions = rng.uniform(0, 1000, (N, 3)).astype(np.float32)
+# ~3N/2 random undirected edges, dedup'd against self-loops.
+src = rng.integers(0, N, size=3 * N // 2)
+dst = rng.integers(0, N, size=3 * N // 2)
+mask = src != dst
+edges = np.stack([src[mask], dst[mask]], axis=1).astype(np.int64)
 
-metrics = ['lvl1_s', 'lvl2_s', 'lvl3_s', 'total_s']
-# raw[metric][(geom, ratio)] is shape (len(SIZES), N_RUNS)
-raw = {
-    m: {
-        (g, r): np.zeros((len(SIZES), N_RUNS))
-        for g in ('points', 'graph')
-        for r in RATIOS
-    }
-    for m in metrics
-}
+GEOMETRIES = [
+    ('points', write_points, (positions,),         read_points),
+    ('graph',  write_graph,  (positions, edges),   read_graph),
+]
 
-for i, n in enumerate(SIZES):
-    positions = rng.uniform(0, 1000, (n, 3)).astype(np.float32)
-    # ~3N/2 random undirected edges, dedup'd against self-loops.
-    src = rng.integers(0, n, size=3 * n // 2)
-    dst = rng.integers(0, n, size=3 * n // 2)
-    mask = src != dst
-    edges = np.stack([src[mask], dst[mask]], axis=1).astype(np.int64)
+# (geom, ratio, mode) -> raw measurements.
+data = {}
 
-    geometries = [
-        ('points', write_points, (positions,)),
-        ('graph',  write_graph,  (positions, edges)),
-    ]
+for ratio in RATIOS:
+    for geom, write_fn, args, read_fn in GEOMETRIES:
+        for mode in MODES:
+            build_times = np.zeros(N_BUILD_RUNS)
+            read_times  = {k: [] for k in range(N_LVLS + 1)}
+            per_level   = None              # filled on run == 0
+            for run in range(N_BUILD_RUNS):
+                store_path = _new_store(
+                    f'pyr_{geom}_r{ratio}_{mode}_run{run}'
+                )
+                write_fn(store_path, *args,
+                         chunk_shape=CHUNK, bin_shape=BIN)
+                t_build, _ = _time(
+                    build_pyramid, store_path,
+                    factors=[(float(ratio), 1.0)] * N_LVLS,
+                    cross_level_storage=mode,
+                )
+                build_times[run] = t_build
 
-    for ratio in RATIOS:
-        for run in range(N_RUNS):
-            for geom, write_fn, args in geometries:
-                store = _new_store(f'pyr_{geom}_n{n}_r{ratio}_run{run}')
-                write_fn(store, *args, chunk_shape=CHUNK, bin_shape=BIN)
-                per_lvl = []
-                for lvl in range(N_LVLS):
-                    t, _ = _time(
-                        coarsen_level, store,
-                        source_level=lvl, target_level=lvl + 1,
-                        coarsen_factor=float(ratio),
-                        sparsity_factor=1.0,
-                    )
-                    per_lvl.append(t)
-                raw['lvl1_s'][(geom, ratio)][i, run]  = per_lvl[0]
-                raw['lvl2_s'][(geom, ratio)][i, run]  = per_lvl[1]
-                raw['lvl3_s'][(geom, ratio)][i, run]  = per_lvl[2]
-                raw['total_s'][(geom, ratio)][i, run] = sum(per_lvl)
-                shutil.rmtree(Path(store).parent, ignore_errors=True)
+                if run == 0:
+                    root = open_store(str(store_path), mode='r')
+                    per_level = []
+                    for k in range(N_LVLS + 1):
+                        lm = read_level_metadata(root, k)
+                        per_level.append({
+                            'vertex_count': int(lm.vertex_count),
+                            'links_total': _level_link_count(store_path, k),
+                            'disk_bytes':  _store_bytes(Path(store_path) / str(k)),
+                        })
 
-# Summarise into a tidy dataframe: one row per (N, geom, ratio).
+                for k in range(N_LVLS + 1):
+                    for _ in range(N_READ_RUNS):
+                        t_r, _ = _time(read_fn, store_path, level=k)
+                        read_times[k].append(t_r)
+
+                shutil.rmtree(Path(store_path).parent, ignore_errors=True)
+            data[(geom, ratio, mode)] = {
+                'build_times': build_times,
+                'read_times':  {k: np.array(v) for k, v in read_times.items()},
+                'per_level':   per_level,
+            }
+
+# Tidy dataframe: one row per (geom, ratio, mode, level).
 rows = []
-for i, n in enumerate(SIZES):
-    for geom in ('points', 'graph'):
-        for ratio in RATIOS:
-            row = {'N': n, 'geom': geom, 'ratio': ratio}
-            for m in metrics:
-                mean, hw = _mean_ci95(raw[m][(geom, ratio)][i])
-                row[f'{m}_mean'] = round(mean, 4)
-                row[f'{m}_hw']   = round(hw,   4)
-            rows.append(row)
-
+for (geom, ratio, mode), d in data.items():
+    t_mean, t_hw = _mean_ci95(d['build_times'])
+    for k in range(N_LVLS + 1):
+        r_mean, r_hw = _mean_ci95(d['read_times'][k])
+        rows.append({
+            'geom':  geom,
+            'ratio': ratio,
+            'mode':  mode,
+            'level': k,
+            'build_total_s_mean': round(t_mean, 4),
+            'build_total_s_hw':   round(t_hw,   4),
+            'vertex_count': d['per_level'][k]['vertex_count'],
+            'links_total':  d['per_level'][k]['links_total'],
+            'disk_MB':      round(d['per_level'][k]['disk_bytes'] / 1e6, 3),
+            'read_all_s_mean': round(r_mean, 4),
+            'read_all_s_hw':   round(r_hw,   4),
+        })
 df = pd.DataFrame(rows)
 """),
-    ("md", "## 3 · Results"),
+    ("md", "## 3 · Results — full table"),
     ("code", "df"),
-    ("md", "## 4 · Plot"),
-    ("code", """\
-COLORS = {2: 'C0', 4: 'C1', 8: 'C2'}
-GEOMS  = ['points', 'graph']
+    ("md", """\
+## 4 · Links per level (the headline finding)
 
-fig, axes = plt.subplots(2, 2, figsize=(12, 7))
+Total link rows on disk per `(level, mode)` at `R = 4`.  `none` writes
+only intra-level cross-chunk links; `implicit` adds the `+Δ`
+cross-level arrays at the finer level; `explicit` mirrors those as
+`-Δ` arrays at the coarser level too.
+"""),
+    ("code", """\
+pivot = (df[df.ratio == 4]
+         .pivot_table(index=['geom', 'level'],
+                      columns='mode',
+                      values='links_total',
+                      sort=False)[MODES])
+pivot
+"""),
+    ("md", "## 5 · Plot"),
+    ("code", """\
+MODE_COLORS = {'none': 'C0', 'implicit': 'C1', 'explicit': 'C2'}
+GEOMS = ['points', 'graph']
+PIVOT_R = 4   # the ratio used in the per-level panels
+
+fig, axes = plt.subplots(2, 3, figsize=(15, 8))
 
 for row, geom in enumerate(GEOMS):
-    # Left column: total build time vs N (one line per ratio, log-log).
+    # --- Col 0: build time vs R, grouped by mode --------------------
     ax = axes[row, 0]
-    for ratio in RATIOS:
-        sub  = df[(df.geom == geom) & (df.ratio == ratio)].sort_values('N')
-        mean = sub['total_s_mean'].values
-        hw   = sub['total_s_hw'].values
-        ax.fill_between(
-            sub['N'], mean - hw, mean + hw, color=COLORS[ratio], alpha=0.2,
-        )
-        ax.loglog(
-            sub['N'], mean, 'o-', color=COLORS[ratio], label=f'R={ratio}',
-        )
-    ax.set_xlabel('N (vertices)')
-    ax.set_ylabel('s')
-    ax.set_title(f'{geom}: total build time vs N')
-    ax.grid(True, which='both', alpha=0.3)
-
-    # Right column: per-level breakdown at the largest N (grouped bar).
-    ax = axes[row, 1]
-    x_pos = np.arange(N_LVLS)
-    for j, ratio in enumerate(RATIOS):
-        sub = df[(df.geom == geom)
-                 & (df.ratio == ratio)
-                 & (df.N == max(SIZES))].iloc[0]
-        means = [sub[f'lvl{k + 1}_s_mean'] for k in range(N_LVLS)]
-        hws   = [sub[f'lvl{k + 1}_s_hw']   for k in range(N_LVLS)]
+    x_pos = np.arange(len(RATIOS))
+    for j, mode in enumerate(MODES):
+        means, hws = [], []
+        for r in RATIOS:
+            sub = df[(df.geom == geom)
+                     & (df.ratio == r)
+                     & (df.mode == mode)].iloc[0]
+            means.append(sub['build_total_s_mean'])
+            hws.append(sub['build_total_s_hw'])
         ax.bar(
             x_pos + (j - 1) * 0.27, means, width=0.27,
-            yerr=hws, capsize=3, color=COLORS[ratio], label=f'R={ratio}',
+            yerr=hws, capsize=3,
+            color=MODE_COLORS[mode], label=mode,
         )
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(['L0→L1', 'L1→L2', 'L2→L3'])
-    ax.set_ylabel('s')
-    ax.set_title(f'{geom}: per-level breakdown @ N={max(SIZES):,}')
+    ax.set_xticklabels([f'R={r}' for r in RATIOS])
+    ax.set_ylabel('build time (s)')
+    ax.set_title(f'{geom}: total build time')
     ax.grid(True, axis='y', alpha=0.3)
 
-axes[0, 0].legend(loc='best')
+    # --- Col 1: per-level disk size @ R=PIVOT_R ---------------------
+    ax = axes[row, 1]
+    x_pos = np.arange(N_LVLS + 1)
+    for j, mode in enumerate(MODES):
+        means = [
+            df[(df.geom == geom) & (df.ratio == PIVOT_R)
+               & (df.mode == mode) & (df.level == k)].iloc[0]['disk_MB']
+            for k in range(N_LVLS + 1)
+        ]
+        ax.bar(
+            x_pos + (j - 1) * 0.27, means, width=0.27,
+            color=MODE_COLORS[mode], label=mode,
+        )
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([f'L{k}' for k in range(N_LVLS + 1)])
+    ax.set_ylabel('disk size (MB)')
+    ax.set_title(f'{geom}: disk per level @ R={PIVOT_R}')
+    ax.grid(True, axis='y', alpha=0.3)
+
+    # --- Col 2: per-level read time @ R=PIVOT_R ---------------------
+    ax = axes[row, 2]
+    for j, mode in enumerate(MODES):
+        means, hws = [], []
+        for k in range(N_LVLS + 1):
+            sub = df[(df.geom == geom) & (df.ratio == PIVOT_R)
+                     & (df.mode == mode) & (df.level == k)].iloc[0]
+            means.append(sub['read_all_s_mean'])
+            hws.append(sub['read_all_s_hw'])
+        ax.bar(
+            x_pos + (j - 1) * 0.27, means, width=0.27,
+            yerr=hws, capsize=3,
+            color=MODE_COLORS[mode], label=mode,
+        )
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([f'L{k}' for k in range(N_LVLS + 1)])
+    ax.set_ylabel('read time (s)')
+    ax.set_title(f'{geom}: read per level @ R={PIVOT_R}')
+    ax.grid(True, axis='y', alpha=0.3)
+
+axes[0, 0].legend(loc='best', fontsize=9)
 fig.suptitle(
-    f'Pyramid construction scaling ({N_RUNS} runs, 95% CI)',
+    f'Pyramid build vs cross-level link mode '
+    f'(N={N:,}, {N_BUILD_RUNS} build runs, 95% CI)',
 )
 plt.tight_layout()
 """),
@@ -781,69 +876,129 @@ plt.tight_layout()
 
 
 # ===================================================================
-# 05 · Spatial bbox queries — zarr-vectors vs pandas/CSV
+# 05 · Spatial bbox queries — per geometry type
 # ===================================================================
 
 BBOX_CELLS: list[tuple[str, str]] = [
     ("md", """\
-# Spatial bbox queries
+# Spatial bbox queries — per geometry type
 
-Fixed `N = 1_000_000` point cloud uniformly distributed in
-`[0, 1000)³`.  Sweep bbox volume fraction `V ∈ {0.001, 0.01, 0.1, 1.0}`
-of the domain and time each side reading just the points inside the
-bbox:
+Fixed `N ≈ 50_000` vertices per store across four geometry types
+(points, polylines, graph, mesh) all positioned in `[0, 1000)³`.  Sweep
+bbox volume fraction `V ∈ {0.001, 0.01, 0.1, 1.0}` of the domain and
+time `open_zv(store)[0].filter(bbox=(lo, hi)).compute()` — only the
+chunks the bbox intersects are read.
 
-- `zarr-vectors`: `open_zv(store)[0].filter(bbox=(lo, hi)).compute()`
-  — only the chunks the bbox intersects are read.
-- `pandas / CSV`: `pd.read_csv(path).query(...)` — no spatial index,
-  must scan every row.
+10 runs per `V`; each run draws a fresh random bbox location.  Each
+panel also shows the **full-store read time** as a horizontal dashed
+reference so you can see how much the spatial index saves at small
+`V`.
 
-10 runs per `V`; each run draws a fresh random bbox location.  The
-zarr-vectors line should stay roughly flat at small `V` and rise as
-`V` approaches 1; the CSV line should be roughly flat at the
-full-file-scan cost regardless of `V`.
+Runtime: ~5–10 minutes on a laptop (`V = 1.0` over four geometries
+dominates).
 """),
     ("code", SHARED_HELPERS + "\n\n" + STATS_HELPERS),
     ("md", "## 1 · Setup"),
     ("code", """\
-from zarr_vectors.types.points import write_points
+from zarr_vectors.types.points    import write_points
+from zarr_vectors.types.polylines import write_polylines
+from zarr_vectors.types.graphs    import write_graph
+from zarr_vectors.types.meshes    import write_mesh
 from zarr_vectors.lazy import open_zv
 
-N = 1_000_000
+N           = 50_000            # target vertex count per geometry
 V_FRACTIONS = [0.001, 0.01, 0.1, 1.0]
-DOMAIN = 1000.0
-CHUNK = (200.0, 200.0, 200.0)
-BIN   = (50.0,  50.0,  50.0)
-SEED  = 0
-
-
-def _csv_path(prefix):
-    return Path(tempfile.mkdtemp(prefix=f'csvbench_{prefix}_')) / 'points.csv'
+DOMAIN      = 1000.0
+CHUNK       = (200.0, 200.0, 200.0)
+BIN         = (50.0,  50.0,  50.0)
+SEED        = 0
 """),
-    ("md", "## 2 · Write the shared input store and CSV baseline"),
+    ("md", "## 2 · Synthetic generators (one per type)"),
     ("code", """\
 rng = np.random.default_rng(SEED)
-positions = rng.uniform(0, DOMAIN, (N, 3)).astype(np.float32)
 
-# zarr-vectors store: written once and reused across every (V, run).
-zv_store = _new_store(f'bbox_zv_{N}')
-write_points(zv_store, positions, chunk_shape=CHUNK, bin_shape=BIN)
-zv_size_MB = _store_bytes(zv_store) / 1e6
 
-# CSV baseline: same data dumped as text.
-csv_path = _csv_path(f'bbox_csv_{N}')
-pd.DataFrame({
-    'x': positions[:, 0], 'y': positions[:, 1], 'z': positions[:, 2],
-}).to_csv(csv_path, index=False)
-csv_size_MB = csv_path.stat().st_size / 1e6
+def _points_input():
+    return rng.uniform(0, DOMAIN, (N, 3)).astype(np.float32)
 
-print(f'zarr-vectors store: {zv_size_MB:.2f} MB')
-print(f'CSV baseline:       {csv_size_MB:.2f} MB')
+
+def _polylines_input():
+    # ~N total vertices spread across short random walks (~12 verts each).
+    counts = rng.integers(8, 16, size=N // 12)
+    out = []
+    for c in counts:
+        steps = rng.normal(0, 5, (c, 3))
+        start = rng.uniform(0, DOMAIN, 3)
+        out.append((start + steps.cumsum(axis=0)).astype(np.float32))
+    return (out,)
+
+
+def _graph_input():
+    positions = rng.uniform(0, DOMAIN, (N, 3)).astype(np.float32)
+    src = rng.integers(0, N, size=3 * N // 2)
+    dst = rng.integers(0, N, size=3 * N // 2)
+    mask = src != dst
+    edges = np.stack([src[mask], dst[mask]], axis=1).astype(np.int64)
+    return positions, edges
+
+
+def _mesh_input():
+    side = int(np.sqrt(N))
+    xs, ys = np.meshgrid(
+        np.linspace(0, DOMAIN, side), np.linspace(0, DOMAIN, side),
+    )
+    zs = rng.uniform(0, 100, (side, side))
+    verts = np.stack([xs, ys, zs], axis=-1).reshape(-1, 3).astype(np.float32)
+    i = np.arange(side - 1)
+    j = np.arange(side - 1)
+    ii, jj = np.meshgrid(i, j, indexing='ij')
+    a = (ii * side + jj).ravel()
+    b = a + 1
+    c = a + side
+    d = c + 1
+    faces = np.concatenate([
+        np.stack([a, b, c], axis=1),
+        np.stack([b, d, c], axis=1),
+    ]).astype(np.int64)
+    return verts, faces
+
+
+GEOMETRIES = [
+    ('points',    write_points,    _points_input()),
+    ('polylines', write_polylines, _polylines_input()),
+    ('graph',     write_graph,     _graph_input()),
+    ('mesh',      write_mesh,      _mesh_input()),
+]
 """),
-    ("md", "## 3 · Run the sweep"),
+    ("md", "## 3 · Write one store per geometry"),
     ("code", """\
-metrics = ['zv_s', 'csv_s', 'returned_count']
-raw = {m: np.zeros((len(V_FRACTIONS), N_RUNS)) for m in metrics}
+stores = {}
+read_all_s = {}
+
+for name, write_fn, args in GEOMETRIES:
+    store = _new_store(f'bbox_{name}')
+    write_fn(store, *args, chunk_shape=CHUNK, bin_shape=BIN)
+    stores[name] = store
+
+    # Full-store baseline read time (average over a few runs) — used as
+    # a dashed reference line on each panel.
+    t_full = np.array([
+        _time(lambda s=store: open_zv(s)[0].vertices.compute())[0]
+        for _ in range(3)
+    ])
+    read_all_s[name] = float(t_full.mean())
+    print(f'{name:9s}  store {_store_bytes(store) / 1e6:6.2f} MB  '
+          f'read-all {read_all_s[name] * 1e3:6.1f} ms')
+"""),
+    ("md", "## 4 · Run the sweep"),
+    ("code", """\
+metrics = ['bbox_s', 'returned_count']
+# raw[metric][geom] is shape (len(V_FRACTIONS), N_RUNS).
+raw = {
+    m: {name: np.zeros((len(V_FRACTIONS), N_RUNS))
+        for name, _, _ in GEOMETRIES}
+    for m in metrics
+}
 
 for i, v in enumerate(V_FRACTIONS):
     edge = DOMAIN * (v ** (1 / 3))
@@ -851,68 +1006,55 @@ for i, v in enumerate(V_FRACTIONS):
         lo = rng.uniform(0, DOMAIN - edge, 3).astype(np.float32)
         hi = (lo + edge).astype(np.float32)
 
-        zv = open_zv(zv_store)
-        t_zv, zv_out = _time(
-            lambda: zv[0].filter(bbox=(lo, hi)).compute()
-        )
-        t_csv, csv_out = _time(
-            lambda: pd.read_csv(csv_path).query(
-                f'x >= {lo[0]} and x <= {hi[0]} and '
-                f'y >= {lo[1]} and y <= {hi[1]} and '
-                f'z >= {lo[2]} and z <= {hi[2]}'
+        for name, _, _ in GEOMETRIES:
+            zv = open_zv(stores[name])
+            t, out = _time(
+                lambda: zv[0].filter(bbox=(lo, hi)).compute()
             )
-        )
-        raw['zv_s'][i, run]            = t_zv
-        raw['csv_s'][i, run]           = t_csv
-        raw['returned_count'][i, run]  = zv_out['vertex_count']
+            raw['bbox_s'][name][i, run]         = t
+            raw['returned_count'][name][i, run] = out['vertex_count']
 
+# Tidy long-form df: one row per (geom, V).
 rows = []
-for i, v in enumerate(V_FRACTIONS):
-    row = {'V': v, 'V_pct': v * 100}
-    for m in metrics:
-        mean, hw = _mean_ci95(raw[m][i])
-        row[f'{m}_mean'] = round(mean, 4)
-        row[f'{m}_hw']   = round(hw,   4)
-    rows.append(row)
+for name, _, _ in GEOMETRIES:
+    for i, v in enumerate(V_FRACTIONS):
+        row = {'geom': name, 'V': v}
+        for m in metrics:
+            mean, hw = _mean_ci95(raw[m][name][i])
+            row[f'{m}_mean'] = round(mean, 4)
+            row[f'{m}_hw']   = round(hw,   4)
+        rows.append(row)
 df = pd.DataFrame(rows)
-shutil.rmtree(Path(zv_store).parent, ignore_errors=True)
-shutil.rmtree(csv_path.parent, ignore_errors=True)
+
+# Cleanup all stores.
+for path in stores.values():
+    shutil.rmtree(Path(path).parent, ignore_errors=True)
 """),
-    ("md", "## 4 · Results"),
+    ("md", "## 5 · Results"),
     ("code", "df"),
-    ("md", "## 5 · Plot"),
+    ("md", "## 6 · Plot"),
     ("code", """\
-fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+fig, axes = plt.subplots(2, 2, figsize=(11, 7))
+COLORS = {'points': 'C0', 'polylines': 'C1', 'graph': 'C2', 'mesh': 'C3'}
 
-SERIES = [
-    ('zarr-vectors', 'zv',  'C0'),
-    ('csv',          'csv', 'C1'),
-]
-
-# Panel 1: time vs V on log-log.
-ax = axes[0]
-for label, prefix, color in SERIES:
-    mean = df[f'{prefix}_s_mean'].values
-    hw   = df[f'{prefix}_s_hw'].values
-    ax.fill_between(df['V'], mean - hw, mean + hw, color=color, alpha=0.2)
-    ax.loglog(df['V'], mean, 'o-', color=color, label=label)
-ax.set_xlabel('bbox volume fraction')
-ax.set_ylabel('seconds')
-ax.set_title(f'Bbox read time vs V (N = {N:,})')
-ax.grid(True, which='both', alpha=0.3)
-ax.legend()
-
-# Panel 2: returned vertex count vs V (linearity check).
-ax = axes[1]
-mean = df['returned_count_mean'].values
-ax.loglog(df['V'], mean, 'o-', color='C2', label='vertex_count')
-ax.set_xlabel('bbox volume fraction')
-ax.set_ylabel('returned vertices')
-ax.set_title('Linearity check: count ∝ V')
-ax.grid(True, which='both', alpha=0.3)
+for ax, (name, _, _) in zip(axes.flat, GEOMETRIES):
+    sub  = df[df['geom'] == name].sort_values('V')
+    mean = sub['bbox_s_mean'].values
+    hw   = sub['bbox_s_hw'].values
+    ax.fill_between(sub['V'], mean - hw, mean + hw,
+                    color=COLORS[name], alpha=0.2)
+    ax.loglog(sub['V'], mean, 'o-', color=COLORS[name], label='bbox read')
+    ax.axhline(read_all_s[name], color='0.4', linestyle='--', linewidth=1,
+               label=f'read all ({read_all_s[name] * 1e3:.0f} ms)')
+    ax.set_xlabel('bbox volume fraction')
+    ax.set_ylabel('seconds')
+    ax.set_title(name)
+    ax.grid(True, which='both', alpha=0.3)
+    ax.legend(loc='best', fontsize=8)
 
 fig.suptitle(
-    f'Spatial bbox queries — zarr-vectors vs CSV ({N_RUNS} runs, 95% CI)',
+    f'Spatial bbox queries by geometry type '
+    f'(N ≈ {N:,} verts, {N_RUNS} runs, 95% CI)',
 )
 plt.tight_layout()
 """),
@@ -1071,6 +1213,14 @@ bands.  The library default is **no compression** (`BytesCodec` only)
 for the fastest cloud-write path; this benchmark surfaces what each
 compressed alternative buys you for what cost, as a function of scale.
 
+To isolate codec scaling from chunk-size effects, **per-chunk byte
+content is held roughly constant across `N`** by shrinking
+`chunk_shape` as `N` grows — every chunk holds ~`TARGET_VERTS`
+vertices in expectation.  So as `N` increases, the **number of
+chunks** rises proportionally rather than each chunk getting bigger.
+This means the per-chunk codec workload is the same at every `N` and
+only the *aggregate* work (CPU, disk, file count) scales.
+
 | Label | `compressor=` value |
 |-------|--------------------|
 | `none` (default) | `None` — uncompressed chunks, fast async PUT path |
@@ -1089,10 +1239,25 @@ for the kwarg semantics.
     ("code", """\
 from zarr_vectors.types.points import write_points, read_points
 
-SIZES = [10_000, 100_000, 1_000_000]
-CHUNK = (200.0, 200.0, 200.0)
-BIN   = (50.0,  50.0,  50.0)
-SEED  = 0
+SIZES        = [10_000, 100_000, 1_000_000]
+TARGET_VERTS = 5_000             # ≈ 60 KB raw float32 per chunk
+DOMAIN       = 1000.0
+SEED         = 0
+
+
+def _chunk_shape_for(n):
+    \"\"\"Pick a uniform 3D ``chunk_shape`` so each chunk holds about
+    ``TARGET_VERTS`` vertices in expectation for uniform random
+    positions on ``[0, DOMAIN)^3``.
+
+    Returns ``(chunk_shape, bin_shape)``.  ``bin_shape`` is 1/4 of
+    ``chunk_shape`` (matches the convention used by the other
+    benchmarks).  Capped at the domain edge so we never overshoot.
+    \"\"\"
+    side = DOMAIN * (TARGET_VERTS / n) ** (1 / 3)
+    side = min(side, DOMAIN)
+    return (side,) * 3, (side / 4.0,) * 3
+
 
 CONFIGS = [
     ('none',                None),
@@ -1119,15 +1284,21 @@ raw = {
     for m in metrics
 }
 disk_MB = {label: np.zeros(len(SIZES)) for label, _ in CONFIGS}
+per_size_chunk_shape = []
 
 for i, n in enumerate(SIZES):
-    positions = rng.uniform(0, 1000, (n, 3)).astype(np.float32)
+    chunk_shape, bin_shape = _chunk_shape_for(n)
+    per_size_chunk_shape.append(chunk_shape[0])
+    print(f'N = {n:>9,}  chunk_shape = {chunk_shape[0]:6.1f}  '
+          f'≈ {n / max(1, (DOMAIN / chunk_shape[0]) ** 3):6.0f} verts/chunk')
+    positions = rng.uniform(0, DOMAIN, (n, 3)).astype(np.float32)
     for label, compressor in CONFIGS:
         for run in range(N_RUNS):
             store = _new_store(f'codec_{label}_n{n}_run{run}')
             t_w, _ = _time(
                 write_points, store, positions,
-                chunk_shape=CHUNK, bin_shape=BIN, compressor=compressor,
+                chunk_shape=chunk_shape, bin_shape=bin_shape,
+                compressor=compressor,
             )
             t_r, _ = _time(read_points, store)
             raw['write_s'][label][i, run]    = t_w
@@ -1144,7 +1315,11 @@ for i, n in enumerate(SIZES):
 rows = []
 for i, n in enumerate(SIZES):
     for label, _ in CONFIGS:
-        row = {'N': n, 'config': label}
+        row = {
+            'N': n,
+            'chunk_shape': round(per_size_chunk_shape[i], 1),
+            'config': label,
+        }
         for m in metrics:
             # Pairwise ratio across runs: shape (N_RUNS,).
             ratio = raw[m][label][i] / raw[m]['none'][i]

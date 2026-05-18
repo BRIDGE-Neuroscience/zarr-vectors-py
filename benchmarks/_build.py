@@ -1401,6 +1401,219 @@ plt.tight_layout()
 
 
 # ===================================================================
+# 08 · Edit operations — sweep edit kind, atomic flag, edits per session
+# ===================================================================
+
+EDIT_CELLS: list[tuple[str, str]] = [
+    ("md", """\
+# Edit operations — cost per edit by kind and mode
+
+Baseline store: `N = 50_000` point cloud uniformly in `[0, 1000)^3`,
+chunked at 200³ (so the points span a 5×5×5 chunk grid).  Each row
+gets its own object ID so manifests exist for the atomic path to
+rewrite.
+
+Sweep three axes:
+
+| Axis | Values |
+| --- | --- |
+| Edit kind | `move_in_chunk`, `move_cross_chunk`, `add`, `soft_delete` |
+| Atomicity | `atomic=True` (copy-on-write), `atomic=False` (overwrite) |
+| Edits per session | `N_EDITS ∈ {1, 10, 100, 1_000}` |
+
+For each (kind, atomicity, N) we run **`N_RUNS = 5`** repeats — fresh
+baseline store each repeat — wrap the `N_EDITS` edits in a single
+`EditSession`, and report:
+
+- **edit-rate**: `N_EDITS / wall-time` (edits per second).
+- **bytes written**: post-edit store size minus pre-edit baseline.
+- **oid-remap size**: number of new OIDs allocated under atomic mode.
+
+The two soft-delete + atomic combos are the cheapest (no fragment
+churn).  `move_cross_chunk` is the most expensive because it touches
+two chunks and (under atomic) appends a fragment in the target chunk.
+
+Runtime: a few minutes on a laptop.  `N_EDITS = 1_000` for
+`move_cross_chunk + atomic` is the slow row.
+"""),
+    ("code", SHARED_HELPERS + "\n\n" + STATS_HELPERS),
+    ("md", "## 1 · Setup"),
+    ("code", """\
+from zarr_vectors.types.points import write_points
+from zarr_vectors.core.store import open_store
+from zarr_vectors.ops import EditSession, VertexRef
+
+N           = 50_000
+CHUNK       = (200.0, 200.0, 200.0)
+BIN         = (50.0, 50.0, 50.0)
+DOMAIN      = 1000.0
+N_EDITS     = [1, 10, 100, 1_000]
+EDIT_KINDS  = ['move_in_chunk', 'move_cross_chunk', 'add', 'soft_delete']
+ATOMICITY   = [True, False]
+N_RUNS      = 5
+SEED        = 0
+
+
+def _build_baseline(seed):
+    \"\"\"Fresh 50k-point store with one OID per row.\"\"\"
+    rng = np.random.default_rng(seed)
+    positions = rng.uniform(0, DOMAIN, (N, 3)).astype(np.float32)
+    store = _new_store('edit_base')
+    write_points(
+        str(store), positions,
+        chunk_shape=CHUNK, bin_shape=BIN,
+        bounds=([0.0, 0.0, 0.0], [DOMAIN, DOMAIN, DOMAIN]),
+        object_ids=np.arange(N, dtype=np.int64),
+    )
+    return store, positions
+"""),
+    ("md", "## 2 · Edit-kind workloads"),
+    ("code", """\
+def _apply_edits(ed, kind, atomic, oids, positions, rng):
+    \"\"\"Apply ``len(oids)`` edits of ``kind`` through ``ed``.\"\"\"
+    root = ed.root
+    if kind == 'move_in_chunk':
+        # Pick a tiny offset so the new position stays in the same chunk.
+        for oid in oids:
+            ref = VertexRef.from_object(root, level=0, object_id=int(oid),
+                                        vertex_index=0)
+            new_pos = positions[oid] + np.float32([0.5, 0.5, 0.5])
+            ed.edit_vertex(ref, new_pos=new_pos.tolist(), atomic=atomic)
+    elif kind == 'move_cross_chunk':
+        # Move to a position in a different chunk.  Add CHUNK[0] so the
+        # new position lands one chunk over (modulo domain).
+        for oid in oids:
+            ref = VertexRef.from_object(root, level=0, object_id=int(oid),
+                                        vertex_index=0)
+            jitter = rng.uniform(10.0, 50.0, 3).astype(np.float32)
+            new_pos = (positions[oid] + np.float32([CHUNK[0], 0.0, 0.0])
+                       + jitter)
+            new_pos = np.clip(new_pos, 0.0, DOMAIN - 1.0).tolist()
+            ed.edit_vertex(ref, new_pos=new_pos, atomic=atomic)
+    elif kind == 'add':
+        for _ in oids:
+            new_pos = rng.uniform(0, DOMAIN, 3).astype(np.float32).tolist()
+            ed.add_vertex(level=0, pos=new_pos)
+    elif kind == 'soft_delete':
+        for oid in oids:
+            ref = VertexRef.from_object(root, level=0, object_id=int(oid),
+                                        vertex_index=0)
+            # remove_vertex only supports atomic=True today; if the caller
+            # asked for atomic=False we use the atomic path and label it so
+            # the table is honest about the cost basis.
+            ed.remove_vertex(ref, atomic=True)
+    else:
+        raise ValueError(f'unknown edit kind: {kind!r}')
+"""),
+    ("md", "## 3 · Run the sweep"),
+    ("code", """\
+rows = []
+master_rng = np.random.default_rng(SEED)
+
+for kind in EDIT_KINDS:
+    for atomic in ATOMICITY:
+        # soft_delete is atomic-only — skip the atomic=False combo to
+        # avoid double-counting an identical workload.
+        if kind == 'soft_delete' and not atomic:
+            continue
+        for n_edits in N_EDITS:
+            wallclocks = np.zeros(N_RUNS)
+            bytes_delta = np.zeros(N_RUNS)
+            oid_remap_size = np.zeros(N_RUNS)
+            for run in range(N_RUNS):
+                seed = int(master_rng.integers(0, 2**31 - 1))
+                rng = np.random.default_rng(seed)
+                store, positions = _build_baseline(seed)
+                size_before = _store_bytes(store)
+                # Pre-select target OIDs for the workload (uniform without replace).
+                oids = rng.choice(N, size=n_edits, replace=False)
+                root = open_store(str(store), mode='r+')
+                t0 = time.perf_counter()
+                with EditSession(root, atomic=atomic, refresh_pyramid=False) as ed:
+                    _apply_edits(ed, kind, atomic, oids, positions, rng)
+                wallclocks[run] = time.perf_counter() - t0
+                size_after = _store_bytes(store)
+                bytes_delta[run] = size_after - size_before
+                oid_remap_size[run] = len(ed.report.oid_remap)
+                shutil.rmtree(Path(store).parent, ignore_errors=True)
+            t_mean, t_hw = _mean_ci95(wallclocks)
+            b_mean = float(bytes_delta.mean())
+            rate_mean = n_edits / t_mean if t_mean > 0 else float('nan')
+            rows.append({
+                'kind': kind,
+                'atomic': atomic,
+                'N_edits': n_edits,
+                'wall_s_mean': round(t_mean, 4),
+                'wall_s_hw':   round(t_hw, 4),
+                'rate_edits_per_s': round(rate_mean, 1),
+                'bytes_delta_mean': int(b_mean),
+                'bytes_per_edit': int(b_mean / max(n_edits, 1)),
+                'oid_remap_mean': float(round(oid_remap_size.mean(), 1)),
+            })
+
+df = pd.DataFrame(rows)
+"""),
+    ("md", "## 4 · Results"),
+    ("code", "df"),
+    ("md", "## 5 · Plot"),
+    ("code", """\
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+KIND_COLORS = {
+    'move_in_chunk':    'C0',
+    'move_cross_chunk': 'C1',
+    'add':              'C2',
+    'soft_delete':      'C3',
+}
+
+# Panel 1: edit-rate (edits/s) vs N_edits per session, one line per
+# (kind, atomic).
+ax = axes[0]
+for kind, color in KIND_COLORS.items():
+    for atomic in (True, False):
+        if kind == 'soft_delete' and not atomic:
+            continue
+        sub = df[(df['kind'] == kind) & (df['atomic'] == atomic)].sort_values('N_edits')
+        if sub.empty:
+            continue
+        style = '-' if atomic else '--'
+        label = f"{kind} ({'atomic' if atomic else 'overwrite'})"
+        ax.loglog(sub['N_edits'], sub['rate_edits_per_s'],
+                  marker='o', linestyle=style, color=color, label=label)
+ax.set_xlabel('N_edits per session')
+ax.set_ylabel('edits / second')
+ax.set_title('Edit rate vs session size')
+ax.grid(True, which='both', alpha=0.3)
+ax.legend(loc='best', fontsize=7, ncol=2)
+
+# Panel 2: bytes written per edit (amortised) vs N_edits.
+ax = axes[1]
+for kind, color in KIND_COLORS.items():
+    for atomic in (True, False):
+        if kind == 'soft_delete' and not atomic:
+            continue
+        sub = df[(df['kind'] == kind) & (df['atomic'] == atomic)].sort_values('N_edits')
+        if sub.empty:
+            continue
+        style = '-' if atomic else '--'
+        label = f"{kind} ({'atomic' if atomic else 'overwrite'})"
+        # Clip negatives so log axis is happy on the rare zero-delta case.
+        ypos = np.maximum(sub['bytes_per_edit'].values, 1)
+        ax.loglog(sub['N_edits'], ypos,
+                  marker='o', linestyle=style, color=color, label=label)
+ax.set_xlabel('N_edits per session')
+ax.set_ylabel('bytes / edit (amortised)')
+ax.set_title('Disk amplification per edit')
+ax.grid(True, which='both', alpha=0.3)
+
+fig.suptitle(
+    f'Edit operations — N={N:,} baseline, {N_RUNS} runs, 95% CI',
+)
+plt.tight_layout()
+"""),
+]
+
+
+# ===================================================================
 # Notebook builder
 # ===================================================================
 
@@ -1477,3 +1690,4 @@ if __name__ == "__main__":
     _write("05_bbox_queries.ipynb", BBOX_CELLS)
     _write("06_chunk_shape.ipynb", CHUNK_SHAPE_CELLS)
     _write("07_compression.ipynb", COMPRESSION_CELLS)
+    _write("08_edit_operations.ipynb", EDIT_CELLS)

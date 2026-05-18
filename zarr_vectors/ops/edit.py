@@ -33,6 +33,7 @@ from zarr_vectors.ops.change_set import (
     CrossChunkLinkOp,
     EditReport,
     ManifestOp,
+    OidPrefix,
 )
 from zarr_vectors.ops.refs import (
     AttributeRef,
@@ -83,6 +84,7 @@ class EditSession:
         propagate_to_objects: PropagateTo = "all",
         message: str = "zarr-vectors edit session",
         concurrent_writers: bool = False,
+        oid_prefix: OidPrefix | tuple[str, int] | tuple[int, int] | None = None,
     ) -> None:
         if refresh_pyramid not in (True, False, "batch"):
             raise EditError(
@@ -95,6 +97,7 @@ class EditSession:
         self.propagate_to_objects: PropagateTo = propagate_to_objects
         self.message = message
         self.concurrent_writers = bool(concurrent_writers)
+        self.oid_prefix: OidPrefix | None = _coerce_oid_prefix(oid_prefix)
 
         # Per-(level, chunk) builders, lazily filled.
         self._builders: dict[tuple[int, ChunkCoords], ChunkChangeBuilder] = {}
@@ -107,7 +110,7 @@ class EditSession:
         # Per-level next-available OID (atomic mode appends new OIDs here).
         self._next_oid: dict[int, int] = {}
 
-        self._report = EditReport()
+        self._report = EditReport(oid_prefix=self.oid_prefix)
         self._touched_levels: set[int] = set()
         self._closed = False
 
@@ -295,6 +298,7 @@ class EditSession:
         pos: npt.ArrayLike,
         attrs: dict[str, npt.ArrayLike] | None = None,
         object_id: int | None = None,
+        manifest_position: int | None = None,
     ) -> VertexRef:
         """Add a new vertex at ``pos`` to ``level``.
 
@@ -302,8 +306,12 @@ class EditSession:
         ``floor(pos / chunk_shape)``) as a new single-row fragment.
 
         When ``object_id`` is given, the new fragment is appended to
-        that object's manifest.  Otherwise the fragment is unreferenced
-        until the caller writes a manifest entry pointing at it.
+        that object's manifest by default.  Pass ``manifest_position=K``
+        to splice the fragment at index ``K`` of the manifest instead —
+        under ``links_convention="implicit_sequential*"`` this is the
+        right way to insert a new vertex into the middle of a sequence
+        (e.g. inserting H between C and D in ``[A,B,C,D,E,F]`` so the
+        reader reconstructs ``A->B->C->H->D->E->F``).
         """
         pos_arr = np.asarray(pos, dtype=np.float64).reshape(-1)
         cc = _chunk_for(self.root, pos_arr)
@@ -317,10 +325,232 @@ class EditSession:
         )
         if object_id is not None:
             manifest = self._get_manifest(level, object_id)
-            manifest = list(manifest) + [(tuple(cc), new_frag)]
-            self._stage_manifest(level, object_id, manifest, atomic=False)
+            entry = (tuple(cc), new_frag)
+            if manifest_position is None:
+                new_manifest = list(manifest) + [entry]
+            else:
+                if manifest_position < 0 or manifest_position > len(manifest):
+                    raise EditError(
+                        f"add_vertex(manifest_position={manifest_position}): "
+                        f"out of range [0, {len(manifest)}] for object "
+                        f"{object_id}"
+                    )
+                new_manifest = (
+                    list(manifest[:manifest_position])
+                    + [entry]
+                    + list(manifest[manifest_position:])
+                )
+            self._stage_manifest(level, object_id, new_manifest, atomic=False)
+        elif manifest_position is not None:
+            raise EditError(
+                "add_vertex(manifest_position=...) requires object_id= "
+                "to identify which manifest to splice into."
+            )
         self._mark_edit(level)
         return VertexRef(level=level, chunk=tuple(cc), fragment=new_frag, local=0)
+
+    # ------------------------------------------------------------------
+    # Link edits
+    # ------------------------------------------------------------------
+
+    def edit_link(
+        self,
+        ref: LinkRef,
+        *,
+        new_endpoints: tuple[int, int] | None = None,
+        new_attrs: dict[str, npt.ArrayLike] | None = None,
+        atomic: bool | None = None,
+    ) -> None:
+        from zarr_vectors.ops.links import edit_link_in_session
+        atomic_eff = self.atomic if atomic is None else bool(atomic)
+        edit_link_in_session(
+            self, ref,
+            new_endpoints=new_endpoints,
+            new_attrs=new_attrs,
+            atomic=atomic_eff,
+        )
+
+    def add_link(
+        self,
+        *,
+        level: int,
+        src: int,
+        dst: int,
+        chunk: ChunkCoords | None = None,
+        fragment: int | None = None,
+        delta: int = 0,
+        attrs: dict[str, npt.ArrayLike] | None = None,
+    ) -> LinkRef | CrossChunkLinkRef:
+        from zarr_vectors.ops.links import add_link_in_session
+        return add_link_in_session(
+            self,
+            level=level, src=src, dst=dst,
+            chunk=chunk, fragment=fragment,
+            delta=delta, attrs=attrs,
+        )
+
+    def remove_link(
+        self,
+        ref: LinkRef,
+        *,
+        atomic: bool | None = None,
+    ) -> None:
+        from zarr_vectors.ops.links import remove_link_in_session
+        atomic_eff = self.atomic if atomic is None else bool(atomic)
+        remove_link_in_session(self, ref, atomic=atomic_eff)
+
+    def edit_cross_chunk_link(
+        self,
+        ref: CrossChunkLinkRef,
+        *,
+        new_endpoints: list[tuple[ChunkCoords, int]],
+        atomic: bool | None = None,
+    ) -> None:
+        from zarr_vectors.ops.links import edit_cross_chunk_link_in_session
+        atomic_eff = self.atomic if atomic is None else bool(atomic)
+        edit_cross_chunk_link_in_session(
+            self, ref, new_endpoints=new_endpoints, atomic=atomic_eff,
+        )
+
+    def add_cross_chunk_link(
+        self,
+        *,
+        level: int,
+        endpoints: list[tuple[ChunkCoords, int]],
+        delta: int = 0,
+    ) -> CrossChunkLinkRef:
+        from zarr_vectors.ops.links import add_cross_chunk_link_in_session
+        return add_cross_chunk_link_in_session(
+            self, level=level, endpoints=endpoints, delta=delta,
+        )
+
+    def remove_cross_chunk_link(
+        self,
+        ref: CrossChunkLinkRef,
+    ) -> None:
+        from zarr_vectors.ops.links import remove_cross_chunk_link_in_session
+        remove_cross_chunk_link_in_session(self, ref)
+
+    # ------------------------------------------------------------------
+    # Attribute edits
+    # ------------------------------------------------------------------
+
+    def edit_attribute(self, ref: AttributeRef, value: npt.ArrayLike) -> None:
+        from zarr_vectors.ops.attributes import edit_attribute_in_session
+        edit_attribute_in_session(self, ref, value)
+
+    def add_attribute(self, ref: AttributeRef, value: npt.ArrayLike) -> None:
+        from zarr_vectors.ops.attributes import add_attribute_in_session
+        add_attribute_in_session(self, ref, value)
+
+    def remove_attribute(self, ref: AttributeRef) -> None:
+        from zarr_vectors.ops.attributes import remove_attribute_in_session
+        remove_attribute_in_session(self, ref)
+
+    # ------------------------------------------------------------------
+    # Object edits
+    # ------------------------------------------------------------------
+
+    def edit_object(
+        self,
+        oid: int,
+        *,
+        level: int = 0,
+        new_manifest: list[tuple[ChunkCoords, int]] | None = None,
+        atomic: bool | None = None,
+    ) -> int | None:
+        from zarr_vectors.ops.objects import edit_object_manifest_in_session
+        atomic_eff = self.atomic if atomic is None else bool(atomic)
+        if new_manifest is None:
+            raise EditError(
+                "edit_object: new_manifest is required.  Per-object "
+                "attribute edits go through edit_attribute(AttributeRef "
+                "(scope='object', ...))."
+            )
+        return edit_object_manifest_in_session(
+            self, oid=oid, level=level,
+            new_manifest=new_manifest, atomic=atomic_eff,
+        )
+
+    def add_object(
+        self,
+        *,
+        level: int,
+        vertices: npt.ArrayLike,
+        attrs: dict[str, npt.ArrayLike] | None = None,
+    ) -> ObjectRef:
+        from zarr_vectors.ops.objects import add_object_in_session
+        return add_object_in_session(
+            self, level=level, vertices=vertices, attrs=attrs,
+        )
+
+    def remove_object(
+        self,
+        oid: int,
+        *,
+        level: int = 0,
+        atomic: bool | None = None,
+    ) -> int | None:
+        from zarr_vectors.ops.objects import remove_object_in_session
+        atomic_eff = self.atomic if atomic is None else bool(atomic)
+        return remove_object_in_session(
+            self, oid=oid, level=level, atomic=atomic_eff,
+        )
+
+    # ------------------------------------------------------------------
+    # Fragment edits
+    # ------------------------------------------------------------------
+
+    def edit_fragment(
+        self,
+        ref: FragmentRef,
+        *,
+        new_vertices: npt.ArrayLike,
+        new_attrs: dict[str, npt.ArrayLike] | None = None,
+        atomic: bool | None = None,
+        propagate_to_objects: PropagateTo | None = None,
+    ) -> None:
+        from zarr_vectors.ops.fragments import edit_fragment_in_session
+        atomic_eff = self.atomic if atomic is None else bool(atomic)
+        prop_eff = (
+            self.propagate_to_objects
+            if propagate_to_objects is None
+            else propagate_to_objects
+        )
+        edit_fragment_in_session(
+            self, ref,
+            new_vertices=new_vertices, new_attrs=new_attrs,
+            atomic=atomic_eff, propagate=prop_eff,
+        )
+
+    def add_fragment(
+        self,
+        *,
+        level: int,
+        chunk: ChunkCoords,
+        vertices: npt.ArrayLike,
+        attrs: dict[str, npt.ArrayLike] | None = None,
+    ) -> FragmentRef:
+        from zarr_vectors.ops.fragments import add_fragment_in_session
+        return add_fragment_in_session(
+            self, level=level, chunk=chunk, vertices=vertices, attrs=attrs,
+        )
+
+    def remove_fragment(
+        self,
+        ref: FragmentRef,
+        *,
+        atomic: bool | None = None,
+        propagate_to_objects: PropagateTo | None = None,
+    ) -> None:
+        from zarr_vectors.ops.fragments import remove_fragment_in_session
+        atomic_eff = self.atomic if atomic is None else bool(atomic)
+        prop_eff = (
+            self.propagate_to_objects
+            if propagate_to_objects is None
+            else propagate_to_objects
+        )
+        remove_fragment_in_session(self, ref, atomic=atomic_eff, propagate=prop_eff)
 
     # ------------------------------------------------------------------
     # Internal vertex-edit helpers
@@ -469,14 +699,13 @@ class EditSession:
     ) -> None:
         """Schedule a manifest write.
 
-        Under ``atomic=True`` allocate a new OID at the tail and leave
-        the original OID's manifest untouched; record the remap.  Under
-        ``atomic=False`` overwrite the manifest at ``oid``.
+        Under ``atomic=True`` allocate a new OID via the prefix-aware
+        allocator and leave the original OID's manifest untouched;
+        record the remap.  Under ``atomic=False`` overwrite the
+        manifest at ``oid``.
         """
-        self._all_manifests_for(level)  # populate _next_oid
         if atomic:
-            new_oid = self._next_oid[level]
-            self._next_oid[level] += 1
+            new_oid = self._allocate_atomic_oid(level)
             self._manifest_ops[(level, new_oid)] = ManifestOp(
                 level=level, object_id=new_oid,
                 new_manifest=new_manifest, new_oid=new_oid,
@@ -487,6 +716,26 @@ class EditSession:
                 level=level, object_id=oid,
                 new_manifest=new_manifest, new_oid=None,
             )
+
+    def _allocate_atomic_oid(self, level: int) -> int:
+        """Return the next atomic OID for ``level``.
+
+        Without an ``oid_prefix`` this is ``len(manifests)`` and
+        increments by 1 each call.  With an ``oid_prefix`` it skips to
+        the next OID in the prefix's residue class so two cooperating
+        sessions with disjoint prefixes never collide.
+        """
+        self._all_manifests_for(level)  # populates _next_oid
+        if self.oid_prefix is None:
+            new_oid = self._next_oid[level]
+            self._next_oid[level] = new_oid + 1
+            return new_oid
+        new_oid = self.oid_prefix.next_after(self._next_oid[level])
+        # Advance the next-free cursor past the allocated OID.  Sparse
+        # slots between the previous cursor and ``new_oid`` stay empty
+        # (write_object_index fills them with empty manifests).
+        self._next_oid[level] = new_oid + 1
+        return new_oid
 
     # ------------------------------------------------------------------
     # Builders & touch tracking
@@ -734,6 +983,191 @@ def remove_vertex(
     return ed.report
 
 
+def edit_link(
+    root: Group,
+    ref: LinkRef,
+    *,
+    new_endpoints: tuple[int, int] | None = None,
+    new_attrs: dict[str, npt.ArrayLike] | None = None,
+    atomic: bool = True,
+    message: str = "edit_link",
+) -> EditReport:
+    with EditSession(root, atomic=atomic, refresh_pyramid=False, message=message) as ed:
+        ed.edit_link(ref, new_endpoints=new_endpoints, new_attrs=new_attrs)
+    return ed.report
+
+
+def add_link(
+    root: Group,
+    *,
+    level: int,
+    src: int,
+    dst: int,
+    chunk: ChunkCoords | None = None,
+    fragment: int | None = None,
+    delta: int = 0,
+    attrs: dict[str, npt.ArrayLike] | None = None,
+    message: str = "add_link",
+) -> tuple[LinkRef | CrossChunkLinkRef, EditReport]:
+    with EditSession(root, atomic=True, refresh_pyramid=False, message=message) as ed:
+        ref = ed.add_link(
+            level=level, src=src, dst=dst, chunk=chunk,
+            fragment=fragment, delta=delta, attrs=attrs,
+        )
+    return ref, ed.report
+
+
+def remove_link(
+    root: Group,
+    ref: LinkRef,
+    *,
+    atomic: bool = True,
+    message: str = "remove_link",
+) -> EditReport:
+    with EditSession(root, atomic=atomic, refresh_pyramid=False, message=message) as ed:
+        ed.remove_link(ref)
+    return ed.report
+
+
+def add_cross_chunk_link(
+    root: Group,
+    *,
+    level: int,
+    endpoints: list[tuple[ChunkCoords, int]],
+    delta: int = 0,
+    message: str = "add_cross_chunk_link",
+) -> tuple[CrossChunkLinkRef, EditReport]:
+    with EditSession(root, atomic=True, refresh_pyramid=False, message=message) as ed:
+        ref = ed.add_cross_chunk_link(level=level, endpoints=endpoints, delta=delta)
+    return ref, ed.report
+
+
+def remove_cross_chunk_link(
+    root: Group,
+    ref: CrossChunkLinkRef,
+    *,
+    message: str = "remove_cross_chunk_link",
+) -> EditReport:
+    with EditSession(root, atomic=True, refresh_pyramid=False, message=message) as ed:
+        ed.remove_cross_chunk_link(ref)
+    return ed.report
+
+
+def edit_attribute(
+    root: Group,
+    ref: AttributeRef,
+    value: npt.ArrayLike,
+    *,
+    message: str = "edit_attribute",
+) -> EditReport:
+    with EditSession(root, atomic=True, refresh_pyramid=False, message=message) as ed:
+        ed.edit_attribute(ref, value)
+    return ed.report
+
+
+def add_attribute(
+    root: Group,
+    ref: AttributeRef,
+    value: npt.ArrayLike,
+    *,
+    message: str = "add_attribute",
+) -> EditReport:
+    with EditSession(root, atomic=True, refresh_pyramid=False, message=message) as ed:
+        ed.add_attribute(ref, value)
+    return ed.report
+
+
+def remove_attribute(
+    root: Group,
+    ref: AttributeRef,
+    *,
+    message: str = "remove_attribute",
+) -> EditReport:
+    with EditSession(root, atomic=True, refresh_pyramid=False, message=message) as ed:
+        ed.remove_attribute(ref)
+    return ed.report
+
+
+def edit_object(
+    root: Group,
+    oid: int,
+    *,
+    level: int = 0,
+    new_manifest: list[tuple[ChunkCoords, int]] | None = None,
+    atomic: bool = True,
+    message: str = "edit_object",
+) -> EditReport:
+    with EditSession(root, atomic=atomic, refresh_pyramid=False, message=message) as ed:
+        ed.edit_object(oid, level=level, new_manifest=new_manifest)
+    return ed.report
+
+
+def add_object(
+    root: Group,
+    *,
+    level: int,
+    vertices: npt.ArrayLike,
+    attrs: dict[str, npt.ArrayLike] | None = None,
+    message: str = "add_object",
+) -> tuple[ObjectRef, EditReport]:
+    with EditSession(root, atomic=True, refresh_pyramid=False, message=message) as ed:
+        ref = ed.add_object(level=level, vertices=vertices, attrs=attrs)
+    return ref, ed.report
+
+
+def remove_object(
+    root: Group,
+    oid: int,
+    *,
+    level: int = 0,
+    atomic: bool = True,
+    message: str = "remove_object",
+) -> EditReport:
+    with EditSession(root, atomic=atomic, refresh_pyramid=False, message=message) as ed:
+        ed.remove_object(oid, level=level)
+    return ed.report
+
+
+def edit_fragment(
+    root: Group,
+    ref: FragmentRef,
+    *,
+    new_vertices: npt.ArrayLike,
+    new_attrs: dict[str, npt.ArrayLike] | None = None,
+    atomic: bool = True,
+    message: str = "edit_fragment",
+) -> EditReport:
+    with EditSession(root, atomic=atomic, refresh_pyramid=False, message=message) as ed:
+        ed.edit_fragment(ref, new_vertices=new_vertices, new_attrs=new_attrs)
+    return ed.report
+
+
+def add_fragment(
+    root: Group,
+    *,
+    level: int,
+    chunk: ChunkCoords,
+    vertices: npt.ArrayLike,
+    attrs: dict[str, npt.ArrayLike] | None = None,
+    message: str = "add_fragment",
+) -> tuple[FragmentRef, EditReport]:
+    with EditSession(root, atomic=True, refresh_pyramid=False, message=message) as ed:
+        ref = ed.add_fragment(level=level, chunk=chunk, vertices=vertices, attrs=attrs)
+    return ref, ed.report
+
+
+def remove_fragment(
+    root: Group,
+    ref: FragmentRef,
+    *,
+    atomic: bool = True,
+    message: str = "remove_fragment",
+) -> EditReport:
+    with EditSession(root, atomic=atomic, refresh_pyramid=False, message=message) as ed:
+        ed.remove_fragment(ref)
+    return ed.report
+
+
 # ======================================================================
 # Internal helpers
 # ======================================================================
@@ -746,3 +1180,21 @@ def _chunk_for(root: Group, pos: npt.NDArray[np.floating]) -> ChunkCoords:
     meta = RootMetadata.from_dict(root.attrs.to_dict())
     chunk_shape = tuple(meta.chunk_shape)
     return compute_chunk_coords(np.asarray(pos, dtype=np.float64), chunk_shape)
+
+
+def _coerce_oid_prefix(
+    spec: OidPrefix | tuple[str, int] | tuple[int, int] | None,
+) -> OidPrefix | None:
+    """Accept the three constructor shapes for ``oid_prefix=``."""
+    if spec is None or isinstance(spec, OidPrefix):
+        return spec
+    if isinstance(spec, tuple) and len(spec) == 2:
+        first, modulus = spec
+        if isinstance(first, str):
+            return OidPrefix.from_name(first, int(modulus))
+        if isinstance(first, int):
+            return OidPrefix(residue=int(first), modulus=int(modulus))
+    raise EditError(
+        f"oid_prefix must be OidPrefix, (name, k), (residue, k), or None; "
+        f"got {spec!r}"
+    )

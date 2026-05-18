@@ -63,16 +63,23 @@ def relocate_vertex_in_session(
     Link-array repartitioning is staged but the heavy boundary-edge
     rewriting (intra → cross promotions) is handled lazily at flush.
     """
-    # 1. Insert into target chunk.
-    target_builder = session._builder(ref.level, new_cc)
-    attrs_dict: dict[str, npt.NDArray] | None = None
+    # 1. Insert into target chunk.  Carry the source row's per-vertex
+    # attributes forward so the new fragment is the same logical vertex,
+    # not a zero-filled stub.  Caller-supplied new_attrs override.
+    source_builder = session._builder(ref.level, ref.chunk)
+    carry = _carry_source_attrs(session, source_builder, ref.fragment, ref.local)
     if new_attrs:
-        attrs_dict = {
-            k: np.atleast_1d(np.asarray(v))
-            for k, v in new_attrs.items()
-        }
+        for k, v in new_attrs.items():
+            carry[k] = np.atleast_1d(np.asarray(v))
+    target_builder = session._builder(ref.level, new_cc)
+    # ``ChunkChangeBuilder.append_fragment`` only forwards values for
+    # attribute names already loaded on the target builder.  Load each
+    # carried attribute eagerly so the new fragment's row receives the
+    # correct value rather than the zero-fill default.
+    for name in carry:
+        target_builder.require_attribute(session.root, name)
     new_frag = target_builder.append_fragment(
-        new_pos[np.newaxis, :], attrs=attrs_dict,
+        new_pos[np.newaxis, :], attrs=carry or None,
     )
 
     # 2. Find referring objects and decide retention.
@@ -109,6 +116,86 @@ def relocate_vertex_in_session(
         # The same row index is now stale; downstream rows have shifted
         # but the only references to this fragment were the ones we
         # just rewrote.
+
+
+def _carry_source_attrs(
+    session: EditSession,
+    source_builder,
+    fragment: int,
+    local: int,
+) -> dict[str, npt.NDArray]:
+    """Decode the source row's per-vertex attributes for forwarding.
+
+    Walks every attribute name that exists under
+    ``<level>/vertex_attributes/`` on disk (or is already loaded in the
+    builder), loads it via ``require_attribute``, and returns
+    ``{name: array_of_one_row}``.  Caller-supplied ``new_attrs`` are
+    applied on top by the relocate routine, so explicit overrides win
+    over inherited values.
+    """
+    from zarr_vectors.constants import VERTEX_ATTRIBUTES
+    from zarr_vectors.core.store import get_resolution_level
+
+    out: dict[str, npt.NDArray] = {}
+    # Names that were already loaded in this session — guaranteed
+    # available even if the on-disk listing is racy.
+    names: set[str] = set(source_builder.attr_groups.keys())
+    # Plus anything on disk under <level>/vertex_attributes/.  The
+    # intermediate ``vertex_attributes/`` directory is not a proper
+    # zarr group (no zarr.json metadata), so ``__iter__`` / ``__contains__``
+    # don't see it — list the underlying store keys with the prefix
+    # instead.
+    try:
+        level_group = get_resolution_level(session.root, source_builder.level)
+        names.update(_list_attr_names_from_store(level_group, VERTEX_ATTRIBUTES))
+    except Exception:
+        pass
+
+    for name in names:
+        attr_list = source_builder.require_attribute(session.root, name)
+        if fragment >= len(attr_list):
+            continue
+        group = attr_list[fragment]
+        if local >= group.shape[0]:
+            continue
+        out[name] = np.atleast_1d(group[local].copy())
+    return out
+
+
+def _list_attr_names_from_store(level_group, parent: str) -> list[str]:
+    """List attribute names under ``<level>/<parent>/`` via the zarr
+    store's ``list_prefix`` primitive.
+
+    ``parent`` is e.g. ``"vertex_attributes"``.  The intermediate
+    directory isn't a proper zarr group, so we walk the underlying
+    store keys.  Returns the sorted unique segment names directly
+    under the prefix.
+    """
+    import asyncio
+
+    zg = level_group._zarr
+    store = zg.store
+    level_path = zg.path.strip("/")
+    prefix = f"{level_path}/{parent}/" if level_path else f"{parent}/"
+    n_prefix = len(prefix)
+
+    async def collect():
+        names: set[str] = set()
+        async for key in store.list_prefix(prefix):
+            tail = key[n_prefix:]
+            if not tail:
+                continue
+            name = tail.split("/", 1)[0]
+            if name and not name.startswith("."):
+                names.add(name)
+        return names
+
+    try:
+        return sorted(asyncio.run(collect()))
+    except RuntimeError:
+        # Already-running event loop (rare in sync test paths) — fall
+        # back to the empty list rather than crashing.
+        return []
 
 
 def _should_delete_source(

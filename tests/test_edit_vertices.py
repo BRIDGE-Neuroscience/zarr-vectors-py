@@ -333,6 +333,53 @@ class TestChunkCrossMove:
         np.testing.assert_allclose(flat[0], new_pos, atol=1e-5)
         assert report.n_edits == 1
 
+    def test_atomic_carry_source_attrs_to_target_chunk(
+        self, tmp_path: Path,
+    ) -> None:
+        """Regression test for the Iteration-2 parallel-attribute fix.
+
+        When a vertex with a non-default per-vertex attribute is moved
+        atomically to a new chunk, the new fragment at the target
+        chunk must carry the same attribute value (not zero).
+        """
+        path = tmp_path / "store.zv"
+        positions = np.array(
+            [[10.0, 10.0, 10.0], [60.0, 60.0, 60.0]], dtype=np.float32,
+        )
+        intensity = np.array([3.14, 2.71], dtype=np.float32)
+        write_points(
+            str(path), positions,
+            chunk_shape=(50.0, 50.0, 50.0),
+            bounds=([0.0, 0.0, 0.0], [100.0, 100.0, 100.0]),
+            object_ids=np.arange(2, dtype=np.int64),
+            vertex_attributes={"intensity": intensity},
+        )
+        root = open_store(str(path), mode="r+")
+
+        ref = VertexRef.from_object(
+            root, level=0, object_id=0, vertex_index=0,
+        )
+        # Atomic move from (0,0,0) into (1,1,1).
+        new_pos = [85.0, 85.0, 85.0]
+        report = edit_vertex(root, ref, new_pos=new_pos, atomic=True)
+        new_oid = report.oid_remap[0]
+
+        # The new OID's vertex still carries intensity=3.14.
+        from zarr_vectors.core.arrays import read_object_manifest, read_chunk_attributes
+        manifest = read_object_manifest(root["0"], new_oid)
+        assert len(manifest) == 1
+        new_cc, new_frag = manifest[0]
+        groups = read_chunk_attributes(
+            root["0"], "intensity", new_cc, dtype=np.float32,
+        )
+        np.testing.assert_allclose(
+            groups[new_frag][0], 3.14, atol=1e-5,
+            err_msg=(
+                "atomic chunk-cross: target chunk's fragment must carry "
+                "the source row's attribute value, not zero"
+            ),
+        )
+
     def test_atomic_keeps_source_row(
         self, multi_chunk_store: tuple[str, np.ndarray],
     ) -> None:

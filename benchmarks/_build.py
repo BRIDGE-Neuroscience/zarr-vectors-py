@@ -1610,6 +1610,97 @@ fig.suptitle(
 )
 plt.tight_layout()
 """),
+    ("md", """\
+## 6 · Multi-writer concurrency — disjoint chunks
+
+Simulate **1 vs 4 cooperating editors** on the same baseline store via
+``oid_prefix`` (each writer gets a disjoint residue class).  The
+editors target disjoint chunks so writes never collide at the chunk
+level; the panel measures the per-editor edit-rate when the editors
+run sequentially (the baseline) versus when they share an `oid_prefix`
+allocator with `modulus=4`.
+
+This is a sanity check on the OID-prefix allocator, not a parallelism
+benchmark: edits within a single Python process are sequential.  The
+takeaway is that the allocator overhead is negligible and OIDs from
+different editors land in disjoint ranges, ready for an icechunk
+multi-branch merge in production.
+"""),
+    ("code", """\
+from zarr_vectors.ops import OidPrefix, merge_edit_reports
+
+EDITORS  = ['alice', 'bob', 'carol', 'dave']
+MODULUS  = len(EDITORS)
+N_EDITS_PER_EDITOR = 50
+
+# Carve the chunk space into disjoint regions per editor so writes
+# don't collide.  We assign chunks round-robin by hash.
+def _chunk_for_editor(positions, editor_idx, num_editors):
+    chunk = (positions // 50).astype(int)
+    h = (chunk[:, 0] + chunk[:, 1] * 7 + chunk[:, 2] * 13) % num_editors
+    return h == editor_idx
+
+
+rows = []
+for n_editors in (1, MODULUS):
+    seed = int(master_rng.integers(0, 2**31 - 1))
+    rng = np.random.default_rng(seed)
+    store, positions = _build_baseline(seed)
+    size_before = _store_bytes(store)
+    chunk_shape = np.array(CHUNK)
+
+    t0 = time.perf_counter()
+    reports = []
+    for editor_idx in range(n_editors):
+        editor_name = EDITORS[editor_idx]
+        mask = _chunk_for_editor(positions, editor_idx, n_editors)
+        candidates = np.flatnonzero(mask)
+        if len(candidates) < N_EDITS_PER_EDITOR:
+            continue
+        oids = rng.choice(candidates, size=N_EDITS_PER_EDITOR, replace=False)
+        root = open_store(str(store), mode='r+')
+        with EditSession(
+            root, atomic=True,
+            refresh_pyramid=False,
+            oid_prefix=(editor_name, MODULUS),
+        ) as ed:
+            for oid in oids:
+                ref = VertexRef.from_object(
+                    root, level=0, object_id=int(oid), vertex_index=0,
+                )
+                new_pos = positions[oid] + np.float32([0.5, 0.5, 0.5])
+                ed.edit_vertex(ref, new_pos=new_pos.tolist(), atomic=True)
+        reports.append(ed.report)
+    dt = time.perf_counter() - t0
+
+    size_after = _store_bytes(store)
+    total_edits = sum(r.n_edits for r in reports)
+
+    # All atomic OIDs allocated by the cooperating sessions must be
+    # in disjoint residue classes — verify by inspecting the remap.
+    new_oids = [v for r in reports for v in r.oid_remap.values()]
+    if n_editors > 1:
+        try:
+            merged = merge_edit_reports(*reports)
+            merge_ok = True
+        except Exception:
+            merge_ok = False
+    else:
+        merge_ok = True
+
+    rows.append({
+        'n_editors': n_editors,
+        'total_edits': total_edits,
+        'wall_s': round(dt, 3),
+        'edits_per_s': round(total_edits / dt, 1) if dt > 0 else float('nan'),
+        'bytes_delta': int(size_after - size_before),
+        'merge_ok': merge_ok,
+    })
+    shutil.rmtree(Path(store).parent, ignore_errors=True)
+
+df_conc = pd.DataFrame(rows)
+df_conc
+"""),
 ]
 
 

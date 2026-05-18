@@ -405,6 +405,92 @@ class ManifestOp:
     new_oid: int | None = None  # atomic mode: append at this OID instead
 
 
+@dataclass(frozen=True)
+class OidPrefix:
+    """Disjoint-OID-range allocator for cooperating editors.
+
+    Two ``EditSession``s configured with the same modulus ``k`` and
+    different residues ``r`` will never collide on atomic-OID
+    allocation: each session emits new OIDs ``n`` such that
+    ``n % k == r``.
+
+    Constructors:
+
+    - ``OidPrefix.from_name(name, k)`` — hash ``name`` to a residue
+      ``r ∈ [0, k)``.  Useful when editors agree on the modulus and
+      pick disjoint identifiers (e.g. ``"alice"`` / ``"bob"``).
+    - ``OidPrefix(residue=r, modulus=k)`` — explicit residue.
+    """
+
+    residue: int
+    modulus: int
+
+    def __post_init__(self) -> None:
+        if self.modulus <= 0:
+            from zarr_vectors.exceptions import EditError
+            raise EditError(
+                f"OidPrefix.modulus must be > 0, got {self.modulus}"
+            )
+        if not (0 <= self.residue < self.modulus):
+            from zarr_vectors.exceptions import EditError
+            raise EditError(
+                f"OidPrefix.residue must be in [0, {self.modulus}), "
+                f"got {self.residue}"
+            )
+
+    @classmethod
+    def from_name(cls, name: str, modulus: int) -> OidPrefix:
+        """Stable hash of ``name`` modulo ``modulus``."""
+        import hashlib
+        digest = hashlib.sha256(name.encode("utf-8")).digest()
+        residue = int.from_bytes(digest[:8], "little") % modulus
+        return cls(residue=residue, modulus=modulus)
+
+    def next_after(self, lower_bound: int) -> int:
+        """Return the smallest OID ``n >= lower_bound`` with
+        ``n % modulus == residue``."""
+        r = lower_bound % self.modulus
+        if r <= self.residue:
+            return lower_bound + (self.residue - r)
+        return lower_bound + (self.modulus - r) + self.residue
+
+
+@dataclass
+class VacuumReport:
+    """Result of :func:`zarr_vectors.ops.vacuum.vacuum`.
+
+    Vacuum is destructive: applying it invalidates external references
+    to old OIDs unless the caller composes them through ``oid_remap``.
+    """
+
+    oid_remap: dict[int, int] = field(default_factory=dict)
+    """``{old_oid: new_oid}`` after OID compaction.  Identity for OIDs
+    that were already dense at the head of the table.
+    """
+
+    dropped_fragments_per_chunk: dict[tuple[int, ChunkCoords], list[int]] = field(
+        default_factory=dict,
+    )
+    """``{(level, chunk_coords): [dropped_fragment_indices]}`` — empty
+    this iteration (filled by the deferred tombstone-GC pass).
+    """
+
+    bytes_freed: int = 0
+    """Aggregate bytes reclaimed by the vacuum pass.  Best-effort
+    estimate based on the pre-vs-post ``object_index/manifests`` size
+    and any chunk re-encodes."""
+
+    def to_dict(self) -> dict:
+        return {
+            "oid_remap": {str(k): v for k, v in self.oid_remap.items()},
+            "dropped_fragments_per_chunk": {
+                f"{lv}/{'.'.join(str(c) for c in cc)}": list(v)
+                for (lv, cc), v in self.dropped_fragments_per_chunk.items()
+            },
+            "bytes_freed": int(self.bytes_freed),
+        }
+
+
 @dataclass
 class EditReport:
     """User-facing summary of what an :class:`EditSession` did.
@@ -439,6 +525,13 @@ class EditReport:
     n_edits: int = 0
     """Total number of individual edits applied in the session."""
 
+    oid_prefix: OidPrefix | None = None
+    """The OID-prefix allocator used during this session (if any).
+    ``None`` means atomic OIDs were appended at ``len(manifests)`` with
+    no residue constraint.  ``merge_edit_reports`` cross-checks the
+    prefix of each input to ensure their atomic OIDs cannot collide.
+    """
+
     def to_dict(self) -> dict:
         """Return a JSON-serialisable view of the report."""
         return {
@@ -450,4 +543,9 @@ class EditReport:
             "dirty_pyramid_levels": list(self.dirty_pyramid_levels),
             "snapshot_id": self.snapshot_id,
             "n_edits": self.n_edits,
+            "oid_prefix": (
+                None if self.oid_prefix is None
+                else {"residue": self.oid_prefix.residue,
+                      "modulus": self.oid_prefix.modulus}
+            ),
         }

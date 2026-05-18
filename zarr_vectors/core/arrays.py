@@ -1136,6 +1136,81 @@ def read_chunk_attributes(
     return decode_ragged_floats(raw, attr_offsets, dtype, ncols)
 
 
+def read_chunk_link_attributes(
+    level_group: FsGroup,
+    attr_name: str,
+    chunk_coords: ChunkCoords,
+    dtype: np.dtype | str = np.float32,
+    ncols: int = 1,
+    *,
+    delta: int = 0,
+) -> list[npt.NDArray]:
+    """Read per-link attribute data for a chunk.
+
+    Mirrors :func:`read_chunk_attributes` for the per-link case: the
+    ragged bytes live under ``link_attributes/<name>/<delta>/<chunk>``
+    and align 1:1 with the link fragments under ``link_fragments/<chunk>``
+    (intra-level only, ``delta == 0``).  Per-link group ``k`` has the
+    same row count as link group ``k`` in ``links/<delta>/<chunk>``.
+
+    Args:
+        level_group: Resolution level group.
+        attr_name: Attribute name (e.g. ``"weight"``).
+        chunk_coords: Spatial chunk coordinates.
+        dtype: Numpy dtype of the attribute.
+        ncols: Number of columns (channels).  Use 1 for scalars.
+        delta: Level delta; cross-level link attributes are stored
+            differently and must be read via the global
+            ``cross_chunk_link_attributes`` path — this helper handles
+            only the per-chunk ``delta == 0`` case.
+
+    Returns:
+        List of arrays aligned with the link fragments in the chunk.
+    """
+    if delta != 0:
+        raise ArrayError(
+            f"read_chunk_link_attributes only supports delta=0 "
+            f"(per-chunk intra-level); got delta={delta}.  Use "
+            f"read_cross_chunk_link_attributes for cross-level "
+            f"link attributes.",
+        )
+    key = _chunk_key(chunk_coords)
+    dtype = np.dtype(dtype)
+    full_name = link_attributes_path(attr_name, delta)
+
+    try:
+        raw = level_group.read_bytes(full_name, key)
+    except Exception as e:
+        raise ArrayError(
+            f"Cannot read link attribute '{attr_name}' chunk {key} "
+            f"(delta={format_delta(delta)}): {e}"
+        ) from e
+
+    # Per-link group `k` has N_k rows where N_k = link_fragments[k].count.
+    # Derive byte offsets from the link-fragment sidecar.
+    fi = read_link_fragment_index(level_group, chunk_coords)
+    if fi.num_fragments == 0:
+        return []
+    row_bytes = int(dtype.itemsize) * int(ncols)
+    cursor = 0
+    out: list[npt.NDArray] = []
+    for f in range(fi.num_fragments):
+        if not fi.is_range(f):
+            raise ArrayError(
+                f"link_fragments/{key} fragment {f} is non-contiguous; "
+                "read_chunk_link_attributes requires every fragment to be "
+                "a contiguous range of link rows.",
+            )
+        _start, count = fi.range(f)
+        seg = raw[cursor : cursor + int(count) * row_bytes]
+        cursor += int(count) * row_bytes
+        arr = np.frombuffer(seg, dtype=dtype)
+        if ncols > 1:
+            arr = arr.reshape(-1, ncols)
+        out.append(arr.copy())
+    return out
+
+
 def _infer_vert_ndim(level_group: FsGroup) -> int:
     """Best-effort lookup of the spatial-index dimensionality.
 

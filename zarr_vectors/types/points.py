@@ -59,6 +59,11 @@ from zarr_vectors.core.attr_chunking import (
     assign_attribute_bins,
     compute_chunk_dim_names,
 )
+from zarr_vectors.encoding.categorical import (
+    DICTIONARY_ENCODING,
+    decode_categorical,
+    encode_categorical,
+)
 from zarr_vectors.constants import DEFAULT_OOB_POLICY
 from zarr_vectors.core.metadata import (
     LevelMetadata,
@@ -291,6 +296,34 @@ def write_points(
 
     object_manifests: dict[int, ObjectManifest] = {}
 
+    # Dictionary-encode any string-typed attributes.  Non-numeric
+    # dtypes (Unicode/bytes/object) are stored on disk as integer
+    # ``codes`` arrays + a ``categories`` lookup table in the array's
+    # metadata (see encoding/categorical.py).  Float NaN passes
+    # through untouched as the native "missing" sentinel.
+    attr_extra_meta: dict[str, dict[str, Any]] = {}
+    if attributes:
+        encoded: dict[str, npt.NDArray] = {}
+        for attr_name, attr_data in attributes.items():
+            arr = np.asarray(attr_data)
+            if arr.dtype.kind in ("U", "S", "O"):
+                if arr.ndim != 1:
+                    raise ArrayError(
+                        f"dictionary-encoded attribute {attr_name!r} must be "
+                        f"1-D (got shape {arr.shape})"
+                    )
+                has_missing = (
+                    arr.dtype.kind == "O" and any(v is None for v in arr)
+                )
+                codes, dict_meta = encode_categorical(
+                    arr, fill_value=-1 if has_missing else None,
+                )
+                encoded[attr_name] = codes
+                attr_extra_meta[attr_name] = dict_meta
+            else:
+                encoded[attr_name] = arr
+        attributes = encoded
+
     # All per-array ``zarr.json`` PUTs *and* per-chunk byte writes
     # (vertices, offsets, attributes, the object_index sidecar) flush
     # in a single asyncio.gather against the underlying Store —
@@ -306,8 +339,12 @@ def write_points(
                 channel_names = None
                 if attr_data.ndim == 2:
                     channel_names = [f"ch{i}" for i in range(attr_data.shape[1])]
-                create_attribute_array(level_group, attr_name, dtype=str(attr_data.dtype),
-                                       channel_names=channel_names)
+                create_attribute_array(
+                    level_group, attr_name,
+                    dtype=str(attr_data.dtype),
+                    channel_names=channel_names,
+                    extra_meta=attr_extra_meta.get(attr_name),
+                )
 
         if needs_objects:
             create_object_index_array(level_group)
@@ -701,10 +738,16 @@ def read_points(
             )
             positions_out = positions_out[mask]
 
-        # Read attributes
+        # Read attributes — pull the on-disk dtype, channel count, and
+        # any dictionary-encoding metadata from each attribute array's
+        # ``zarr.json``.  Falls back to (float32, 1 col, no encoding)
+        # if the meta blob is missing or unreadable.
         attrs_out: dict[str, npt.NDArray] = {}
         if attribute_names:
             for attr_name in attribute_names:
+                attr_dtype, attr_ncols, attr_encoding = _read_attribute_meta(
+                    level_group, attr_name,
+                )
                 attr_parts: list[npt.NDArray] = []
                 if chunk_fragment_targets is not None:
                     # Bin-level bbox: read the same fragments as positions
@@ -714,7 +757,7 @@ def read_points(
                         try:
                             attr_groups = read_chunk_attributes(
                                 level_group, attr_name, cc,
-                                dtype=np.float32, ncols=1,
+                                dtype=attr_dtype, ncols=attr_ncols,
                             )
                             for fragment_index in fragment_indices:
                                 if fragment_index < len(attr_groups) and len(attr_groups[fragment_index]) > 0:
@@ -726,7 +769,7 @@ def read_points(
                         try:
                             attr_groups = read_chunk_attributes(
                                 level_group, attr_name, chunk_coords,
-                                dtype=np.float32, ncols=1,
+                                dtype=attr_dtype, ncols=attr_ncols,
                             )
                             for ag in attr_groups:
                                 attr_parts.append(ag)
@@ -736,6 +779,12 @@ def read_points(
                     attr_all = np.concatenate(attr_parts, axis=0)
                     if bbox is not None:
                         attr_all = attr_all[mask]
+                    if attr_encoding is not None:
+                        attr_all = decode_categorical(
+                            attr_all,
+                            attr_encoding["categories"],
+                            fill_value=attr_encoding.get("_FillValue"),
+                        )
                     attrs_out[attr_name] = attr_all
 
     return {
@@ -743,6 +792,34 @@ def read_points(
         "vertex_attributes": attrs_out,
         "vertex_count": len(positions_out),
     }
+
+
+def _read_attribute_meta(
+    level_group: Any,
+    attr_name: str,
+) -> tuple[np.dtype, int, dict[str, Any] | None]:
+    """Read on-disk metadata for ``vertex_attributes/<attr_name>/``.
+
+    Returns ``(dtype, ncols, dict_encoding_meta_or_None)``.  Falls
+    back to ``(float32, 1, None)`` if the metadata blob can't be read
+    (e.g. legacy stores that pre-date the dtype field).
+    """
+    try:
+        meta = level_group.read_array_meta(f"{VERTEX_ATTRIBUTES}/{attr_name}")
+    except Exception:
+        return np.dtype(np.float32), 1, None
+    dtype = np.dtype(meta.get("dtype", "float32"))
+    channel_names = meta.get("channel_names")
+    ncols = len(channel_names) if channel_names else 1
+    dict_meta: dict[str, Any] | None = None
+    if meta.get("encoding") == DICTIONARY_ENCODING:
+        dict_meta = {
+            "categories": meta["categories"],
+            "ordered": meta.get("ordered", False),
+        }
+        if "_FillValue" in meta:
+            dict_meta["_FillValue"] = meta["_FillValue"]
+    return dtype, ncols, dict_meta
 
 
 def _empty_result(ndim: int) -> dict[str, Any]:

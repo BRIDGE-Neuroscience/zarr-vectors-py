@@ -212,6 +212,7 @@ def create_attribute_array(
     name: str,
     dtype: str = "float32",
     channel_names: list[str] | None = None,
+    extra_meta: dict[str, Any] | None = None,
 ) -> None:
     """Create a vertex attribute array ``attributes/<name>/``.
 
@@ -220,6 +221,12 @@ def create_attribute_array(
         name: Attribute name (e.g. ``"radius"``, ``"gene_expression"``).
         dtype: Numpy dtype string.
         channel_names: Optional list of channel names.
+        extra_meta: Additional JSON-serialisable fields merged into the
+            array metadata.  Used for the dictionary-encoding
+            convention (``encoding="dictionary"``, ``categories``,
+            ``ordered``, ``_FillValue``) and other userspace
+            extensions.  Keys collide-check against the core fields
+            (``zv_array``, ``name``, ``dtype``, ``channel_names``).
     """
     full_name = f"{VERTEX_ATTRIBUTES}/{name}"
     _ensure_array_dir(level_group, full_name)
@@ -230,6 +237,14 @@ def create_attribute_array(
     }
     if channel_names is not None:
         meta["channel_names"] = channel_names
+    if extra_meta:
+        reserved = {"zv_array", "name", "dtype", "channel_names"}
+        clobber = reserved & set(extra_meta)
+        if clobber:
+            raise ArrayError(
+                f"extra_meta cannot override core attribute fields: {sorted(clobber)}"
+            )
+        meta.update(extra_meta)
     level_group.write_array_meta(full_name, meta)
 
 

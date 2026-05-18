@@ -9,7 +9,7 @@
 
 The package supports supervoxel-level spatial binning with separated chunk and bin sizes, per-level object sparsity for balanced multi-resolution pyramids, and OME-Zarr-compatible multiscale metadata.
 
-*Aligned to the Zarr Vectors specification by Forest Collman, Allen Institute for Brain Sciences*
+*Aligned to the Zarr Vectors specification by Forrest Collman, Allen Institute for Brain Sciences*
 [Link to specification GitHub](https://github.com/AllenInstitute/zarr_vectors)
 
 ---

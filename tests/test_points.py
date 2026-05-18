@@ -318,3 +318,145 @@ class TestOutOfBoundsPolicy:
             assert False
         except MetadataError:
             pass
+
+
+# ===================================================================
+# Attribute dtype round-trip (non-float and dictionary-encoded)
+# ===================================================================
+
+class TestAttributeDtypes:
+    """write_points + read_points must round-trip non-float vertex
+    attributes (the read path previously hardcoded float32 + 1 col)
+    and dictionary-encoded string attributes (Arrow Dictionary /
+    pandas Categorical convention persisted in .zattrs)."""
+
+    def _positions(self, n: int = 6, seed: int = 0) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        return rng.uniform(0, 90, size=(n, 3)).astype(np.float32)
+
+    def test_int_attribute_roundtrip(self, tmp_path: Path) -> None:
+        positions = self._positions(6)
+        cell_id = np.array([10, 20, 30, 40, 50, 60], dtype=np.int32)
+        store = str(tmp_path / "int_attr.zarr")
+
+        write_points(
+            store, positions,
+            chunk_shape=(100.0, 100.0, 100.0),
+            vertex_attributes={"cell_id": cell_id},
+        )
+        result = read_points(store, attribute_names=["cell_id"])
+
+        out = result["vertex_attributes"]["cell_id"]
+        assert out.dtype == np.int32
+        assert sorted(out.tolist()) == sorted(cell_id.tolist())
+
+    def test_string_attribute_dictionary_encoded(self, tmp_path: Path) -> None:
+        positions = self._positions(6)
+        labels = np.array(
+            ["soma", "axon", "soma", "dendrite", "axon", "soma"],
+        )
+        store = str(tmp_path / "str_attr.zarr")
+
+        write_points(
+            store, positions,
+            chunk_shape=(100.0, 100.0, 100.0),
+            vertex_attributes={"compartment": labels},
+        )
+
+        # On-disk array must be integer codes (not raw strings) with
+        # an ``encoding="dictionary"`` marker in .zattrs.
+        root = open_store(store)
+        attr_meta = root.attrs.to_dict()  # root attrs are unrelated; check level
+        from zarr_vectors.core.store import get_resolution_level, read_root_metadata
+        rm = read_root_metadata(root)  # noqa: F841 — sanity
+        lg = get_resolution_level(root, 0)
+        m = lg.read_array_meta("vertex_attributes/compartment")
+        assert m["encoding"] == "dictionary"
+        assert sorted(m["categories"]) == ["axon", "dendrite", "soma"]
+        assert np.dtype(m["dtype"]).kind in ("u", "i")
+
+        # Read path returns the decoded strings, not the codes.
+        result = read_points(store, attribute_names=["compartment"])
+        out = result["vertex_attributes"]["compartment"]
+        assert sorted(out.tolist()) == sorted(labels.tolist())
+
+    def test_string_attribute_with_missing_values(self, tmp_path: Path) -> None:
+        positions = self._positions(5)
+        labels = np.array(["soma", None, "axon", None, "soma"], dtype=object)
+        store = str(tmp_path / "str_missing.zarr")
+
+        write_points(
+            store, positions,
+            chunk_shape=(100.0, 100.0, 100.0),
+            vertex_attributes={"compartment": labels},
+        )
+
+        result = read_points(store, attribute_names=["compartment"])
+        out = result["vertex_attributes"]["compartment"]
+        # Two Nones round-trip as None (object dtype).
+        assert out.dtype == object
+        assert sum(1 for v in out if v is None) == 2
+        assert sorted(v for v in out if v is not None) == ["axon", "soma", "soma"]
+
+
+# ===================================================================
+# Remote-URL clobber regression
+# ===================================================================
+
+class TestRemoteUrlPreservesMetadata:
+    """``write_points(<gs://url>, ...)`` against an existing remote
+    store must NOT silently re-create it and clobber the root NGFF
+    metadata (axes, units, ...).  Before the fix in
+    ``_create_or_open_store``, non-local URL schemes fell through to
+    ``create_store(mode="w")`` which dropped any ``axes[*].unit``
+    field the writer didn't re-supply.
+    """
+
+    def test_axis_units_survive_write_points_via_url_string(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        from zarr_vectors.core import store as store_module
+        from zarr_vectors.core.metadata import NgffAxis
+
+        store_path = str(tmp_path / "remote_mock.zarr")
+
+        # Create the store with explicit axis units, just like the user's
+        # ``write_mfish_vectors.ipynb`` notebook does.
+        create_store(
+            store_path,
+            bounds=([0, 0, 0], [100, 100, 100]),
+            chunk_shape=(100.0, 100.0, 100.0),
+            axes=[
+                NgffAxis(name="x", type="space", unit="micrometer"),
+                NgffAxis(name="y", type="space", unit="micrometer"),
+                NgffAxis(name="z", type="space", unit="micrometer"),
+            ],
+        )
+
+        # Force ``_create_or_open_store`` to take the "non-local URL"
+        # branch even though the path is a local tmp dir.  This exercises
+        # the bug-fix branch without needing real GCS / S3 credentials.
+        real_detect = store_module._detect_scheme
+        def fake_detect(p):
+            if isinstance(p, str) and p == store_path:
+                return "gs"
+            return real_detect(p)
+        monkeypatch.setattr(store_module, "_detect_scheme", fake_detect)
+
+        # Pass the *URL string*, not the Group handle — this is the path
+        # that hits the bug.
+        positions = np.array(
+            [[10.0, 10.0, 10.0], [20.0, 20.0, 20.0]],
+            dtype=np.float32,
+        )
+        write_points(
+            store_path, positions, chunk_shape=(100.0, 100.0, 100.0),
+        )
+
+        # Axes (with units) must survive the write.
+        root = open_store(store_path)
+        axes_after = root.attrs.to_dict()["multiscales"][0]["axes"]
+        for ax in axes_after:
+            assert ax.get("unit") == "micrometer", (
+                f"write_points clobbered axis unit; got {axes_after}"
+            )

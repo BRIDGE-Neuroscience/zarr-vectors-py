@@ -919,6 +919,11 @@ def read_chunk_vertices(
 ) -> list[npt.NDArray[np.floating]]:
     """Read all fragments from a spatial chunk.
 
+    Handles both range and explicit fragments: the full chunk buffer is read
+    once and dispatched per fragment based on the ``vertex_fragments/<chunk>``
+    index — range fragments are returned as contiguous slices, explicit
+    fragments via ``fi.indices(f)`` gather.
+
     Args:
         level_group: Resolution level group.
         chunk_coords: Spatial chunk coordinates.
@@ -943,11 +948,19 @@ def read_chunk_vertices(
         except Exception as e:
             raise ArrayError(f"Cannot read vertices chunk {key}: {e}") from e
 
-        bytes_per_vertex = int(dtype.itemsize) * int(ndim)
-        offsets = _read_vertex_offsets(
-            level_group, chunk_coords, bytes_per_vertex=bytes_per_vertex,
-        )
-    return decode_ragged_floats(raw, offsets, dtype, ndim)
+        fi = read_vertex_fragment_index(level_group, chunk_coords)
+
+    if fi.num_fragments == 0:
+        return []
+    full = _reshape_vertex_buffer(raw, dtype, ndim)
+    groups: list[npt.NDArray[np.floating]] = []
+    for f in range(fi.num_fragments):
+        if fi.is_range(f):
+            start, count = fi.range(f)
+            groups.append(full[start : start + count])
+        else:
+            groups.append(full[fi.indices(f)])
+    return groups
 
 
 def read_fragment(
@@ -957,7 +970,11 @@ def read_fragment(
     dtype: np.dtype | str = np.float32,
     ndim: int = 3,
 ) -> npt.NDArray[np.floating]:
-    """Read a single fragment using byte offsets for efficient access.
+    """Read a single vertex fragment from a chunk.
+
+    Dispatches on the ``vertex_fragments/<chunk>`` index: range fragments
+    use a byte-slice fast path; explicit fragments reshape the full chunk
+    buffer and gather rows via ``fi.indices(fragment_index)``.
 
     Args:
         level_group: Resolution level group.
@@ -967,7 +984,7 @@ def read_fragment(
         ndim: Number of coordinate dimensions.
 
     Returns:
-        Array of shape ``(N, D)``.
+        Array of shape ``(N, D)`` (or ``(N,)`` when ``ndim == 1``).
     """
     key = _chunk_key(chunk_coords)
     dtype = np.dtype(dtype)
@@ -977,25 +994,20 @@ def read_fragment(
         (VERTEX_FRAGMENTS, [key]),
     ]):
         raw = level_group.read_bytes(VERTICES, key)
-        bytes_per_vertex = int(dtype.itemsize) * int(ndim)
-        offsets = _read_vertex_offsets(
-            level_group, chunk_coords, bytes_per_vertex=bytes_per_vertex,
-        )
+        fi = read_vertex_fragment_index(level_group, chunk_coords)
 
-    if fragment_index < 0 or fragment_index >= len(offsets):
+    if fragment_index < 0 or fragment_index >= fi.num_fragments:
         raise ArrayError(
             f"Fragment index {fragment_index} out of range "
-            f"(chunk {key} has {len(offsets)} groups)"
+            f"(chunk {key} has {fi.num_fragments} groups)"
         )
 
-    start = int(offsets[fragment_index])
-    end = int(offsets[fragment_index + 1]) if fragment_index + 1 < len(offsets) else len(raw)
-    segment = raw[start:end]
+    if fi.is_range(fragment_index):
+        start, count = fi.range(fragment_index)
+        return _slice_vertex_range(raw, start, count, dtype, ndim)
 
-    arr = np.frombuffer(segment, dtype=dtype)
-    if ndim > 1:
-        arr = arr.reshape(-1, ndim)
-    return arr
+    full = _reshape_vertex_buffer(raw, dtype, ndim)
+    return full[fi.indices(fragment_index)]
 
 
 def read_chunk_links(
@@ -1044,28 +1056,86 @@ def read_chunk_links(
         if delta == 0:
             # v0.6 intra-level layout: raw is the flat concatenated link
             # data; per-group row counts live in link_fragments/<chunk>.
+            # Handles both range and explicit fragments by reshaping once
+            # and dispatching per fragment.
             fi = read_link_fragment_index(level_group, chunk_coords)
+            if fi.num_fragments == 0:
+                return []
+            full = _reshape_link_buffer(raw, dtype, link_width)
             groups: list[npt.NDArray[np.integer]] = []
-            row_size = int(dtype.itemsize) * int(link_width)
             for f in range(fi.num_fragments):
-                if not fi.is_range(f):
-                    raise ArrayError(
-                        f"link_fragments/{key} fragment {f} is non-contiguous; "
-                        "read_chunk_links requires every fragment to be a "
-                        "contiguous range over rows of links/0/<chunk>.",
-                    )
-                start, count = fi.range(f)
-                byte_lo = int(start) * row_size
-                byte_hi = byte_lo + int(count) * row_size
-                segment = raw[byte_lo:byte_hi]
-                arr = np.frombuffer(segment, dtype=dtype)
-                if link_width > 1:
-                    arr = arr.reshape(-1, link_width)
-                groups.append(arr)
+                if fi.is_range(f):
+                    start, count = fi.range(f)
+                    groups.append(full[start : start + count])
+                else:
+                    groups.append(full[fi.indices(f)])
             return groups
 
         # Cross-level delta != 0: v0.5 inline self-describing layout.
         return decode_ragged_blob(raw, dtype, ncols=link_width)
+
+
+def read_chunk_link_fragment(
+    level_group: FsGroup,
+    chunk_coords: ChunkCoords,
+    fragment_index: int,
+    dtype: np.dtype | str = np.int64,
+    link_width: int | None = None,
+) -> npt.NDArray[np.integer]:
+    """Read a single link fragment from a chunk's ``links/0/<chunk>`` array.
+
+    Intra-level only (``delta == 0``). Dispatches on the
+    ``link_fragments/<chunk>`` index: range fragments use a byte-slice
+    fast path; explicit fragments reshape the full chunk buffer and gather
+    rows via ``fi.indices(fragment_index)``.
+
+    Args:
+        level_group: Resolution level group.
+        chunk_coords: Spatial chunk coordinates.
+        fragment_index: Index of the fragment within the chunk.
+        dtype: Integer dtype.
+        link_width: Number of columns per link (L). If None, read from
+            array metadata.
+
+    Returns:
+        Array of shape ``(M, L)`` (or ``(M,)`` when ``link_width == 1``).
+
+    Raises:
+        ArrayError: If the chunk does not exist or ``fragment_index`` is
+            out of range.
+    """
+    key = _chunk_key(chunk_coords)
+    dtype = np.dtype(dtype)
+    full_name = links_path(0)
+
+    if link_width is None:
+        meta = level_group.read_array_meta(full_name)
+        link_width = meta.get("link_width", 2)
+
+    with _maybe_batched_reads(level_group, [
+        (full_name, [key]),
+        (LINK_FRAGMENTS, [key]),
+    ]):
+        try:
+            raw = level_group.read_bytes(full_name, key)
+        except Exception as e:
+            raise ArrayError(
+                f"Cannot read links chunk {key} (delta=0): {e}"
+            ) from e
+        fi = read_link_fragment_index(level_group, chunk_coords)
+
+    if fragment_index < 0 or fragment_index >= fi.num_fragments:
+        raise ArrayError(
+            f"Fragment index {fragment_index} out of range "
+            f"(chunk {key} has {fi.num_fragments} groups)"
+        )
+
+    if fi.is_range(fragment_index):
+        start, count = fi.range(fragment_index)
+        return _slice_link_range(raw, start, count, dtype, link_width)
+
+    full = _reshape_link_buffer(raw, dtype, link_width)
+    return full[fi.indices(fragment_index)]
 
 
 def read_chunk_attributes(
@@ -1811,6 +1881,60 @@ def read_link_fragment_index(
     key = _chunk_key(chunk_coords)
     raw = level_group.read_bytes(LINK_FRAGMENTS, key)
     return decode_fragments(raw)
+
+
+def _reshape_link_buffer(
+    raw: bytes,
+    dtype: np.dtype,
+    link_width: int,
+) -> npt.NDArray[np.integer]:
+    """Return a ``(M_total, link_width)`` view onto a ``links/0/<chunk>`` blob.
+
+    Falls back to a 1-D array when ``link_width == 1``.
+    """
+    arr = np.frombuffer(raw, dtype=dtype)
+    return arr.reshape(-1, link_width) if link_width > 1 else arr
+
+
+def _slice_link_range(
+    raw: bytes,
+    start: int,
+    count: int,
+    dtype: np.dtype,
+    link_width: int,
+) -> npt.NDArray[np.integer]:
+    """Return rows ``[start, start+count)`` from a ``links/0/<chunk>`` blob."""
+    row_size = int(dtype.itemsize) * int(link_width)
+    seg = raw[int(start) * row_size : (int(start) + int(count)) * row_size]
+    arr = np.frombuffer(seg, dtype=dtype)
+    return arr.reshape(-1, link_width) if link_width > 1 else arr
+
+
+def _reshape_vertex_buffer(
+    raw: bytes,
+    dtype: np.dtype,
+    ndim: int,
+) -> npt.NDArray[np.floating]:
+    """Return a ``(N_total, ndim)`` view onto a ``vertices/<chunk>`` blob.
+
+    Falls back to a 1-D array when ``ndim == 1``.
+    """
+    arr = np.frombuffer(raw, dtype=dtype)
+    return arr.reshape(-1, ndim) if ndim > 1 else arr
+
+
+def _slice_vertex_range(
+    raw: bytes,
+    start: int,
+    count: int,
+    dtype: np.dtype,
+    ndim: int,
+) -> npt.NDArray[np.floating]:
+    """Return rows ``[start, start+count)`` from a ``vertices/<chunk>`` blob."""
+    bytes_per_vertex = int(dtype.itemsize) * int(ndim)
+    seg = raw[int(start) * bytes_per_vertex : (int(start) + int(count)) * bytes_per_vertex]
+    arr = np.frombuffer(seg, dtype=dtype)
+    return arr.reshape(-1, ndim) if ndim > 1 else arr
 
 
 def _read_vertex_offsets(

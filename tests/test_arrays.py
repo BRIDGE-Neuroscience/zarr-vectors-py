@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from zarr_vectors.constants import LINK_FRAGMENTS, VERTEX_FRAGMENTS
 from zarr_vectors.core.arrays import (
     count_fragments,
     create_attribute_array,
@@ -21,15 +22,16 @@ from zarr_vectors.core.arrays import (
     read_all_groupings,
     read_all_object_manifests,
     read_chunk_attributes,
+    read_chunk_link_fragment,
     read_chunk_links,
     read_chunk_vertices,
     read_cross_chunk_links,
+    read_fragment,
     read_group_object_ids,
     read_groupings_attributes,
     read_object_attributes,
     read_object_manifest,
     read_object_vertices,
-    read_fragment,
     write_chunk_attributes,
     write_chunk_link_attributes,
     write_chunk_links,
@@ -41,6 +43,7 @@ from zarr_vectors.core.arrays import (
     write_object_index,
 )
 from zarr_vectors.core.store import FsGroup
+from zarr_vectors.encoding.fragments import encode_fragments
 from zarr_vectors.exceptions import ArrayError
 
 
@@ -566,3 +569,198 @@ class TestObjectReconstruction:
         full_b = np.concatenate(verts_b)
         assert full_b.shape == (3, 3)  # 1 + 2 vertices
         np.testing.assert_array_equal(full_b[0], [5, 5, 5])
+
+
+# ===================================================================
+# Explicit-mode fragments (CSR-backed, non-contiguous indices)
+# ===================================================================
+
+class TestExplicitFragments:
+    """Readers must handle explicit fragments — not just contiguous ranges.
+
+    The writers always emit range fragments today, so these tests lay down
+    the raw chunk buffer via the regular writer and then overwrite the
+    sibling fragment-index blob with an explicit-mode encoding.
+    """
+
+    def _write_vertex_explicit_index(
+        self,
+        lg: FsGroup,
+        chunk_coords: tuple[int, ...],
+        fragments: list,
+    ) -> None:
+        key = ".".join(str(c) for c in chunk_coords)
+        lg.write_bytes(
+            VERTEX_FRAGMENTS, key, encode_fragments(fragments),
+        )
+
+    def _write_link_explicit_index(
+        self,
+        lg: FsGroup,
+        chunk_coords: tuple[int, ...],
+        fragments: list,
+    ) -> None:
+        key = ".".join(str(c) for c in chunk_coords)
+        lg.write_bytes(
+            LINK_FRAGMENTS, key, encode_fragments(fragments),
+        )
+
+    # --- Vertices: single fragment via read_fragment -----------------
+
+    def test_read_fragment_explicit(self, tmp_path: Path) -> None:
+        lg = _make_level_group(tmp_path)
+        create_vertices_array(lg)
+
+        # Lay down 6 vertex rows via the writer (range fragments).
+        buf = np.array(
+            [[i, i, i] for i in range(6)], dtype=np.float32,
+        )
+        write_chunk_vertices(lg, (0, 0, 0), [buf])
+
+        # Overwrite the fragment index with: range(0,2), explicit[3,5,4].
+        self._write_vertex_explicit_index(
+            lg, (0, 0, 0),
+            [(0, 2), np.array([3, 5, 4], dtype=np.int64)],
+        )
+
+        # Range branch.
+        frag0 = read_fragment(lg, (0, 0, 0), 0, dtype=np.float32, ndim=3)
+        np.testing.assert_array_equal(frag0, buf[0:2])
+
+        # Explicit branch.
+        frag1 = read_fragment(lg, (0, 0, 0), 1, dtype=np.float32, ndim=3)
+        np.testing.assert_array_equal(frag1, buf[[3, 5, 4]])
+
+    # --- Vertices: whole chunk via read_chunk_vertices ---------------
+
+    def test_read_chunk_vertices_mixed(self, tmp_path: Path) -> None:
+        lg = _make_level_group(tmp_path)
+        create_vertices_array(lg)
+
+        buf = np.array(
+            [[i, i, i] for i in range(6)], dtype=np.float32,
+        )
+        write_chunk_vertices(lg, (0, 0, 0), [buf])
+
+        # Mixed: range, explicit, range.
+        self._write_vertex_explicit_index(
+            lg, (0, 0, 0),
+            [
+                (0, 2),
+                np.array([3, 5, 4], dtype=np.int64),
+                (5, 1),
+            ],
+        )
+
+        groups = read_chunk_vertices(lg, (0, 0, 0), dtype=np.float32, ndim=3)
+        assert len(groups) == 3
+        np.testing.assert_array_equal(groups[0], buf[0:2])
+        np.testing.assert_array_equal(groups[1], buf[[3, 5, 4]])
+        np.testing.assert_array_equal(groups[2], buf[5:6])
+
+    # --- Links: single fragment via read_chunk_link_fragment ---------
+
+    def test_read_chunk_link_fragment_explicit(self, tmp_path: Path) -> None:
+        lg = _make_level_group(tmp_path)
+        create_vertices_array(lg)
+        create_links_array(lg, link_width=2)
+
+        # Need a single vertex fragment that covers all referenced rows so
+        # the writer's vertex/link fragment-count check passes.
+        write_chunk_vertices(
+            lg, (0, 0, 0), [np.zeros((10, 3), dtype=np.float32)],
+        )
+
+        # Lay down 6 link rows in one fragment.
+        links = np.array(
+            [[i, i + 1] for i in range(6)], dtype=np.int64,
+        )
+        write_chunk_links(lg, (0, 0, 0), [links])
+
+        # Overwrite link fragment index: range(0,2), explicit[3,5,4].
+        self._write_link_explicit_index(
+            lg, (0, 0, 0),
+            [(0, 2), np.array([3, 5, 4], dtype=np.int64)],
+        )
+
+        # Range branch.
+        f0 = read_chunk_link_fragment(lg, (0, 0, 0), 0, link_width=2)
+        np.testing.assert_array_equal(f0, links[0:2])
+
+        # Explicit branch.
+        f1 = read_chunk_link_fragment(lg, (0, 0, 0), 1, link_width=2)
+        np.testing.assert_array_equal(f1, links[[3, 5, 4]])
+
+    def test_read_chunk_link_fragment_auto_link_width(
+        self, tmp_path: Path,
+    ) -> None:
+        # link_width=None should auto-detect from array metadata.
+        lg = _make_level_group(tmp_path)
+        create_vertices_array(lg)
+        create_links_array(lg, link_width=3)
+
+        write_chunk_vertices(
+            lg, (0, 0, 0), [np.zeros((5, 3), dtype=np.float32)],
+        )
+        links = np.array(
+            [[i, i + 1, i + 2] for i in range(4)], dtype=np.int64,
+        )
+        write_chunk_links(lg, (0, 0, 0), [links])
+        self._write_link_explicit_index(
+            lg, (0, 0, 0),
+            [np.array([2, 0, 3], dtype=np.int64)],
+        )
+
+        out = read_chunk_link_fragment(lg, (0, 0, 0), 0)
+        np.testing.assert_array_equal(out, links[[2, 0, 3]])
+        assert out.shape == (3, 3)
+
+    # --- Links: whole chunk via read_chunk_links ---------------------
+
+    def test_read_chunk_links_mixed(self, tmp_path: Path) -> None:
+        lg = _make_level_group(tmp_path)
+        create_vertices_array(lg)
+        create_links_array(lg, link_width=2)
+
+        write_chunk_vertices(
+            lg, (0, 0, 0), [np.zeros((10, 3), dtype=np.float32)],
+        )
+        links = np.array(
+            [[i, i + 1] for i in range(6)], dtype=np.int64,
+        )
+        write_chunk_links(lg, (0, 0, 0), [links])
+
+        self._write_link_explicit_index(
+            lg, (0, 0, 0),
+            [
+                (0, 2),
+                np.array([3, 5, 4], dtype=np.int64),
+                (5, 1),
+            ],
+        )
+
+        groups = read_chunk_links(lg, (0, 0, 0), link_width=2)
+        assert len(groups) == 3
+        np.testing.assert_array_equal(groups[0], links[0:2])
+        np.testing.assert_array_equal(groups[1], links[[3, 5, 4]])
+        np.testing.assert_array_equal(groups[2], links[5:6])
+
+    # --- Error parity ------------------------------------------------
+
+    def test_read_chunk_link_fragment_out_of_range(
+        self, tmp_path: Path,
+    ) -> None:
+        lg = _make_level_group(tmp_path)
+        create_vertices_array(lg)
+        create_links_array(lg, link_width=2)
+        write_chunk_vertices(
+            lg, (0, 0, 0), [np.zeros((1, 3), dtype=np.float32)],
+        )
+        write_chunk_links(
+            lg, (0, 0, 0), [np.array([[0, 0]], dtype=np.int64)],
+        )
+        try:
+            read_chunk_link_fragment(lg, (0, 0, 0), 5, link_width=2)
+            assert False, "Should raise"
+        except ArrayError:
+            pass

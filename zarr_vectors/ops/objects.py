@@ -167,3 +167,288 @@ def _make_manifest_op(*, level: int, new_oid: int, manifest: ObjectManifest):
         new_manifest=manifest,
         new_oid=new_oid,
     )
+
+
+# ----------------------------------------------------------------------
+# Iteration-3: private merge/split engines invoked by the
+# add_link(update_objects=True) / remove_link(update_objects=True) /
+# edit_link(update_objects=True) kwarg paths.
+# ----------------------------------------------------------------------
+
+def _merge_objects_impl(
+    session: EditSession,
+    *,
+    oids: list[int],
+    level: int,
+    atomic: bool,
+) -> int | None:
+    """Concatenate the manifests of ``oids`` (in order) into one OID.
+
+    Atomic: allocate a new OID, write the concatenated manifest there,
+    leave originals intact.  Records the remap ``{oid: new_oid}`` for
+    every input OID.
+
+    Non-atomic: overwrite ``oids[0]`` with the concatenation; set
+    ``oids[1:]`` to empty manifests.
+
+    Returns the resulting OID (the new one under atomic, ``oids[0]``
+    under non-atomic).  Returns ``None`` and is a no-op when fewer than
+    two OIDs are given.
+    """
+    if len(oids) < 2:
+        return None
+    if len(set(oids)) != len(oids):
+        raise EditError(
+            f"_merge_objects_impl: same OID listed twice in {oids}; "
+            f"refusing to double-reference fragments."
+        )
+
+    # Build the concatenated manifest from the pending in-session state
+    # so chains of merges compose correctly.
+    concat: list[tuple[ChunkCoords, int]] = []
+    for oid in oids:
+        concat.extend(session._get_manifest(level, int(oid)))
+
+    if atomic:
+        new_oid = session._allocate_atomic_oid(level)
+        from zarr_vectors.ops.change_set import ManifestOp
+        session._manifest_ops[(level, new_oid)] = ManifestOp(
+            level=level, object_id=new_oid,
+            new_manifest=concat, new_oid=new_oid,
+        )
+        for oid in oids:
+            session._report.oid_remap[int(oid)] = int(new_oid)
+        session._mark_edit(level)
+        return new_oid
+
+    # Non-atomic: stamp concat at oids[0], empty manifests at the rest.
+    session._stage_manifest(level, int(oids[0]), concat, atomic=False)
+    for oid in oids[1:]:
+        session._stage_manifest(level, int(oid), [], atomic=False)
+    session._mark_edit(level)
+    return int(oids[0])
+
+
+def _split_object_at_link_impl(
+    session: EditSession,
+    *,
+    oid: int,
+    level: int,
+    removed_endpoints: tuple[ChunkCoords, int, int],
+    atomic: bool,
+) -> list[int]:
+    """Deterministically split ``oid``'s manifest at a just-removed link.
+
+    ``removed_endpoints`` is ``(chunk, src_chunk_local, dst_chunk_local)``
+    naming the endpoints of the link that was just dropped.  The split
+    point is computed from the endpoints' positions in ``oid``'s
+    manifest — no graph traversal.
+
+    Algorithm:
+
+    1. For each endpoint, find which fragment in ``chunk`` owns the
+       chunk-local row.
+    2. Walk ``oid``'s manifest to locate the indices ``i`` and ``j``
+       (with ``i <= j``) of those fragments.
+    3. **Same fragment** (``i == j``, both endpoints in the same
+       fragment): physically slice the fragment at the row boundary
+       between the endpoints.  Side A = manifest[:i] + [(chunk,
+       low_slice)]; Side B = [(chunk, high_slice)] + manifest[i+1:].
+    4. **Different fragments**: Side A = manifest[:i+1]; Side B =
+       manifest[j:].  Entries strictly between ``i`` and ``j`` (rare in
+       well-formed chains) are routed to Side A.
+    5. Stamp both sides.  Atomic=True allocates two new OIDs and
+       leaves the original intact; atomic=False overwrites the
+       original with Side A and appends one new OID for Side B.
+
+    Returns the list of resulting OIDs in [Side A, Side B] order.
+    When either endpoint isn't in ``oid``'s manifest (e.g. the link
+    was between two different OIDs and ``oid`` only owns one
+    endpoint) the function falls back to a no-op and returns
+    ``[oid]``.
+
+    Refuses on implicit-sequential conventions.
+    """
+    from zarr_vectors.constants import (
+        LINKS_EXPLICIT,
+        LINKS_IMPLICIT_BRANCHES,
+        LINKS_IMPLICIT_SEQUENTIAL,
+    )
+    from zarr_vectors.core.metadata import RootMetadata
+    from zarr_vectors.ops.fragments import partition_fragment_rows
+
+    meta = RootMetadata.from_dict(session.root.attrs.to_dict())
+    conv = meta.links_convention or LINKS_EXPLICIT
+    if conv in (LINKS_IMPLICIT_SEQUENTIAL, LINKS_IMPLICIT_BRANCHES):
+        raise EditError(
+            f"_split_object_at_link_impl: store has links_convention="
+            f"{conv!r}; deterministic split requires explicit edges. "
+            f"Call materialise_object_links_explicit(root, level, oid, "
+            f"flip_convention=True) first."
+        )
+
+    chunk, src_local, dst_local = removed_endpoints
+    chunk_t = tuple(int(c) for c in chunk)
+
+    # Step 1: resolve each endpoint to (fragment_idx, fragment_local_row)
+    # in the chunk.
+    builder = session._builder(level, chunk_t)
+    fragment_starts: list[int] = []
+    cursor = 0
+    for g in builder.vertex_groups:
+        fragment_starts.append(cursor)
+        cursor += int(g.shape[0])
+
+    def _frag_and_local(chunk_local: int) -> tuple[int, int] | None:
+        for fi in range(len(fragment_starts) - 1, -1, -1):
+            if fragment_starts[fi] <= chunk_local:
+                local_in_frag = chunk_local - fragment_starts[fi]
+                if local_in_frag < int(builder.vertex_groups[fi].shape[0]):
+                    return fi, local_in_frag
+                return None
+        return None
+
+    src_loc = _frag_and_local(int(src_local))
+    dst_loc = _frag_and_local(int(dst_local))
+    if src_loc is None or dst_loc is None:
+        return [int(oid)]
+    src_frag, src_frag_local = src_loc
+    dst_frag, dst_frag_local = dst_loc
+
+    # Step 2: walk manifest, find indices i, j.
+    manifest = session._get_manifest(level, int(oid))
+    src_manifest_idx: int | None = None
+    dst_manifest_idx: int | None = None
+    for mi, (cc, fi) in enumerate(manifest):
+        cc_match = tuple(int(c) for c in cc) == chunk_t
+        if cc_match and int(fi) == src_frag and src_manifest_idx is None:
+            src_manifest_idx = mi
+        if cc_match and int(fi) == dst_frag and dst_manifest_idx is None:
+            dst_manifest_idx = mi
+        if src_manifest_idx is not None and dst_manifest_idx is not None:
+            break
+    if src_manifest_idx is None or dst_manifest_idx is None:
+        return [int(oid)]
+
+    # Normalise so i <= j.
+    if src_manifest_idx <= dst_manifest_idx:
+        i, j = src_manifest_idx, dst_manifest_idx
+        lo_frag_local, hi_frag_local = src_frag_local, dst_frag_local
+    else:
+        i, j = dst_manifest_idx, src_manifest_idx
+        lo_frag_local, hi_frag_local = dst_frag_local, src_frag_local
+
+    if i == j:
+        # Same fragment — slice it.
+        lo, hi = sorted((lo_frag_local, hi_frag_local))
+        n_rows = int(builder.vertex_groups[src_frag].shape[0])
+        side_a_rows = np.arange(0, lo + 1, dtype=np.int64)
+        side_b_rows = np.arange(lo + 1, n_rows, dtype=np.int64)
+        if side_b_rows.size == 0:
+            # All rows are on Side A — the edge was between the last
+            # row and itself (a self-loop or degenerate row layout);
+            # treat as a no-op.
+            return [int(oid)]
+        from zarr_vectors.ops.fragments import partition_fragment_rows as _part
+        new_frag_idxs = _part(
+            builder,
+            fragment=int(src_frag),
+            row_partition=[side_a_rows, side_b_rows],
+            atomic=atomic,
+            root=session.root,
+        )
+        side_a_manifest = list(manifest[:i]) + [(chunk_t, int(new_frag_idxs[0]))]
+        side_b_manifest = [(chunk_t, int(new_frag_idxs[1]))] + list(manifest[i + 1 :])
+    else:
+        # Different fragments.  Side A = manifest[:i+1]; Side B =
+        # manifest[j:].  Entries strictly between (i, j) route to
+        # Side A by documented convention.
+        side_a_manifest = list(manifest[: i + 1]) + list(manifest[i + 1 : j])
+        side_b_manifest = list(manifest[j:])
+
+    return _stamp_split_sides(
+        session,
+        oid=int(oid),
+        level=level,
+        side_a_manifest=side_a_manifest,
+        side_b_manifest=side_b_manifest,
+        atomic=atomic,
+    )
+
+
+def _stamp_split_sides(
+    session: EditSession,
+    *,
+    oid: int,
+    level: int,
+    side_a_manifest: ObjectManifest,
+    side_b_manifest: ObjectManifest,
+    atomic: bool,
+) -> list[int]:
+    """Write Side A / Side B manifests via the session's normal plumbing."""
+    from zarr_vectors.ops.change_set import ManifestOp
+
+    if atomic:
+        new_a = session._allocate_atomic_oid(level)
+        session._manifest_ops[(level, new_a)] = ManifestOp(
+            level=level, object_id=new_a,
+            new_manifest=side_a_manifest, new_oid=new_a,
+        )
+        new_b = session._allocate_atomic_oid(level)
+        session._manifest_ops[(level, new_b)] = ManifestOp(
+            level=level, object_id=new_b,
+            new_manifest=side_b_manifest, new_oid=new_b,
+        )
+        # Two new OIDs come out of one input OID under atomic split.
+        # The remap chooses Side A as the canonical mapping; consumers
+        # of the report can detect the split via the new_b OID being
+        # absent from oid_remap's value set but present in the new
+        # manifests.
+        session._report.oid_remap[int(oid)] = int(new_a)
+        session._mark_edit(level)
+        return [new_a, new_b]
+
+    session._stage_manifest(level, int(oid), side_a_manifest, atomic=False)
+    new_b = session._allocate_atomic_oid(level)
+    from zarr_vectors.ops.change_set import ManifestOp as _ManifestOp
+    session._manifest_ops[(level, new_b)] = _ManifestOp(
+        level=level, object_id=new_b,
+        new_manifest=side_b_manifest, new_oid=new_b,
+    )
+    session._mark_edit(level)
+    return [int(oid), new_b]
+
+
+def _oid_for_endpoint(
+    session: EditSession,
+    *,
+    level: int,
+    chunk: ChunkCoords,
+    vertex_chunk_local: int,
+) -> int | None:
+    """Find the OID whose manifest references the chunk-local vertex
+    row at ``(chunk, vertex_chunk_local)``.
+
+    Returns ``None`` if no OID claims this row (unreferenced fragment).
+    When multiple OIDs share the fragment, returns the *first* one
+    seen in OID order — sufficient for the merge-detection path.
+    """
+    builder = session._builder(level, chunk)
+    # Compute which fragment owns this chunk-local row.
+    cursor = 0
+    owner_frag: int | None = None
+    for fi, g in enumerate(builder.vertex_groups):
+        n = int(g.shape[0])
+        if cursor + n > int(vertex_chunk_local) >= cursor:
+            owner_frag = fi
+            break
+        cursor += n
+    if owner_frag is None:
+        return None
+    manifests = session._all_manifests_for(level)
+    chunk_t = tuple(int(c) for c in chunk)
+    for oid, manifest in enumerate(manifests):
+        for cc, fragment_idx in manifest:
+            if tuple(cc) == chunk_t and int(fragment_idx) == int(owner_frag):
+                return oid
+    return None

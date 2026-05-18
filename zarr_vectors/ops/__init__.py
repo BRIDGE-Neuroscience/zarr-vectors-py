@@ -38,6 +38,7 @@ from zarr_vectors.ops.edit import (
     remove_link,
     remove_object,
     remove_vertex,
+    split_fragment,
 )
 from zarr_vectors.ops.links import materialise_object_links_explicit
 from zarr_vectors.ops.merge import allocate_oid, merge_edit_reports
@@ -84,5 +85,6 @@ __all__ = [
     "remove_link",
     "remove_object",
     "remove_vertex",
+    "split_fragment",
     "vacuum",
 ]

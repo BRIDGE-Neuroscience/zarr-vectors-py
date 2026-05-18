@@ -179,7 +179,15 @@ class ChunkChangeBuilder:
         delta: int = 0,
         link_width: int = 2,
     ) -> list[npt.NDArray[np.integer]]:
-        """Lazily decode ``links/<delta>/<chunk>`` for this chunk."""
+        """Lazily decode ``links/<delta>/<chunk>`` for this chunk.
+
+        Always returns a list whose length matches ``self.vertex_groups``:
+        when the on-disk link layer has fewer fragments than the chunk
+        has vertex fragments (e.g. a graph writer that consolidated all
+        edges into a single link fragment), the result is padded with
+        empty per-fragment groups so subsequent mutations preserve the
+        1:1 alignment invariant ``write_chunk_links`` enforces.
+        """
         if delta in self.link_groups:
             return self.link_groups[delta]
 
@@ -192,11 +200,17 @@ class ChunkChangeBuilder:
                 level_group, self.chunk, link_width=link_width, delta=delta,
             )
         except Exception:
-            groups = [
-                np.empty((0, link_width), dtype=np.int64)
-                for _ in self.vertex_groups
-            ]
-        self.link_groups[delta] = [g.copy() for g in groups]
+            groups = []
+        # Normalise to one group per vertex fragment.  When the on-disk
+        # link table has fewer fragments than the chunk has vertex
+        # fragments (e.g. a graph writer that consolidated all edges
+        # into the first link slot), pad the tail with empty groups so
+        # the write-back invariant holds.
+        target_len = len(self.vertex_groups)
+        padded: list[npt.NDArray[np.integer]] = [g.copy() for g in groups]
+        while len(padded) < target_len:
+            padded.append(np.empty((0, link_width), dtype=np.int64))
+        self.link_groups[delta] = padded
         return self.link_groups[delta]
 
     # ----- vertex mutations --------------------------------------------

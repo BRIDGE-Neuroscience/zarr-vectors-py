@@ -360,6 +360,7 @@ class EditSession:
         new_endpoints: tuple[int, int] | None = None,
         new_attrs: dict[str, npt.ArrayLike] | None = None,
         atomic: bool | None = None,
+        update_objects: bool = False,
     ) -> None:
         from zarr_vectors.ops.links import edit_link_in_session
         atomic_eff = self.atomic if atomic is None else bool(atomic)
@@ -368,6 +369,7 @@ class EditSession:
             new_endpoints=new_endpoints,
             new_attrs=new_attrs,
             atomic=atomic_eff,
+            update_objects=update_objects,
         )
 
     def add_link(
@@ -380,6 +382,7 @@ class EditSession:
         fragment: int | None = None,
         delta: int = 0,
         attrs: dict[str, npt.ArrayLike] | None = None,
+        update_objects: bool = False,
     ) -> LinkRef | CrossChunkLinkRef:
         from zarr_vectors.ops.links import add_link_in_session
         return add_link_in_session(
@@ -387,6 +390,7 @@ class EditSession:
             level=level, src=src, dst=dst,
             chunk=chunk, fragment=fragment,
             delta=delta, attrs=attrs,
+            update_objects=update_objects,
         )
 
     def remove_link(
@@ -394,10 +398,13 @@ class EditSession:
         ref: LinkRef,
         *,
         atomic: bool | None = None,
+        update_objects: bool = False,
     ) -> None:
         from zarr_vectors.ops.links import remove_link_in_session
         atomic_eff = self.atomic if atomic is None else bool(atomic)
-        remove_link_in_session(self, ref, atomic=atomic_eff)
+        remove_link_in_session(
+            self, ref, atomic=atomic_eff, update_objects=update_objects,
+        )
 
     def edit_cross_chunk_link(
         self,
@@ -551,6 +558,36 @@ class EditSession:
             else propagate_to_objects
         )
         remove_fragment_in_session(self, ref, atomic=atomic_eff, propagate=prop_eff)
+
+    def split_fragment(
+        self,
+        ref: FragmentRef,
+        *,
+        row_partition,
+        atomic: bool | None = None,
+        propagate_to_objects: PropagateTo | None = None,
+    ) -> list[FragmentRef]:
+        """Physically slice ``ref`` into N fragments by row_partition.
+
+        See [zarr_vectors/ops/fragments.py:split_fragment_in_session]
+        and [zarr_vectors/ops/graph.py:partition_fragment_rows] for the
+        full contract.  ``row_partition`` is either a list of N
+        row-index arrays or a 1-D label array assigning each row to a
+        slice.  Returns the new :class:`FragmentRef` list in slice
+        order.
+        """
+        from zarr_vectors.ops.fragments import split_fragment_in_session
+        atomic_eff = self.atomic if atomic is None else bool(atomic)
+        prop_eff = (
+            self.propagate_to_objects
+            if propagate_to_objects is None
+            else propagate_to_objects
+        )
+        return split_fragment_in_session(
+            self, ref,
+            row_partition=row_partition,
+            atomic=atomic_eff, propagate=prop_eff,
+        )
 
     # ------------------------------------------------------------------
     # Internal vertex-edit helpers
@@ -990,10 +1027,16 @@ def edit_link(
     new_endpoints: tuple[int, int] | None = None,
     new_attrs: dict[str, npt.ArrayLike] | None = None,
     atomic: bool = True,
+    update_objects: bool = False,
     message: str = "edit_link",
 ) -> EditReport:
     with EditSession(root, atomic=atomic, refresh_pyramid=False, message=message) as ed:
-        ed.edit_link(ref, new_endpoints=new_endpoints, new_attrs=new_attrs)
+        ed.edit_link(
+            ref,
+            new_endpoints=new_endpoints,
+            new_attrs=new_attrs,
+            update_objects=update_objects,
+        )
     return ed.report
 
 
@@ -1007,12 +1050,15 @@ def add_link(
     fragment: int | None = None,
     delta: int = 0,
     attrs: dict[str, npt.ArrayLike] | None = None,
+    update_objects: bool = False,
+    atomic: bool = True,
     message: str = "add_link",
 ) -> tuple[LinkRef | CrossChunkLinkRef, EditReport]:
-    with EditSession(root, atomic=True, refresh_pyramid=False, message=message) as ed:
+    with EditSession(root, atomic=atomic, refresh_pyramid=False, message=message) as ed:
         ref = ed.add_link(
             level=level, src=src, dst=dst, chunk=chunk,
             fragment=fragment, delta=delta, attrs=attrs,
+            update_objects=update_objects,
         )
     return ref, ed.report
 
@@ -1022,10 +1068,11 @@ def remove_link(
     ref: LinkRef,
     *,
     atomic: bool = True,
+    update_objects: bool = False,
     message: str = "remove_link",
 ) -> EditReport:
     with EditSession(root, atomic=atomic, refresh_pyramid=False, message=message) as ed:
-        ed.remove_link(ref)
+        ed.remove_link(ref, update_objects=update_objects)
     return ed.report
 
 
@@ -1166,6 +1213,31 @@ def remove_fragment(
     with EditSession(root, atomic=atomic, refresh_pyramid=False, message=message) as ed:
         ed.remove_fragment(ref)
     return ed.report
+
+
+def split_fragment(
+    root: Group,
+    ref: FragmentRef,
+    *,
+    row_partition,
+    atomic: bool = True,
+    propagate_to_objects: PropagateTo = "all",
+    message: str = "split_fragment",
+) -> tuple[list[FragmentRef], EditReport]:
+    """Physically slice ``ref`` into N fragments by ``row_partition``.
+
+    See ``EditSession.split_fragment`` for the contract.  Returns
+    ``(new_refs, report)`` where ``new_refs`` is the list of
+    :class:`FragmentRef` objects in slice order.
+    """
+    with EditSession(
+        root, atomic=atomic, refresh_pyramid=False,
+        propagate_to_objects=propagate_to_objects, message=message,
+    ) as ed:
+        new_refs = ed.split_fragment(
+            ref, row_partition=row_partition,
+        )
+    return new_refs, ed.report
 
 
 # ======================================================================

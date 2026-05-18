@@ -62,6 +62,7 @@ def add_link_in_session(
     fragment: int | None = None,
     delta: int = 0,
     attrs: dict[str, npt.ArrayLike] | None = None,
+    update_objects: bool = False,
 ) -> LinkRef | CrossChunkLinkRef:
     """Append a link.
 
@@ -113,13 +114,38 @@ def add_link_in_session(
         )
 
     session._mark_edit(level)
-    return LinkRef(
+    new_ref = LinkRef(
         level=level,
         chunk=tuple(int(c) for c in chunk),
         fragment=target_frag,
         row=new_row_idx,
         delta=0,
     )
+
+    if update_objects:
+        # If the two endpoints belong to different OIDs at ``level``,
+        # merge them.  When the OID lookup is ambiguous (unreferenced
+        # fragment, or src/dst point at the same OID) the call is a
+        # no-op beyond the link row write.
+        from zarr_vectors.ops.objects import _merge_objects_impl, _oid_for_endpoint
+        oid_src = _oid_for_endpoint(
+            session, level=level, chunk=new_ref.chunk, vertex_chunk_local=int(src),
+        )
+        oid_dst = _oid_for_endpoint(
+            session, level=level, chunk=new_ref.chunk, vertex_chunk_local=int(dst),
+        )
+        if (
+            oid_src is not None
+            and oid_dst is not None
+            and oid_src != oid_dst
+        ):
+            _merge_objects_impl(
+                session,
+                oids=[oid_src, oid_dst],
+                level=level,
+                atomic=session.atomic,
+            )
+    return new_ref
 
 
 def edit_link_in_session(
@@ -129,6 +155,7 @@ def edit_link_in_session(
     new_endpoints: tuple[int, int] | None,
     new_attrs: dict[str, npt.ArrayLike] | None,
     atomic: bool,
+    update_objects: bool = False,
 ) -> None:
     _check_link_convention(session, write_branch_entry=True)
     if ref.delta != 0:
@@ -150,6 +177,10 @@ def edit_link_in_session(
             f"{ref.fragment} (size {group.shape[0]})"
         )
 
+    # Capture the pre-edit endpoints so update_objects can run split
+    # against the OIDs that held the OLD edge (before we change it).
+    old_src, old_dst = int(group[ref.row, 0]), int(group[ref.row, 1])
+
     if new_endpoints is not None:
         src, dst = int(new_endpoints[0]), int(new_endpoints[1])
         new_row = np.asarray([src, dst], dtype=group.dtype)
@@ -168,20 +199,74 @@ def edit_link_in_session(
         )
     session._mark_edit(ref.level)
 
+    # update_objects path: decompose into a deterministic split on the
+    # OIDs that held the old edge + a merge on the OIDs the new edge
+    # bridges.  Under atomic=True we leave the old row in place at the
+    # link level (the new endpoints are an appended row), but for the
+    # object-membership decomposition we still treat the conceptual
+    # remove + add as a topology change.
+    if update_objects and new_endpoints is not None:
+        from zarr_vectors.ops.objects import (
+            _merge_objects_impl,
+            _oid_for_endpoint,
+            _split_object_at_link_impl,
+        )
+        # Split pass on the old endpoints' OID(s).
+        for oid_candidate in {
+            _oid_for_endpoint(
+                session, level=ref.level,
+                chunk=ref.chunk, vertex_chunk_local=old_src,
+            ),
+            _oid_for_endpoint(
+                session, level=ref.level,
+                chunk=ref.chunk, vertex_chunk_local=old_dst,
+            ),
+        }:
+            if oid_candidate is None:
+                continue
+            _split_object_at_link_impl(
+                session,
+                oid=int(oid_candidate),
+                level=ref.level,
+                removed_endpoints=(tuple(ref.chunk), int(old_src), int(old_dst)),
+                atomic=atomic,
+            )
+        # Merge pass on the new endpoints' OID(s).
+        oid_src_new = _oid_for_endpoint(
+            session, level=ref.level, chunk=ref.chunk,
+            vertex_chunk_local=int(new_endpoints[0]),
+        )
+        oid_dst_new = _oid_for_endpoint(
+            session, level=ref.level, chunk=ref.chunk,
+            vertex_chunk_local=int(new_endpoints[1]),
+        )
+        if (
+            oid_src_new is not None
+            and oid_dst_new is not None
+            and oid_src_new != oid_dst_new
+        ):
+            _merge_objects_impl(
+                session,
+                oids=[oid_src_new, oid_dst_new],
+                level=ref.level,
+                atomic=atomic,
+            )
+
 
 def remove_link_in_session(
     session: EditSession,
     ref: LinkRef,
     *,
     atomic: bool,
+    update_objects: bool = False,
 ) -> None:
     """Drop the link row.
 
     Under ``atomic=True`` the row is removed from the per-fragment
     group (links have no OID identity, so atomic == minimal for the
-    remove case — the kwarg is accepted for symmetry).
+    remove case — the ``atomic`` kwarg only affects the
+    ``update_objects=True`` split pass).
     """
-    del atomic  # symmetric with edit_link/edit_vertex; not used today
     _check_link_convention(session, write_branch_entry=True)
     if ref.delta != 0:
         raise EditError(
@@ -190,8 +275,48 @@ def remove_link_in_session(
         )
     builder = session._builder(ref.level, ref.chunk)
     builder.require_links(session.root, delta=0, link_width=2)
+
+    # Capture the endpoints of the row we're about to drop so the
+    # update_objects=True split pass can target the right OID(s).
+    old_src, old_dst = None, None
+    if update_objects:
+        groups = builder.link_groups.get(0)
+        if (
+            groups is not None
+            and 0 <= ref.fragment < len(groups)
+            and 0 <= ref.row < groups[ref.fragment].shape[0]
+        ):
+            old_src = int(groups[ref.fragment][ref.row, 0])
+            old_dst = int(groups[ref.fragment][ref.row, 1])
+
     builder.drop_link_row(0, ref.fragment, ref.row)
     session._mark_edit(ref.level)
+
+    if update_objects and old_src is not None and old_dst is not None:
+        from zarr_vectors.ops.objects import (
+            _oid_for_endpoint,
+            _split_object_at_link_impl,
+        )
+        # Deterministic split: the removed edge's endpoints uniquely
+        # identify the manifest split point.  Two OIDs can share an
+        # edge (e.g. synapse-style cross-object connection); each
+        # gets its own split pass.
+        candidates: set[int] = set()
+        for end in (old_src, old_dst):
+            oid_h = _oid_for_endpoint(
+                session, level=ref.level,
+                chunk=ref.chunk, vertex_chunk_local=end,
+            )
+            if oid_h is not None:
+                candidates.add(int(oid_h))
+        for oid in candidates:
+            _split_object_at_link_impl(
+                session,
+                oid=oid,
+                level=ref.level,
+                removed_endpoints=(tuple(ref.chunk), int(old_src), int(old_dst)),
+                atomic=atomic,
+            )
 
 
 # ---------------------------------------------------------------------

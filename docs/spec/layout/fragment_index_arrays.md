@@ -61,13 +61,6 @@ coarsened pyramid levels.
   `LevelMetadata.shared_fragments=True` and at the store via the
   `CAP_SHARED_FRAGMENTS` capability token.
 
-**Vertex group (VG)**
-: The *conceptual* unit "all vertices in one bin in one chunk".
-  See [Vertex groups and fragments](../object_model/vertex_groups.md).
-  At level 0 with the default writer, one non-empty VG ↔ one
-  range fragment. At coarsened levels the VG/bin model is supplanted
-  by the fragment as the addressing primitive.
-
 ### What happened to `offset` and `count`?
 
 | Pre-0.6 | Post-0.6 |
@@ -357,7 +350,7 @@ A writer SHALL maintain:
 
 At level 0, the default writer additionally emits one range fragment
 per non-empty bin in ascending bin-flat-index order, preserving the
-pre-0.6 VG order convention. At coarsened levels, fragment order
+pre-0.6 fragment order convention. At coarsened levels, fragment order
 follows the metavertex emission order chosen by the coarsening
 pipeline.
 

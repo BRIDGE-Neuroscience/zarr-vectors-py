@@ -188,9 +188,9 @@ is reordering vertices without re-encoding the fragment index.
 fragments:
 
 ```python
-from zarr_vectors.repair import rebuild_vg_index
+from zarr_vectors.repair import rebuild_fragment_index
 
-rebuild_vg_index("scan.zarrvectors", level=0)
+rebuild_fragment_index("scan.zarrvectors", level=0)
 # Reads vertices, re-sorts into bin order, rewrites vertex_fragments
 ```
 
@@ -227,7 +227,7 @@ ERROR [L3] attr_length_matches [chunk (1,0,2), attr "intensity"]
 
 A per-vertex attribute array has the wrong length in a specific chunk.
 This means the attribute was not reordered when vertices were sorted into
-VG order — a writer bug.
+fragment order — a writer bug.
 
 *Repair:* re-ingest the data from the original source, or use the repair
 function if vertex order can be recovered:
@@ -235,10 +235,10 @@ function if vertex order can be recovered:
 ```python
 from zarr_vectors.repair import realign_attribute
 
-# Re-sort the attribute array to match the current vertex VG order
+# Re-sort the attribute array to match the current vertex fragment order
 realign_attribute("scan.zarrvectors", attribute_name="intensity", level=0)
-# WARNING: This assumes vertices are already in correct VG order.
-# If vertex order is also wrong, rebuild_vg_index must run first.
+# WARNING: This assumes vertices are already in correct fragment order.
+# If vertex order is also wrong, rebuild_fragment_index must run first.
 ```
 
 ---
@@ -246,11 +246,11 @@ realign_attribute("scan.zarrvectors", attribute_name="intensity", level=0)
 **`obj_index_nonempty_vg`**
 
 ```
-ERROR [L3] obj_index_nonempty_vg  object 1042 primary VG at
-           (chunk=8843, bin=12) has count=0 (empty VG)
+ERROR [L3] obj_index_nonempty_vg  object 1042 primary fragment at
+           (chunk=8843, bin=12) has count=0 (empty fragment)
 ```
 
-The object index points to an empty VG. This usually means the object's
+The object index points to an empty fragment. This usually means the object's
 vertices were moved by a rechunking operation that did not update the
 object index.
 

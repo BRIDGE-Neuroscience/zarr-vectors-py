@@ -1,7 +1,7 @@
 Spatial utilities
 =================
 
-Functions for spatial partitioning, bounding-box computation, VG index
+Functions for spatial partitioning, bounding-box computation, fragment index
 arithmetic, and chunk coordinate manipulation. These are the internal
 building blocks used by the read/write functions; they are also useful
 for contributors implementing custom readers or geometry operations.
@@ -22,10 +22,10 @@ Bounding box
    :undoc-members:
    :show-inheritance:
 
-VG index
+fragment index
 --------
 
-.. automodule:: zarr_vectors.spatial.vg_index
+.. automodule:: zarr_vectors.spatial.fragment_index
    :members:
    :undoc-members:
    :show-inheritance:

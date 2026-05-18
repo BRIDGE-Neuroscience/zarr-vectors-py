@@ -6,7 +6,7 @@
 : A named array stored under `attributes/<name>/` whose length at each
   chunk equals the number of vertices in that chunk. Attribute `k` in
   chunk `(cx, cy, cz)` corresponds to vertex `k` in the same chunk (in
-  VG order).
+  fragment order).
 
 **Per-object attribute**
 : A named array stored under `object_attributes/<name>/` whose length

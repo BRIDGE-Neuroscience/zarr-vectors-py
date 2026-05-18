@@ -34,7 +34,7 @@ scan.zarrvectors/
 ├── .zattrs              ← root metadata (geometry type, bin shape, CRS, …)
 ├── 0/        ← full-resolution level
 │   ├── vertices/
-│   ├── vertex_fragments/    ← per-chunk fragment index (locates vertex groups)
+│   ├── vertex_fragments/    ← per-chunk fragment index (locates fragments)
 │   ├── links/
 │   ├── link_fragments/      ← per-chunk fragment index for delta-0 links
 │   ├── attributes/
@@ -131,9 +131,9 @@ per-chunk data volume roughly constant across the pyramid.
 
 ---
 
-## Vertex groups and fragments
+## Fragments and fragments
 
-A **vertex group** (VG) is the conceptual unit of ZVF's spatial
+A **fragment** (fragment) is the conceptual unit of ZVF's spatial
 index: the set of vertices in one bin within one chunk. A bbox query
 resolves to a set of `(chunk, bin)` pairs, and `zarr-vectors`
 retrieves each group's vertices without reading the rest of the
@@ -145,9 +145,9 @@ group's vertices live within the chunk's `vertices/` array. At full
 resolution, each non-empty bin corresponds to one fragment; at
 coarsened pyramid levels, a fragment may represent a metavertex
 shared between several objects' manifests. See
-[Fragment-index arrays](../spec/layout/vg_index_arrays.md) for the
+[Fragment-index arrays](../spec/layout/fragment_index_arrays.md) for the
 byte layout and
-[Vertex groups and fragments](../spec/object_model/vertex_groups.md)
+[Fragments and fragments](../spec/object_model/fragments.md)
 for the read/write model.
 
 ---
@@ -270,8 +270,8 @@ scaling.
 | Store | A `.zarrvectors` directory | `store_path` argument |
 | Chunk | I/O unit; one file per chunk | `chunk_shape` |
 | Bin | Spatial query unit within a chunk | `bin_shape` |
-| VG | Vertices in one bin in one chunk (conceptual) | Computed automatically |
-| Fragment | On-disk unit packaging vertex rows; one per VG at level 0 | Computed automatically |
+| fragment | Vertices in one bin in one chunk (conceptual) | Computed automatically |
+| Fragment | On-disk unit packaging vertex rows; one per fragment at level 0 | Computed automatically |
 | Object index | Per-object manifest blobs naming fragments | Written automatically for applicable types |
 | Resolution level | Coarsened copy of the data | `build_pyramid()` |
 | Bin ratio | Coarsening factor per level | `bin_ratio` in `level_configs` |

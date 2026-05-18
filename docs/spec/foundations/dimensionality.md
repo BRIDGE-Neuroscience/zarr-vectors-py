@@ -36,7 +36,7 @@
 The Zarr Vector Format is not inherently three-dimensional. The spatial
 dimensionality `D` is a property of each individual store, declared at
 write time and embedded in the root metadata. All format rules (chunk grid,
-bin grid, VG index addressing, bounding-box queries) generalise
+bin grid, fragment index addressing, bounding-box queries) generalise
 straightforwardly to arbitrary `D`.
 
 In practice, the vast majority of ZVF stores are three-dimensional (x, y,
@@ -127,7 +127,7 @@ For `D = 3` with `chunk_shape = (200, 200, 200)` and
 For `D = 2` with `chunk_shape = (500, 500)` and `bin_shape = (100, 100)`:
 `bins_per_chunk = 5 × 5 = 25`.
 
-The VG index array is always `(bins_per_chunk, 2)` regardless of `D`; the
+The fragment index array is always `(bins_per_chunk, 2)` regardless of `D`; the
 bin coordinate is flattened to a scalar index using C-order (row-major)
 ravelling:
 

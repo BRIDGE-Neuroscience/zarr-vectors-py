@@ -145,7 +145,7 @@ See [Validation](../tutorials/io/validation_and_repair.md) for details.
 
 ## Next steps
 
-- **[Concepts](concepts.md)** — understand chunks, bins, vertex groups, and
+- **[Concepts](concepts.md)** — understand chunks, bins, fragments, and
   the multiscale pyramid before working with larger datasets.
 - **[Data type tutorials](../tutorials/data_types/point_clouds.md)** — deeper
   walkthroughs for each geometry type.

@@ -144,7 +144,7 @@ Checking 0 (125 chunks)…
 PASS  frag_magic [0]                all chunks: magic 0x5A56_4647 ✓
 PASS  frag_popcount [0]              all chunks: R == popcount(bitmap) ✓
 PASS  frag_range_in_bounds [0]      all range fragments in bounds
-PASS  frag_vg_order [0]             all vertices in correct VG order
+PASS  frag_vg_order [0]             all vertices in correct fragment order
 PASS  attr_length_matches [0]       intensity/: 125/125 chunks aligned
 ERROR ccl_different_chunks [0]      2 links found where src chunk == dst chunk
                                     (links at rows 14502, 87331)

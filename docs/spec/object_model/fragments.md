@@ -1,36 +1,19 @@
-# Vertex groups and fragments
+# Fragments
 
 ## Terms
 
-**Vertex group (VG)**
-: The *conceptual* unit "all vertices in one spatial bin within one
-  spatial chunk". A VG remains a useful primitive for thinking about
-  bounding-box queries: a bbox resolves to a set of `(chunk, bin)`
-  pairs, each of which historically corresponded to one VG.
-
 **Fragment**
-: The *on-disk* unit that packages rows of `vertices/<chunk>` for
+: The on-disk unit that packages rows of `vertices/<chunk>` for
   indexing. Each fragment is one entry in the chunk's fragment-index
   blob and is either a contiguous range of rows or an explicit list
-  of row indices. See [Fragment-index arrays](../layout/vg_index_arrays.md)
+  of row indices. See [Fragment-index arrays](../layout/fragment_index_arrays.md)
   for the byte layout.
-
-**VG–fragment correspondence**
-: At level 0 with the default writer, each non-empty VG is encoded
-  as exactly one *range fragment* — the row range `[start, start +
-  count)` of vertices that belong to the bin. At coarsened pyramid
-  levels with `LevelMetadata.shared_fragments=True`, the
-  correspondence breaks: one fragment may represent a metavertex
-  referenced by several objects' manifests, and the VG/bin model
-  is supplanted by the fragment as the addressing primitive.
 
 **Fragment address**
 : The pair `(chunk_coords, fragment_index)` that uniquely identifies
-  a fragment in one level of a store. Replaces the pre-0.6
-  `(chunk_flat_index, bin_flat_index)` VG address used in
-  `object_index/`. Chunk coordinates are a D-tuple (not a flat ravel),
-  and `fragment_index` is chunk-local — it indexes the chunk's
-  `vertex_fragments/<chunk_coords>` blob only.
+  a fragment in one level of a store. Chunk coordinates are a D-tuple
+  (not a flat ravel), and `fragment_index` is chunk-local — it indexes
+  the chunk's `vertex_fragments/<chunk_coords>` blob only.
 
 **Primary fragment**
 : The first fragment of an object in traversal order (for sequential
@@ -47,36 +30,35 @@
 
 ## Introduction
 
-Vertex groups are the bridge between the chunk-level I/O of Zarr and
-the bin-level spatial queries of ZVF. Pre-0.6, the VG was both a
-conceptual unit and the on-disk unit: a `(B, 2)` int64 table named
-each bin's `(offset, count)` directly. Post-0.6 the two roles are
-decoupled — the VG remains the conceptual unit, and a small binary
-**fragment index** is the on-disk unit.
+Fragments are the bridge between the chunk-level I/O of Zarr and the
+bin-level spatial queries of ZVF. A small binary **fragment index**
+sits alongside each chunk's vertex payload, naming the row ranges
+that belong to each fragment.
 
-The decoupling matters at coarsened pyramid levels. The coarsening
-pipeline emits *metavertices* — single rows that several objects'
-paths converge on. Naive duplication would multiply storage by the
-participation count `k`; instead, the new format stores one fragment
-per metavertex and lets each object's manifest name it. The VG/bin
-model has no convenient way to express this; the fragment does.
+At level 0 with the default writer, fragments line up with bins
+one-to-one: each non-empty bin emits exactly one range fragment.
+The coarsening pipeline relaxes that correspondence — at coarsened
+pyramid levels with `LevelMetadata.shared_fragments=True` a single
+fragment may represent a metavertex referenced by several objects'
+manifests, and the bin model is supplanted by the fragment as the
+addressing primitive.
 
-This page describes the level-0 write path (where VGs and fragments
-align 1-to-1), the new fragment addressing scheme, the read path,
-and what changes at coarsened levels.
+This page describes the level-0 write path (where fragments and bins
+align one-to-one), the fragment addressing scheme, the read path, and
+what changes at coarsened levels.
 
 ---
 
 ## Technical reference
 
-### VG creation during write (level 0)
+### Fragment creation during write (level 0)
 
 When a chunk is written, its vertices are first sorted into bin
 order; then one range fragment is emitted per non-empty bin:
 
 ```python
 def build_level0_fragments(positions, chunk_coord, chunk_shape, bin_shape):
-    """Compute VG order and fragment list for one chunk's vertices."""
+    """Compute fragment list for one chunk's vertices."""
     D          = len(chunk_shape)
     bpc_shape  = tuple(int(c / b) for c, b in zip(chunk_shape, bin_shape))
 
@@ -148,7 +130,7 @@ For range fragments, `fidx.indices(f)` materialises `arange(start,
 start + count)`. For explicit fragments, it returns a copy of the
 CSR slice; hot loops can use `fidx.indices_view(f)` for a zero-copy
 view over the underlying bytes. See
-[Fragment-index arrays](../layout/vg_index_arrays.md) for the
+[Fragment-index arrays](../layout/fragment_index_arrays.md) for the
 decoder algorithm.
 
 Because each chunk of `vertices/` is independently stored, reading
@@ -197,8 +179,8 @@ reads.
 
 ### Fragment count at coarser levels
 
-The pre-0.6 intuition "`B_per_chunk` shrinks with `bin_ratio` until
-each chunk is one VG at the all-coarse level" is true only when the
+The intuition "`B_per_chunk` shrinks with `bin_ratio` until each
+chunk is one fragment at the all-coarse level" is true only when the
 default writer is in use *and* the level does not share fragments.
 
 For levels with `shared_fragments=False`:
@@ -220,13 +202,13 @@ non-aligned positions inside one bin.
 
 A writer SHALL preserve:
 
-1. **VG order at level 0.** Vertices within a chunk are stored in
+1. **Bin order at level 0.** Vertices within a chunk are stored in
    ascending bin-flat-index order. Attribute row `k` corresponds to
    vertex row `k`.
 2. **Fragment-blob well-formedness.** Every chunk's `vertex_fragments/`
    blob conforms to the v1 byte layout — magic `'ZVFG'`, version 1,
    `R == popcount(bitmap[0:F])`, monotone CSR offsets. See
-   [Fragment-index arrays](../layout/vg_index_arrays.md) §"Write-time
+   [Fragment-index arrays](../layout/fragment_index_arrays.md) §"Write-time
    invariants".
 3. **Index bounds.** Every range fragment's `[start, start + count)`
    and every explicit fragment's indices lie in `[0, len(vertices[chunk_coords]))`.
@@ -248,9 +230,15 @@ A writer SHALL preserve:
 
 ### Pre-0.6 ↔ post-0.6 cross-reference
 
+The pre-0.6 layout used the term **fragment (fragment)** for a
+`(chunk_flat, bin_flat)` pair backed by a `(B, 2)` int64 table
+named `vertex_group_offsets/`. The v0.6 fragment is the post-rename
+equivalent on disk; users migrating off pre-0.6 stores may find this
+mapping useful:
+
 | Pre-0.6 term | Post-0.6 equivalent |
 |--------------|---------------------|
-| VG address `(chunk_flat, bin_flat)` | Fragment address `(chunk_coords, fragment_index)` |
+| fragment address `(chunk_flat, bin_flat)` | Fragment address `(chunk_coords, fragment_index)` |
 | `vertex_group_offsets[chunk][b, 0]` (`offset`) | `range_table[r, 0]` (`start`) for the range fragment representing bin `b` |
 | `vertex_group_offsets[chunk][b, 1]` (`count`) | `range_table[r, 1]` (`count`) |
 | Bin with `count == 0` | No fragment emitted for that bin |

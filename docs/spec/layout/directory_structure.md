@@ -251,7 +251,7 @@ Per-vertex and per-object custom attributes must be placed under
 | `metadata.json` | All types | Recommended; not read by API |
 | `0/` | All types | At least one level required |
 | `vertices/` | All types | |
-| `vertex_fragments/` | All types | Required for spatial queries; see [Fragment-index arrays](vg_index_arrays.md) |
+| `vertex_fragments/` | All types | Required for spatial queries; see [Fragment-index arrays](fragment_index_arrays.md) |
 | `link_fragments/` | polyline, streamline, graph, skeleton, mesh | Present at `<delta>=0` whenever `links/0/` is present |
 | `links/<delta>/` | polyline, streamline, graph, skeleton (`link_width=2`); mesh (`link_width=3`) | `<delta>=0` for intra-level edges; `<delta>=±N` for cross-pyramid-level edges (0.4+) |
 | `cross_chunk_links/<delta>/` | Any geometry whose objects can span multiple chunks | `<delta>=0` always; `±N` when `cross_level_depth > 0` |

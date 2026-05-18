@@ -149,7 +149,7 @@ Legacy stores written before this layout change have
 instead of `object_index/manifests`; readers in `zarr_vectors`
 auto-detect and handle both layouts.
 
-See [Fragment-index arrays](../layout/vg_index_arrays.md) for the
+See [Fragment-index arrays](../layout/fragment_index_arrays.md) for the
 fragment-index byte layout and
 [Object manifest](../object_model/object_manifest.md) for the
 manifest-blob format.

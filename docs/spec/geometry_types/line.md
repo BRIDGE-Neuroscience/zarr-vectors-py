@@ -66,7 +66,7 @@ Edge indices are local to the chunk (0-indexed within the chunk's vertex
 slice). An edge `[i, j]` in chunk `(cx, cy, cz)` refers to vertices at
 positions `vertices[cx, cy, cz, i]` and `vertices[cx, cy, cz, j]`.
 
-Edges are stored in the same VG order as their source vertex (the vertex
+Edges are stored in the same fragment order as their source vertex (the vertex
 with lower array index): edges whose first endpoint is in bin 0 come first,
 then bin 1, etc.
 

@@ -89,7 +89,7 @@ annotation equivalent).
 #### `zv-ngtools` translation
 
 `zv-ngtools` serves ZVF point clouds and line stores as Neuroglancer
-annotation layers by translating VG slices to annotation chunk binaries
+annotation layers by translating fragment slices to annotation chunk binaries
 on the fly:
 
 ```python
@@ -123,7 +123,7 @@ Attribute support: precomputed skeletons support per-vertex `vertex_attributes`
 
 | Property | ZVF `skeleton` | Precomputed skeleton |
 |----------|---------------|---------------------|
-| Spatial index | Yes (VG index + chunk grid) | No (direct file per object) |
+| Spatial index | Yes (fragment index + chunk grid) | No (direct file per object) |
 | Multi-resolution | Yes | No |
 | Per-vertex attributes | Yes (arbitrary dtypes) | Yes (float32 only) |
 | Per-object attributes | Yes | No |
@@ -160,7 +160,7 @@ fragment shards contain each object.
 
 | Property | ZVF `mesh` | Precomputed mesh (sharded) |
 |----------|-----------|---------------------------|
-| Spatial indexing | Chunk + VG index | Fragment grid |
+| Spatial indexing | Chunk + fragment index | Fragment grid |
 | Draco compression | Optional | Supported |
 | Multi-resolution | Yes | No (single resolution) |
 | Per-vertex attributes | Yes | No |

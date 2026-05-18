@@ -159,7 +159,7 @@ Lazy readers (`ZVLevel`) expose:
 - `chunk_dims` — the level's chunk-axis names, or `None` for legacy.
 - `chunk_attribute_name` — the leading-axis attribute name.
 - `attribute_values` — the ordered value list.
-- `read_attribute_chunk(value)` — convenience: reads all vertex groups
+- `read_attribute_chunk(value)` — convenience: reads all fragments
   for chunks whose leading coord matches `value`.
 
 ### Post-hoc rechunking

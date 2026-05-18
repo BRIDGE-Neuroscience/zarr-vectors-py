@@ -9,7 +9,7 @@ datasets larger than available RAM.
 
 ## Why writes are memory-bound
 
-The VG index requires all vertices in a chunk to be sorted by bin
+The fragment index requires all vertices in a chunk to be sorted by bin
 coordinate before writing. This means a full chunk worth of vertices
 (positions + attributes) must be in memory at once.
 

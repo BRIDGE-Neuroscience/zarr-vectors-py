@@ -14,7 +14,7 @@
 **Per-vertex attribute**
 : A named array, stored under `attributes/<name>/`, whose length equals
   the number of vertices in the store. Each element corresponds to one
-  vertex, in VG order.
+  vertex, in fragment order.
 
 ---
 
@@ -28,7 +28,7 @@ gene expression spatial transcriptomics, or any other spatially indexed
 scalar field sampled at discrete positions.
 
 Point clouds support the full ZVF spatial indexing hierarchy (chunks, bins,
-VG index) and full multi-resolution pyramids via spatial coarsening into
+fragment index) and full multi-resolution pyramids via spatial coarsening into
 metanodes.
 
 ---
@@ -40,7 +40,7 @@ metanodes.
 | Array path | Required | Description |
 |-----------|----------|-------------|
 | `vertices/` | Yes | Vertex positions, shape `(N, D)` float32 per chunk |
-| `vertex_fragments/` | Yes | Fragment index — `uint8` blob per chunk; see [Fragment-index arrays](../layout/vg_index_arrays.md) |
+| `vertex_fragments/` | Yes | Fragment index — `uint8` blob per chunk; see [Fragment-index arrays](../layout/fragment_index_arrays.md) |
 | `attributes/<name>/` | No | Per-vertex scalar or vector attributes |
 
 No `links/`, `object_index/`, `cross_chunk_links/`, or `object_attributes/`

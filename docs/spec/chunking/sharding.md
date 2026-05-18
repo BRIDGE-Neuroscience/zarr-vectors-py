@@ -46,7 +46,7 @@ as if each chunk were a separate file — but the object count is reduced by
 the shard factor.
 
 Sharding is available natively in Zarr v3 and does not require changes to
-the ZVF data model. It is purely a storage-layer optimisation. The VG index,
+the ZVF data model. It is purely a storage-layer optimisation. The fragment index,
 object model, and multiscale metadata are identical with or without sharding.
 
 ---

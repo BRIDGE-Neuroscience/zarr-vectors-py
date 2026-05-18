@@ -61,7 +61,7 @@ The validator is designed to be useful in several contexts:
 |-------|------|----------------|-----------------|
 | 1 | Structural | Required files/groups/arrays exist; correct Zarr node types | < 1 s |
 | 2 | Metadata | `.zattrs` schema validity; dtype/shape declarations; divisibility constraints; all keys present and correctly typed | 1–5 s |
-| 3 | Consistency | VG offset arithmetic; manifest integrity; cross-chunk link validity; attribute–vertex alignment | 10 s – 10 min (reads all chunks) |
+| 3 | Consistency | fragment offset arithmetic; manifest integrity; cross-chunk link validity; attribute–vertex alignment | 10 s – 10 min (reads all chunks) |
 | 4 | Geometry | Type-specific constraints: tree topology for `skeleton`/`graph(is_tree)`; watertightness for `mesh(closed_surface)`; polyline gap detection | varies |
 | 5 | Pyramid | Multi-resolution correctness: monotonically non-increasing vertex and object counts; `bin_ratio` / `bin_shape` / `object_sparsity` self-consistency across levels | adds per-level cost |
 
@@ -126,7 +126,7 @@ The `zarr-vectors validate` CLI lives in the companion package
 The write functions in `zarr-vectors-py` perform inline validation of
 arguments before writing. However, this does not substitute for post-write
 validation: inline checks guard against obviously invalid parameters but do
-not verify the correctness of the written data (e.g. VG offset arithmetic,
+not verify the correctness of the written data (e.g. fragment offset arithmetic,
 cross-chunk link completeness). Always run at least level 3 after writing
 a new store.
 

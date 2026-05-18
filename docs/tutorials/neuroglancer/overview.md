@@ -18,7 +18,7 @@ translates ZVF stores into Neuroglancer layers on the fly.
 
 Neuroglancer's data source plugins expect data in specific binary formats
 (precomputed, N5, OME-Zarr). ZVF stores vertex data as spatially chunked
-Zarr arrays with a VG index — a structure Neuroglancer does not understand
+Zarr arrays with a fragment index — a structure Neuroglancer does not understand
 without a mediating translation layer.
 
 `zv-ngtools` provides that layer: it runs a local HTTP file server that
@@ -36,7 +36,7 @@ A Python process (`zv-ngtools`) runs a local Tornado HTTP server alongside
 a Neuroglancer browser tab. The server:
 
 1. Receives chunk requests from Neuroglancer (HTTP range requests).
-2. Uses `zarr-vectors-py` to read the requested VG slices.
+2. Uses `zarr-vectors-py` to read the requested fragment slices.
 3. Translates the ZVF data to the Neuroglancer layer protocol.
 4. Returns the response to the browser.
 

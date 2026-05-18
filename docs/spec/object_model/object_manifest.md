@@ -4,9 +4,9 @@
 :class: note
 
 Prior to ZVF 0.6.0 the `object_index/` array was a fixed-shape
-`(n_objects, 2)` `int64` table storing one *primary-VG address*
+`(n_objects, 2)` `int64` table storing one *primary-fragment address*
 per object; reading a multi-chunk object required walking
-`cross_chunk_links/` forwards from the primary VG. ZVF 0.6.0
+`cross_chunk_links/` forwards from the primary fragment. ZVF 0.6.0
 replaced this with a self-contained per-object manifest stored
 as a ragged `uint8` blob: every chunk the object touches, and
 every fragment within each chunk, is enumerated directly.

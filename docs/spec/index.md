@@ -72,7 +72,7 @@ layout/directory_structure
 layout/root_metadata
 layout/level_groups
 layout/chunk_arrays
-layout/vg_index_arrays
+layout/fragment_index_arrays
 chunking/chunk_shape
 chunking/bin_shape
 chunking/chunk_vs_bin
@@ -82,7 +82,7 @@ multiscale/multiscale_metadata
 multiscale/pyramid_construction
 multiscale/sparsity
 geometry_types/index
-object_model/vertex_groups
+object_model/fragments
 object_model/object_manifest
 object_model/cross_chunk_links
 object_model/object_attributes

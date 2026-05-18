@@ -59,8 +59,8 @@ these formats to ZVF, preserving all `dps` and `dpp` attributes as
 | Property | TRX | ZVF (`streamline`) |
 |----------|-----|--------------------|
 | Container | ZIP archive (`.trx`) | Directory tree (`.zarrvectors`) |
-| Vertex storage | Flat concatenated array + offset table | Spatially chunked, VG-indexed |
-| Spatial index | None | Chunk grid + VG index |
+| Vertex storage | Flat concatenated array + offset table | Spatially chunked, fragment-indexed |
+| Spatial index | None | Chunk grid + fragment index |
 | Per-vertex attributes (`dpp`) | Separate `.npy` files (same layout as vertices) | `attributes/<name>/` arrays |
 | Per-streamline attributes (`dps`) | Separate `.npy` files (one row per streamline) | `object_attributes/<name>/` arrays |
 | Affine transform | Stored in `header.json` | Not stored; apply before writing |
@@ -79,14 +79,14 @@ array in `streamlines/data.float32.npy`. Streamline boundaries are given
 by `streamlines/offsets.int64.npy` (cumulative sum of streamline lengths).
 
 ZVF stores vertices chunked spatially. The equivalent of the TRX offset
-table is the combination of `object_index/` (primary VG per streamline)
+table is the combination of `object_index/` (primary fragment per streamline)
 and `cross_chunk_links/` (inter-chunk continuations).
 
 #### `dpp` → `attributes/`
 
 Each `dpp/<name>.<dtype>.npy` file in TRX contains one value per vertex in
 the same concatenated order as `streamlines/data`. In ZVF, the equivalent
-is `attributes/<name>/`, which stores one value per vertex in VG order
+is `attributes/<name>/`, which stores one value per vertex in fragment order
 (per-chunk, spatially sorted).
 
 | TRX | ZVF |
@@ -134,7 +134,7 @@ is applied to vertex positions before they are written to ZVF.
 | Operation | TRX | ZVF |
 |-----------|-----|-----|
 | Sequential read of all streamlines | Very fast (memory mapped) | Fast (sequential chunk reads, ~same throughput) |
-| Random access to one streamline by ID | O(1) offset lookup + linear read | O(1) object_index lookup + VG read |
+| Random access to one streamline by ID | O(1) offset lookup + linear read | O(1) object_index lookup + fragment read |
 | Spatial bbox query | O(n) — scan all streamlines | O(chunks × bins) — spatial index |
 | Cloud access (S3/GCS) | Requires full download | Native range requests |
 | Spatial query on 1M-streamline dataset | Seconds to minutes | < 1 second for a small bbox |

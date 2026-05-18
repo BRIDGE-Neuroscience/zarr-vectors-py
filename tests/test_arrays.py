@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from zarr_vectors.core.arrays import (
-    count_vertex_groups,
+    count_fragments,
     create_attribute_array,
     create_cross_chunk_links_array,
     create_groupings_array,
@@ -29,7 +29,7 @@ from zarr_vectors.core.arrays import (
     read_object_attributes,
     read_object_manifest,
     read_object_vertices,
-    read_vertex_group,
+    read_fragment,
     write_chunk_attributes,
     write_chunk_link_attributes,
     write_chunk_links,
@@ -98,7 +98,7 @@ class TestVertexArrays:
         np.testing.assert_array_equal(g_a[0], pts_a[0])
         np.testing.assert_array_equal(g_b[0], pts_b[0])
 
-    def test_read_single_vertex_group(self, tmp_path: Path) -> None:
+    def test_read_single_fragment(self, tmp_path: Path) -> None:
         lg = _make_level_group(tmp_path)
         create_vertices_array(lg)
 
@@ -106,17 +106,17 @@ class TestVertexArrays:
         g1 = np.array([[10, 10, 10], [11, 11, 11], [12, 12, 12]], dtype=np.float32)
         write_chunk_vertices(lg, (0, 0, 0), [g0, g1])
 
-        vg0 = read_vertex_group(lg, (0, 0, 0), 0, dtype=np.float32, ndim=3)
-        vg1 = read_vertex_group(lg, (0, 0, 0), 1, dtype=np.float32, ndim=3)
-        np.testing.assert_array_equal(vg0, g0)
-        np.testing.assert_array_equal(vg1, g1)
+        fragment0 = read_fragment(lg, (0, 0, 0), 0, dtype=np.float32, ndim=3)
+        fragment1 = read_fragment(lg, (0, 0, 0), 1, dtype=np.float32, ndim=3)
+        np.testing.assert_array_equal(fragment0, g0)
+        np.testing.assert_array_equal(fragment1, g1)
 
-    def test_read_vertex_group_out_of_range(self, tmp_path: Path) -> None:
+    def test_read_fragment_out_of_range(self, tmp_path: Path) -> None:
         lg = _make_level_group(tmp_path)
         create_vertices_array(lg)
         write_chunk_vertices(lg, (0, 0, 0), [np.zeros((1, 3), dtype=np.float32)])
         try:
-            read_vertex_group(lg, (0, 0, 0), 5, dtype=np.float32, ndim=3)
+            read_fragment(lg, (0, 0, 0), 5, dtype=np.float32, ndim=3)
             assert False, "Should raise"
         except ArrayError:
             pass
@@ -134,7 +134,7 @@ class TestVertexArrays:
         assert len(groups) == 3
         assert groups[1].shape == (0, 3)
 
-    def test_count_vertex_groups(self, tmp_path: Path) -> None:
+    def test_count_fragments(self, tmp_path: Path) -> None:
         lg = _make_level_group(tmp_path)
         create_vertices_array(lg)
         write_chunk_vertices(lg, (0, 0, 0), [
@@ -142,7 +142,7 @@ class TestVertexArrays:
             np.zeros((5, 3), dtype=np.float32),
             np.zeros((1, 3), dtype=np.float32),
         ])
-        assert count_vertex_groups(lg, (0, 0, 0)) == 3
+        assert count_fragments(lg, (0, 0, 0)) == 3
 
     def test_2d_points(self, tmp_path: Path) -> None:
         lg = _make_level_group(tmp_path)
@@ -478,7 +478,7 @@ class TestLinkAttributes:
         weights = [np.array([0.5, 0.8], dtype=np.float32)]
         write_chunk_link_attributes(lg, "weight", (0, 0, 0), weights)
 
-        # Read back via raw bytes (link_attributes use same encoding as vertex groups)
+        # Read back via raw bytes (link_attributes use same encoding as fragments)
         # 0.4 multiscale layout: link_attributes/<name>/<delta>/<chunk_key>
         key = "0.0.0"
         raw = lg.read_bytes("link_attributes/weight/0", key)
@@ -540,12 +540,12 @@ class TestObjectReconstruction:
         create_vertices_array(lg)
         create_object_index_array(lg)
 
-        # Chunk (0,0,0): vertex group 0 = neuron A, group 1 = neuron B
+        # Chunk (0,0,0): fragment 0 = neuron A, group 1 = neuron B
         vg_a0 = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
         vg_b0 = np.array([[5, 5, 5]], dtype=np.float32)
         write_chunk_vertices(lg, (0, 0, 0), [vg_a0, vg_b0])
 
-        # Chunk (1,0,0): vertex group 0 = neuron A, group 1 = neuron B
+        # Chunk (1,0,0): fragment 0 = neuron A, group 1 = neuron B
         vg_a1 = np.array([[10, 10, 10]], dtype=np.float32)
         vg_b1 = np.array([[15, 15, 15], [16, 16, 16]], dtype=np.float32)
         write_chunk_vertices(lg, (1, 0, 0), [vg_a1, vg_b1])

@@ -7,10 +7,10 @@ import numpy as np
 from zarr_vectors.encoding.ragged import (
     decode_ragged_blob,
     decode_ragged_ints,
-    decode_vertex_groups,
+    decode_ragged_floats,
     encode_ragged_blob,
     encode_ragged_ints,
-    encode_vertex_groups,
+    encode_ragged_floats,
 )
 from zarr_vectors.encoding.compression import (
     get_codec_pipeline,
@@ -20,15 +20,15 @@ from zarr_vectors.exceptions import ArrayError
 
 
 # ---------------------------------------------------------------------------
-# Vertex group round-trips
+# Fragment round-trips
 # ---------------------------------------------------------------------------
 
-class TestVertexGroupEncoding:
+class TestRaggedFloatEncoding:
 
     def test_single_group_3d(self) -> None:
         groups = [np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)]
-        raw, offsets = encode_vertex_groups(groups, dtype=np.float32)
-        decoded = decode_vertex_groups(raw, offsets, dtype=np.float32, ncols=3)
+        raw, offsets = encode_ragged_floats(groups, dtype=np.float32)
+        decoded = decode_ragged_floats(raw, offsets, dtype=np.float32, ncols=3)
         assert len(decoded) == 1
         np.testing.assert_array_equal(decoded[0], groups[0])
 
@@ -40,9 +40,9 @@ class TestVertexGroupEncoding:
             rng.uniform(size=(1, 3)).astype(np.float32),
             rng.uniform(size=(42, 3)).astype(np.float32),
         ]
-        raw, offsets = encode_vertex_groups(groups, dtype=np.float32)
+        raw, offsets = encode_ragged_floats(groups, dtype=np.float32)
         assert len(offsets) == 4
-        decoded = decode_vertex_groups(raw, offsets, dtype=np.float32, ncols=3)
+        decoded = decode_ragged_floats(raw, offsets, dtype=np.float32, ncols=3)
         assert len(decoded) == 4
         for orig, dec in zip(groups, decoded):
             np.testing.assert_array_equal(dec, orig)
@@ -53,24 +53,24 @@ class TestVertexGroupEncoding:
             np.zeros((0, 3), dtype=np.float32),  # empty
             np.array([[7.0, 8.0, 9.0]], dtype=np.float32),
         ]
-        raw, offsets = encode_vertex_groups(groups, dtype=np.float32)
-        decoded = decode_vertex_groups(raw, offsets, dtype=np.float32, ncols=3)
+        raw, offsets = encode_ragged_floats(groups, dtype=np.float32)
+        decoded = decode_ragged_floats(raw, offsets, dtype=np.float32, ncols=3)
         assert len(decoded) == 3
         assert decoded[1].shape == (0, 3)
         np.testing.assert_array_equal(decoded[0], groups[0])
         np.testing.assert_array_equal(decoded[2], groups[2])
 
     def test_empty_chunk(self) -> None:
-        raw, offsets = encode_vertex_groups([], dtype=np.float32)
+        raw, offsets = encode_ragged_floats([], dtype=np.float32)
         assert raw == b""
         assert len(offsets) == 0
-        decoded = decode_vertex_groups(raw, offsets, dtype=np.float32, ncols=3)
+        decoded = decode_ragged_floats(raw, offsets, dtype=np.float32, ncols=3)
         assert decoded == []
 
     def test_single_vertex(self) -> None:
         groups = [np.array([[10.0, 20.0, 30.0]], dtype=np.float64)]
-        raw, offsets = encode_vertex_groups(groups, dtype=np.float64)
-        decoded = decode_vertex_groups(raw, offsets, dtype=np.float64, ncols=3)
+        raw, offsets = encode_ragged_floats(groups, dtype=np.float64)
+        decoded = decode_ragged_floats(raw, offsets, dtype=np.float64, ncols=3)
         np.testing.assert_array_equal(decoded[0], groups[0])
 
     def test_1d_scalars(self) -> None:
@@ -78,8 +78,8 @@ class TestVertexGroupEncoding:
             np.array([1.0, 2.0, 3.0], dtype=np.float32),
             np.array([4.0, 5.0], dtype=np.float32),
         ]
-        raw, offsets = encode_vertex_groups(groups, dtype=np.float32)
-        decoded = decode_vertex_groups(raw, offsets, dtype=np.float32, ncols=1)
+        raw, offsets = encode_ragged_floats(groups, dtype=np.float32)
+        decoded = decode_ragged_floats(raw, offsets, dtype=np.float32, ncols=1)
         assert decoded[0].shape == (3,)
         assert decoded[1].shape == (2,)
         np.testing.assert_array_equal(decoded[0], groups[0])
@@ -89,14 +89,14 @@ class TestVertexGroupEncoding:
         rng = np.random.default_rng(123)
         big = rng.uniform(size=(100_000, 3)).astype(np.float32)
         groups = [big]
-        raw, offsets = encode_vertex_groups(groups, dtype=np.float32)
-        decoded = decode_vertex_groups(raw, offsets, dtype=np.float32, ncols=3)
+        raw, offsets = encode_ragged_floats(groups, dtype=np.float32)
+        decoded = decode_ragged_floats(raw, offsets, dtype=np.float32, ncols=3)
         np.testing.assert_array_equal(decoded[0], big)
 
     def test_dtype_int32(self) -> None:
         groups = [np.array([[1, 2, 3], [4, 5, 6]], dtype=np.int32)]
-        raw, offsets = encode_vertex_groups(groups, dtype=np.int32)
-        decoded = decode_vertex_groups(raw, offsets, dtype=np.int32, ncols=3)
+        raw, offsets = encode_ragged_floats(groups, dtype=np.int32)
+        decoded = decode_ragged_floats(raw, offsets, dtype=np.int32, ncols=3)
         np.testing.assert_array_equal(decoded[0], groups[0])
 
 

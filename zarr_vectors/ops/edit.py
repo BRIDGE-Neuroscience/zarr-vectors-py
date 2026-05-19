@@ -55,6 +55,13 @@ RefreshPolicy = Literal[True, False, "batch"]
 PropagateTo = Literal["all"] | list[int]
 """Either the sentinel ``"all"`` or an explicit list of OIDs."""
 
+# Sentinel used in ``EditSession._fragment_owners`` to mark which
+# levels have been folded into the index.  The value is a chunk-coord
+# tuple that can never appear in a real manifest (a chunk index of
+# ``-1``); together with the ``-1`` fragment slot in the key, this
+# never collides with a real fragment-owner entry.
+_LEVEL_MARKER_CHUNK: ChunkCoords = (-1,)
+
 
 class EditSession:
     """Transactional edit handle for one ZV store.
@@ -109,6 +116,18 @@ class EditSession:
         self._all_manifests: dict[int, list[ObjectManifest]] = {}
         # Per-level next-available OID (atomic mode appends new OIDs here).
         self._next_oid: dict[int, int] = {}
+        # Fragment → OIDs inverted index (lazy, built on first lookup
+        # in ``_fragment_owners_for``).  Keyed by
+        # ``(level, chunk_coords, fragment_index)``.  Kept consistent
+        # with on-disk + pending-op state via surgical updates in
+        # ``_stage_manifest``.
+        self._fragment_owners: dict[
+            tuple[int, ChunkCoords, int], list[int]
+        ] | None = None
+        # Per-level attribute-name cache (populated by
+        # ``relocate._list_attr_names_from_store`` and invalidated when
+        # a new per-vertex attribute is created during the session).
+        self._attr_names_per_level: dict[int, list[str]] = {}
 
         self._report = EditReport(oid_prefix=self.oid_prefix)
         self._touched_levels: set[int] = set()
@@ -705,16 +724,100 @@ class EditSession:
         chunk: ChunkCoords,
         fragment: int,
     ) -> list[int]:
-        """Scan all manifests for those that reference ``(chunk, fragment)``."""
-        out: list[int] = []
+        """Return the OIDs whose manifest references ``(chunk, fragment)``.
+
+        Backed by the lazily-built ``_fragment_owners`` index — O(1)
+        per lookup after the first call in a session, vs the previous
+        O(N_objects × manifest_len) per-call scan.  The index is kept
+        consistent with pending-op state via surgical updates in
+        :meth:`_stage_manifest`.
+        """
+        index = self._build_fragment_owners(level)
+        chunk_t = tuple(int(c) for c in chunk)
+        return list(index.get((level, chunk_t, int(fragment)), ()))
+
+    def _fragment_owners_for(
+        self,
+        level: int,
+        chunk: ChunkCoords,
+        fragment: int,
+    ) -> list[int]:
+        """Public-flavoured alias of :meth:`_oids_referencing`."""
+        return self._oids_referencing(level, chunk, fragment)
+
+    def _build_fragment_owners(
+        self,
+        level: int,
+    ) -> dict[tuple[int, ChunkCoords, int], list[int]]:
+        """Return the fragment-owners index, building it on first call.
+
+        The index is keyed by ``(level, chunk_coords, fragment_idx)``
+        and maps to a list of OIDs whose manifest references that
+        fragment.  Built from the already-cached
+        ``_all_manifests_for(level)`` result, so the first lookup pays
+        the on-disk read once; subsequent lookups are O(1).
+
+        The index covers *all* known levels — when a new level is
+        requested, that level's manifests are folded in alongside the
+        existing entries.
+        """
+        if self._fragment_owners is None:
+            self._fragment_owners = {}
+        index = self._fragment_owners
+        # Has this level already been folded in?  Cheapest sentinel:
+        # we add a marker entry so subsequent calls are a constant-time
+        # dict-membership check.
+        marker = (level, _LEVEL_MARKER_CHUNK, -1)
+        if marker in index:
+            return index
+        index[marker] = []  # sentinel — must not collide with real keys
         manifests = self._all_manifests_for(level)
-        chunk_t = tuple(chunk)
         for oid, manifest in enumerate(manifests):
             for cc, fi in manifest:
-                if tuple(cc) == chunk_t and fi == fragment:
-                    out.append(oid)
-                    break
-        return out
+                key = (level, tuple(int(c) for c in cc), int(fi))
+                index.setdefault(key, []).append(oid)
+        return index
+
+    def _index_apply_manifest_delta(
+        self,
+        level: int,
+        oid: int,
+        old_manifest: ObjectManifest,
+        new_manifest: ObjectManifest,
+    ) -> None:
+        """Surgically update ``_fragment_owners`` for one manifest write.
+
+        Removes ``oid`` from entries that appear in ``old_manifest`` but
+        not in ``new_manifest``; adds it to entries that appear in
+        ``new_manifest`` but not in ``old_manifest``.  Entries present
+        in both are untouched.  Atomic-mode callers pass the new-OID's
+        old manifest as ``[]`` (treat the whole new manifest as added).
+
+        No-op when the index hasn't been built yet for ``level`` — the
+        first lookup will build a fresh index from the cached manifests
+        plus any pending ops applied at that point.
+        """
+        if self._fragment_owners is None:
+            return
+        marker = (level, _LEVEL_MARKER_CHUNK, -1)
+        if marker not in self._fragment_owners:
+            return  # level not folded in yet; nothing to keep consistent
+        old_set = {
+            (tuple(int(c) for c in cc), int(fi)) for cc, fi in old_manifest
+        }
+        new_set = {
+            (tuple(int(c) for c in cc), int(fi)) for cc, fi in new_manifest
+        }
+        for cc, fi in old_set - new_set:
+            key = (level, cc, fi)
+            lst = self._fragment_owners.get(key)
+            if lst and oid in lst:
+                lst.remove(int(oid))
+                if not lst:
+                    del self._fragment_owners[key]
+        for cc, fi in new_set - old_set:
+            key = (level, cc, fi)
+            self._fragment_owners.setdefault(key, []).append(int(oid))
 
     def _select_targets(
         self,
@@ -740,18 +843,45 @@ class EditSession:
         allocator and leave the original OID's manifest untouched;
         record the remap.  Under ``atomic=False`` overwrite the
         manifest at ``oid``.
+
+        Keeps the lazily-built fragment-owners index consistent via a
+        surgical diff so it survives the whole session.
         """
+        new_mani: ObjectManifest = list(new_manifest or [])
         if atomic:
             new_oid = self._allocate_atomic_oid(level)
             self._manifest_ops[(level, new_oid)] = ManifestOp(
                 level=level, object_id=new_oid,
-                new_manifest=new_manifest, new_oid=new_oid,
+                new_manifest=new_mani, new_oid=new_oid,
             )
             self._report.oid_remap[int(oid)] = int(new_oid)
+            # Index update: the new OID inherits all of ``new_mani``'s
+            # entries; the source OID's entries are unchanged.
+            self._index_apply_manifest_delta(
+                level, int(new_oid),
+                old_manifest=[],
+                new_manifest=new_mani,
+            )
         else:
+            # Capture the pre-edit manifest for the diff before
+            # overwriting the op store.  Honour any pending in-session
+            # op at this OID (chains of non-atomic edits compose).
+            pending = self._manifest_ops.get((level, oid))
+            if pending is not None and pending.new_manifest is not None:
+                old_mani = list(pending.new_manifest)
+            else:
+                manifests = self._all_manifests_for(level)
+                old_mani = (
+                    list(manifests[oid]) if 0 <= oid < len(manifests) else []
+                )
             self._manifest_ops[(level, oid)] = ManifestOp(
                 level=level, object_id=oid,
-                new_manifest=new_manifest, new_oid=None,
+                new_manifest=new_mani, new_oid=None,
+            )
+            self._index_apply_manifest_delta(
+                level, int(oid),
+                old_manifest=old_mani,
+                new_manifest=new_mani,
             )
 
     def _allocate_atomic_oid(self, level: int) -> int:

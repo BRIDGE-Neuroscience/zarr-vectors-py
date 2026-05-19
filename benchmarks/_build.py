@@ -1701,6 +1701,123 @@ for n_editors in (1, MODULUS):
 df_conc = pd.DataFrame(rows)
 df_conc
 """),
+    ("md", """\
+## 7 · Inverted-index scaling — wall time per edit vs N_objects
+
+Iteration 4 introduced a lazy fragment→OID inverted index that
+collapses the two linear-scan helpers (`_oids_referencing` and
+`_oid_for_endpoint`) to O(1) per lookup with surgical updates on every
+`_stage_manifest` call.  This panel documents the *flatness* of the
+post-fix cost curve: as `N_OBJECTS` grows from 1k → 10k → 50k, the
+wall-time per atomic edit should grow only sub-linearly (dominated by
+amortised first-lookup index build + per-write diff cost), not
+linearly as it did before the fix.
+
+Two workloads:
+
+- `edit_vertex_atomic` — repeated atomic vertex edits against fresh
+  OIDs in the same store.
+- `add_link_cross_oid` — repeated `add_link(update_objects=True)`
+  bridging two OIDs (exercises `_oid_for_endpoint` twice per call).
+
+Each `(N_OBJECTS, kind)` row is averaged over a single session of
+`N_EDITS = 200` edits.  Lower wall-time-per-edit at large `N_OBJECTS`
+indicates the inverted index is doing its job.
+"""),
+    ("code", """\
+from zarr_vectors.ops import EditSession, VertexRef
+
+N_OBJECTS_SWEEP = [1_000, 10_000, 50_000]
+N_EDITS_SCALING = 200
+
+
+def _build_scaling_baseline(n_objects, seed):
+    \"\"\"Fresh points store with one OID per row.\"\"\"
+    rng = np.random.default_rng(seed)
+    positions = rng.uniform(0, DOMAIN, (n_objects, 3)).astype(np.float32)
+    store = _new_store(f'scaling_{n_objects}')
+    write_points(
+        str(store), positions,
+        chunk_shape=CHUNK, bin_shape=BIN,
+        bounds=([0.0, 0.0, 0.0], [DOMAIN, DOMAIN, DOMAIN]),
+        object_ids=np.arange(n_objects, dtype=np.int64),
+    )
+    return store, positions
+
+
+def _bench_edit_vertex_atomic(store, positions, n_edits):
+    rng = np.random.default_rng(42)
+    oids = rng.choice(len(positions), size=n_edits, replace=False)
+    root = open_store(str(store), mode='r+')
+    t0 = time.perf_counter()
+    with EditSession(root, atomic=True, refresh_pyramid=False) as ed:
+        for oid in oids:
+            ref = VertexRef.from_object(
+                root, level=0, object_id=int(oid), vertex_index=0,
+            )
+            new_pos = (positions[oid] + np.float32([0.1, 0.1, 0.1])).tolist()
+            ed.edit_vertex(ref, new_pos=new_pos, atomic=True)
+    return time.perf_counter() - t0
+
+
+def _bench_add_link_cross_oid(store, positions, n_edits):
+    rng = np.random.default_rng(43)
+    pairs = rng.choice(len(positions), size=(n_edits, 2), replace=True)
+    # Drop same-OID pairs so every edit exercises the merge path.
+    pairs = pairs[pairs[:, 0] != pairs[:, 1]]
+    if len(pairs) == 0:
+        return float('nan')
+    root = open_store(str(store), mode='r+')
+    t0 = time.perf_counter()
+    with EditSession(root, atomic=True, refresh_pyramid=False) as ed:
+        for a, b in pairs[:n_edits]:
+            ref_a = VertexRef.from_object(
+                root, level=0, object_id=int(a), vertex_index=0,
+            )
+            ref_b = VertexRef.from_object(
+                root, level=0, object_id=int(b), vertex_index=0,
+            )
+            if ref_a.chunk != ref_b.chunk:
+                continue
+            ed.add_link(
+                level=0, src=int(ref_a.local), dst=int(ref_b.local),
+                chunk=ref_a.chunk, fragment=ref_a.fragment,
+                update_objects=True,
+            )
+    return time.perf_counter() - t0
+
+
+rows_scaling = []
+for n_objects in N_OBJECTS_SWEEP:
+    seed = int(master_rng.integers(0, 2**31 - 1))
+    store, positions = _build_scaling_baseline(n_objects, seed)
+
+    t_atomic = _bench_edit_vertex_atomic(store, positions, N_EDITS_SCALING)
+    rows_scaling.append({
+        'n_objects': n_objects,
+        'edit_kind': 'edit_vertex_atomic',
+        'n_edits': N_EDITS_SCALING,
+        'wall_s': round(t_atomic, 3),
+        'us_per_edit': round((t_atomic / N_EDITS_SCALING) * 1e6, 1),
+    })
+    shutil.rmtree(Path(store).parent, ignore_errors=True)
+
+    # Rebuild for the cross-OID workload (the atomic test mutated it).
+    store, positions = _build_scaling_baseline(n_objects, seed)
+    t_cross = _bench_add_link_cross_oid(store, positions, N_EDITS_SCALING)
+    rows_scaling.append({
+        'n_objects': n_objects,
+        'edit_kind': 'add_link_cross_oid',
+        'n_edits': N_EDITS_SCALING,
+        'wall_s': round(t_cross, 3),
+        'us_per_edit': round((t_cross / N_EDITS_SCALING) * 1e6, 1)
+                       if t_cross == t_cross else None,
+    })
+    shutil.rmtree(Path(store).parent, ignore_errors=True)
+
+df_scaling = pd.DataFrame(rows_scaling)
+df_scaling
+"""),
 ]
 
 

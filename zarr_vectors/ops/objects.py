@@ -101,6 +101,11 @@ def add_object_in_session(
     session._manifest_ops[(level, new_oid)] = _make_manifest_op(
         level=level, new_oid=new_oid, manifest=manifest,
     )
+    session._index_apply_manifest_delta(
+        level, int(new_oid),
+        old_manifest=[],
+        new_manifest=manifest,
+    )
     session._mark_edit(level)
     return ObjectRef(level=level, object_id=int(new_oid))
 
@@ -216,6 +221,11 @@ def _merge_objects_impl(
             level=level, object_id=new_oid,
             new_manifest=concat, new_oid=new_oid,
         )
+        session._index_apply_manifest_delta(
+            level, int(new_oid),
+            old_manifest=[],
+            new_manifest=concat,
+        )
         for oid in oids:
             session._report.oid_remap[int(oid)] = int(new_oid)
         session._mark_edit(level)
@@ -291,21 +301,19 @@ def _split_object_at_link_impl(
     chunk_t = tuple(int(c) for c in chunk)
 
     # Step 1: resolve each endpoint to (fragment_idx, fragment_local_row)
-    # in the chunk.
+    # in the chunk.  Forward walk — single pass, returns ``None`` for
+    # out-of-range row indices.
     builder = session._builder(level, chunk_t)
-    fragment_starts: list[int] = []
-    cursor = 0
-    for g in builder.vertex_groups:
-        fragment_starts.append(cursor)
-        cursor += int(g.shape[0])
 
     def _frag_and_local(chunk_local: int) -> tuple[int, int] | None:
-        for fi in range(len(fragment_starts) - 1, -1, -1):
-            if fragment_starts[fi] <= chunk_local:
-                local_in_frag = chunk_local - fragment_starts[fi]
-                if local_in_frag < int(builder.vertex_groups[fi].shape[0]):
-                    return fi, local_in_frag
-                return None
+        if chunk_local < 0:
+            return None
+        cursor = 0
+        for fi, g in enumerate(builder.vertex_groups):
+            n = int(g.shape[0])
+            if cursor <= chunk_local < cursor + n:
+                return fi, chunk_local - cursor
+            cursor += n
         return None
 
     src_loc = _frag_and_local(int(src_local))
@@ -394,10 +402,18 @@ def _stamp_split_sides(
             level=level, object_id=new_a,
             new_manifest=side_a_manifest, new_oid=new_a,
         )
+        session._index_apply_manifest_delta(
+            level, int(new_a),
+            old_manifest=[], new_manifest=side_a_manifest,
+        )
         new_b = session._allocate_atomic_oid(level)
         session._manifest_ops[(level, new_b)] = ManifestOp(
             level=level, object_id=new_b,
             new_manifest=side_b_manifest, new_oid=new_b,
+        )
+        session._index_apply_manifest_delta(
+            level, int(new_b),
+            old_manifest=[], new_manifest=side_b_manifest,
         )
         # Two new OIDs come out of one input OID under atomic split.
         # The remap chooses Side A as the canonical mapping; consumers
@@ -415,6 +431,10 @@ def _stamp_split_sides(
         level=level, object_id=new_b,
         new_manifest=side_b_manifest, new_oid=new_b,
     )
+    session._index_apply_manifest_delta(
+        level, int(new_b),
+        old_manifest=[], new_manifest=side_b_manifest,
+    )
     session._mark_edit(level)
     return [int(oid), new_b]
 
@@ -429,26 +449,53 @@ def _oid_for_endpoint(
     """Find the OID whose manifest references the chunk-local vertex
     row at ``(chunk, vertex_chunk_local)``.
 
-    Returns ``None`` if no OID claims this row (unreferenced fragment).
-    When multiple OIDs share the fragment, returns the *first* one
-    seen in OID order — sufficient for the merge-detection path.
+    Returns ``None`` if no OID claims this row (unreferenced fragment
+    or out-of-range row index).  When multiple OIDs share the
+    fragment, returns the *first* one seen in OID order — sufficient
+    for the merge-detection path.
+
+    Two-step resolution:
+
+    1. Find which fragment in ``chunk`` owns the chunk-local row via a
+       single forward walk over the builder's vertex groups.
+    2. Consult the session's fragment-owners inverted index for the
+       OID(s) referencing that fragment.  O(1) after the index is
+       built.
     """
-    builder = session._builder(level, chunk)
-    # Compute which fragment owns this chunk-local row.
-    cursor = 0
-    owner_frag: int | None = None
-    for fi, g in enumerate(builder.vertex_groups):
-        n = int(g.shape[0])
-        if cursor + n > int(vertex_chunk_local) >= cursor:
-            owner_frag = fi
-            break
-        cursor += n
+    owner_frag = _owner_fragment_for_local(
+        session, level=level, chunk=chunk,
+        vertex_chunk_local=int(vertex_chunk_local),
+    )
     if owner_frag is None:
         return None
-    manifests = session._all_manifests_for(level)
     chunk_t = tuple(int(c) for c in chunk)
-    for oid, manifest in enumerate(manifests):
-        for cc, fragment_idx in manifest:
-            if tuple(cc) == chunk_t and int(fragment_idx) == int(owner_frag):
-                return oid
+    owners = session._oids_referencing(level, chunk_t, int(owner_frag))
+    if not owners:
+        return None
+    return int(owners[0])
+
+
+def _owner_fragment_for_local(
+    session: EditSession,
+    *,
+    level: int,
+    chunk: ChunkCoords,
+    vertex_chunk_local: int,
+) -> int | None:
+    """Return the fragment index in ``chunk`` that contains
+    ``vertex_chunk_local``, or ``None`` when the index is out of
+    range.
+
+    Forward walk over the chunk's vertex groups; runs in O(n_fragments)
+    once per endpoint — typically a handful.
+    """
+    if vertex_chunk_local < 0:
+        return None
+    builder = session._builder(level, chunk)
+    cursor = 0
+    for fi, g in enumerate(builder.vertex_groups):
+        end = cursor + int(g.shape[0])
+        if cursor <= vertex_chunk_local < end:
+            return fi
+        cursor = end
     return None

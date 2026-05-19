@@ -153,20 +153,6 @@ def vacuum(
     return report
 
 
-# Sentinel exports for the deferred passes — referenced by tests so the
-# explicit deferral is visible.
-def _drop_empty_fragments_stub(root: Group) -> None:  # pragma: no cover
-    raise NotImplementedError(
-        "tombstone-fragment GC will land in a follow-up iteration"
-    )
-
-
-def _dedup_parallel_rows_stub(root: Group) -> None:  # pragma: no cover
-    raise NotImplementedError(
-        "parallel-row dedup will land in a follow-up iteration"
-    )
-
-
 # Silence unused-import warnings for type-only re-exports.
 _ = EditError
 __all__ = ["vacuum", "VacuumReport"]

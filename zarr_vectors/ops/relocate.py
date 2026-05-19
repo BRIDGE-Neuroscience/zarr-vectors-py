@@ -133,23 +133,14 @@ def _carry_source_attrs(
     applied on top by the relocate routine, so explicit overrides win
     over inherited values.
     """
-    from zarr_vectors.constants import VERTEX_ATTRIBUTES
-    from zarr_vectors.core.store import get_resolution_level
-
     out: dict[str, npt.NDArray] = {}
     # Names that were already loaded in this session — guaranteed
     # available even if the on-disk listing is racy.
     names: set[str] = set(source_builder.attr_groups.keys())
-    # Plus anything on disk under <level>/vertex_attributes/.  The
-    # intermediate ``vertex_attributes/`` directory is not a proper
-    # zarr group (no zarr.json metadata), so ``__iter__`` / ``__contains__``
-    # don't see it — list the underlying store keys with the prefix
-    # instead.
-    try:
-        level_group = get_resolution_level(session.root, source_builder.level)
-        names.update(_list_attr_names_from_store(level_group, VERTEX_ATTRIBUTES))
-    except Exception:
-        pass
+    # Plus anything on disk under <level>/vertex_attributes/.
+    names.update(
+        _attr_names_for_level(session, source_builder.level),
+    )
 
     for name in names:
         attr_list = source_builder.require_attribute(session.root, name)
@@ -162,39 +153,92 @@ def _carry_source_attrs(
     return out
 
 
-def _list_attr_names_from_store(level_group, parent: str) -> list[str]:
-    """List attribute names under ``<level>/<parent>/`` via the zarr
-    store's ``list_prefix`` primitive.
+def _attr_names_for_level(session: EditSession, level: int) -> list[str]:
+    """Return the per-vertex attribute names at ``level``, cached on
+    the session for the lifetime of the with-block.
 
-    ``parent`` is e.g. ``"vertex_attributes"``.  The intermediate
-    directory isn't a proper zarr group, so we walk the underlying
-    store keys.  Returns the sorted unique segment names directly
-    under the prefix.
+    Resolves via the level group's underlying zarr handle: the
+    ``vertex_attributes/`` directory is not a proper zarr group (no
+    zarr.json metadata) — ``Group.__contains__`` returns ``False`` —
+    so we walk the store keys directly to enumerate attribute names.
+    Synchronous; safe to call from any sync code path including
+    running event loops (no asyncio.run).
     """
-    import asyncio
+    cache = getattr(session, "_attr_names_per_level", None)
+    if cache is not None and level in cache:
+        return cache[level]
 
+    names = _list_attr_names_from_store_sync(session, level)
+    if cache is not None:
+        cache[level] = names
+    return names
+
+
+def _list_attr_names_from_store_sync(
+    session: EditSession,
+    level: int,
+) -> list[str]:
+    """Synchronously list the per-vertex attribute names at ``level``.
+
+    Uses zarr v3's ``store.list_dir`` (sync) to enumerate the immediate
+    children of ``<level>/vertex_attributes/`` so the cost is O(N_attrs)
+    rather than O(N_attrs × N_chunks) as the previous prefix-walk
+    implementation paid.  Falls back to ``list_prefix`` when
+    ``list_dir`` is unavailable.
+    """
+    from zarr_vectors.constants import VERTEX_ATTRIBUTES
+    from zarr_vectors.core.store import get_resolution_level
+
+    try:
+        level_group = get_resolution_level(session.root, level)
+    except Exception:
+        return []
     zg = level_group._zarr
     store = zg.store
     level_path = zg.path.strip("/")
-    prefix = f"{level_path}/{parent}/" if level_path else f"{parent}/"
+    base = (
+        f"{level_path}/{VERTEX_ATTRIBUTES}" if level_path
+        else VERTEX_ATTRIBUTES
+    )
+
+    # Preferred path: zarr-native sync wrapper around the store.
+    try:
+        from zarr.core.sync import sync
+    except Exception:
+        sync = None  # type: ignore[assignment]
+
+    names: set[str] = set()
+    if sync is not None and hasattr(store, "list_dir"):
+        try:
+            for entry in sync(store.list_dir(base)):
+                if entry and not entry.startswith("."):
+                    names.add(str(entry))
+            return sorted(names)
+        except Exception:
+            pass
+
+    # Fallback: prefix walk, but de-dupe by first segment.  Synchronous
+    # via ``zarr.core.sync.sync`` so we don't risk asyncio.run inside a
+    # running event loop.
+    if sync is None or not hasattr(store, "list_prefix"):
+        return []
+    prefix = f"{base}/"
     n_prefix = len(prefix)
 
-    async def collect():
-        names: set[str] = set()
+    async def _collect() -> set[str]:
+        out: set[str] = set()
         async for key in store.list_prefix(prefix):
             tail = key[n_prefix:]
             if not tail:
                 continue
             name = tail.split("/", 1)[0]
             if name and not name.startswith("."):
-                names.add(name)
-        return names
+                out.add(name)
+        return out
 
     try:
-        return sorted(asyncio.run(collect()))
-    except RuntimeError:
-        # Already-running event loop (rare in sync test paths) — fall
-        # back to the empty list rather than crashing.
+        return sorted(sync(_collect()))
+    except Exception:
         return []
 
 

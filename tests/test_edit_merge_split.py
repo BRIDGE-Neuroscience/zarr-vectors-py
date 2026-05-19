@@ -430,21 +430,56 @@ class TestEditLinkAndConventions:
         )
         assert report.n_edits >= 1
 
-    def test_remove_link_implicit_sequential_raises(
+    def test_remove_link_implicit_sequential_raises_when_fail_fast(
         self, skeleton_chain: str,
     ) -> None:
-        """Item 10: remove_link(update_objects=True) on an implicit
-        skeleton raises EditError pointing at
-        materialise_object_links_explicit."""
+        """Item 10 (opt-in fail-fast): with
+        ``auto_materialise_links=False`` on the session, a
+        ``remove_link(update_objects=True)`` on an implicit skeleton
+        raises EditError pointing at materialise_object_links_explicit.
+        """
+        from zarr_vectors.ops import EditSession
         root = open_store(skeleton_chain, mode="r+")
         ref, _ = add_link(
             root, level=0, src=2, dst=0, chunk=(0, 0, 0),
         )
         with pytest.raises(EditError) as exc:
-            remove_link(
+            with EditSession(
+                root, atomic=False, auto_materialise_links=False,
+            ) as ed:
+                ed.remove_link(ref, update_objects=True)
+        assert "materialise_object_links_explicit" in str(exc.value)
+
+    def test_remove_link_implicit_sequential_auto_materialises_by_default(
+        self, skeleton_chain: str,
+    ) -> None:
+        """Item 10 (default behaviour): without opting out, the same
+        edit auto-materialises every object's implicit chain to
+        explicit branch-table rows, flips ``links_convention`` to
+        ``"explicit"``, emits a UserWarning, and then succeeds.
+        """
+        import warnings as _w
+        from zarr_vectors.core.metadata import RootMetadata
+
+        root = open_store(skeleton_chain, mode="r+")
+        ref, _ = add_link(
+            root, level=0, src=2, dst=0, chunk=(0, 0, 0),
+        )
+        with _w.catch_warnings(record=True) as caught:
+            _w.simplefilter("always")
+            report = remove_link(
                 root, ref, atomic=False, update_objects=True,
             )
-        assert "materialise_object_links_explicit" in str(exc.value)
+        # The conversion warning fires once, with the canonical text.
+        materialise_warnings = [
+            w for w in caught if "auto-materialised" in str(w.message)
+        ]
+        assert len(materialise_warnings) >= 1
+        # Convention is now explicit.
+        meta = RootMetadata.from_dict(root.attrs.to_dict())
+        assert meta.links_convention == "explicit"
+        # The edit completed.
+        assert report.n_edits >= 1
 
 
 # =====================================================================

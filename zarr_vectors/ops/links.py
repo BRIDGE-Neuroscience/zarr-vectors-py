@@ -79,7 +79,7 @@ def add_link_in_session(
             supported by this helper — call write_chunk_links directly).
         attrs: per-link attribute values to write alongside the new row.
     """
-    _check_link_convention(session, write_branch_entry=True)
+    _check_link_convention(session, write_branch_entry=True, level=level)
     if delta != 0:
         raise EditError(
             f"add_link(delta={delta}) is not supported in this iteration; "
@@ -157,7 +157,7 @@ def edit_link_in_session(
     atomic: bool,
     update_objects: bool = False,
 ) -> None:
-    _check_link_convention(session, write_branch_entry=True)
+    _check_link_convention(session, write_branch_entry=True, level=ref.level)
     if ref.delta != 0:
         raise EditError(
             f"edit_link(delta={ref.delta}) is not supported; "
@@ -267,7 +267,7 @@ def remove_link_in_session(
     remove case — the ``atomic`` kwarg only affects the
     ``update_objects=True`` split pass).
     """
-    _check_link_convention(session, write_branch_entry=True)
+    _check_link_convention(session, write_branch_entry=True, level=ref.level)
     if ref.delta != 0:
         raise EditError(
             f"remove_link(delta={ref.delta}) is not supported; "
@@ -331,7 +331,7 @@ def add_cross_chunk_link_in_session(
     delta: int = 0,
 ) -> CrossChunkLinkRef:
     """Stage an append into ``cross_chunk_links/<delta>/data``."""
-    _check_link_convention(session, write_branch_entry=True)
+    _check_link_convention(session, write_branch_entry=True, level=level)
     from zarr_vectors.ops.change_set import CrossChunkLinkOp
     payload = [
         (tuple(int(c) for c in cc), int(vi)) for cc, vi in endpoints
@@ -357,7 +357,7 @@ def edit_cross_chunk_link_in_session(
     new_endpoints: list[tuple[ChunkCoords, int]],
     atomic: bool,
 ) -> None:
-    _check_link_convention(session, write_branch_entry=True)
+    _check_link_convention(session, write_branch_entry=True, level=ref.level)
     from zarr_vectors.ops.change_set import CrossChunkLinkOp
     payload = [
         (tuple(int(c) for c in cc), int(vi)) for cc, vi in new_endpoints
@@ -523,12 +523,22 @@ def _check_link_convention(
     session: EditSession,
     *,
     write_branch_entry: bool,
+    level: int = 0,
 ) -> None:
-    """Refuse link edits on stores that can't represent them.
+    """Refuse — or auto-materialise — link edits on stores that can't
+    represent them.
 
     ``implicit_sequential`` is the strictest: no link rows are stored
     at all.  ``implicit_sequential_with_branches`` accepts edits that
     write to the branch table.
+
+    Default behaviour when an edit needs an explicit convention the
+    store doesn't have: run
+    :func:`materialise_object_links_explicit` for every object at
+    ``level``, flip ``links_convention`` to ``"explicit"`` in-place,
+    and emit one :class:`UserWarning` so the conversion is visible.
+    Set ``session.auto_materialise_links = False`` to fall back to
+    :class:`EditError`.
     """
     from zarr_vectors.core.metadata import RootMetadata
     meta = RootMetadata.from_dict(session.root.attrs.to_dict())
@@ -537,11 +547,68 @@ def _check_link_convention(
         return
     if conv == LINKS_IMPLICIT_BRANCHES and write_branch_entry:
         return
+    if getattr(session, "auto_materialise_links", True):
+        _auto_materialise_to_explicit(session, level=level, prior_conv=conv)
+        return
     raise EditError(
         f"link edits on store with links_convention={conv!r} are not "
-        f"supported.  Run materialise_object_links_explicit(root, level, "
-        f"object_id, flip_convention=True) first, or rewrite the store "
-        f"with links_convention='explicit'."
+        f"supported.  Either run materialise_object_links_explicit(root, "
+        f"level, object_id, flip_convention=True) yourself, set "
+        f"session.auto_materialise_links=True (the default), or rewrite "
+        f"the store with links_convention='explicit'."
+    )
+
+
+def _auto_materialise_to_explicit(
+    session: EditSession,
+    *,
+    level: int,
+    prior_conv: str,
+) -> None:
+    """Materialise every object's implicit chain into explicit rows
+    and flip ``links_convention`` to ``"explicit"``.  Emits a single
+    UserWarning summarising the conversion so callers can audit it.
+
+    Runs lazily on the first link-edit that requires explicit
+    semantics, so stores that never get link-edited never pay the
+    materialisation cost.
+    """
+    import warnings
+
+    from zarr_vectors.core.arrays import read_all_object_manifests
+    from zarr_vectors.core.store import get_resolution_level
+
+    level_group = get_resolution_level(session.root, level)
+    try:
+        manifests = read_all_object_manifests(level_group)
+    except Exception:
+        manifests = []
+    n_added = 0
+    n_objects = 0
+    for oid, manifest in enumerate(manifests):
+        if not manifest:
+            continue
+        n_objects += 1
+        # ``flip_convention=False`` per call — we flip once at the end
+        # so partial state is never visible to readers.
+        n_added += materialise_object_links_explicit(
+            session.root, level=level, object_id=oid, flip_convention=False,
+        )
+    # Flip the convention now that every object has its rows.
+    attrs = session.root.attrs.to_dict()
+    zv = dict(attrs.get("zarr_vectors", {}))
+    zv["links_convention"] = LINKS_EXPLICIT
+    session.root.attrs.update({"zarr_vectors": zv})
+
+    warnings.warn(
+        f"zarr-vectors: auto-materialised {n_added} branch-table rows "
+        f"across {n_objects} object(s) at level {level} to support a "
+        f"link edit that requires links_convention='explicit'.  The "
+        f"store's links_convention was {prior_conv!r}; now flipped to "
+        f"'explicit'.  Set EditSession(auto_materialise_links=False) "
+        f"to fail-fast instead.",
+        UserWarning,
+        stacklevel=4,
     )
 
 

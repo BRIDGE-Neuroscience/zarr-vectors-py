@@ -1518,37 +1518,24 @@ for kind in EDIT_KINDS:
             continue
         for n_edits in N_EDITS:
             wallclocks = np.zeros(N_RUNS)
-            bytes_delta = np.zeros(N_RUNS)
-            oid_remap_size = np.zeros(N_RUNS)
             for run in range(N_RUNS):
                 seed = int(master_rng.integers(0, 2**31 - 1))
                 rng = np.random.default_rng(seed)
                 store, positions = _build_baseline(seed)
-                size_before = _store_bytes(store)
-                # Pre-select target OIDs for the workload (uniform without replace).
                 oids = rng.choice(N, size=n_edits, replace=False)
                 root = open_store(str(store), mode='r+')
                 t0 = time.perf_counter()
                 with EditSession(root, atomic=atomic, refresh_pyramid=False) as ed:
                     _apply_edits(ed, kind, atomic, oids, positions, rng)
                 wallclocks[run] = time.perf_counter() - t0
-                size_after = _store_bytes(store)
-                bytes_delta[run] = size_after - size_before
-                oid_remap_size[run] = len(ed.report.oid_remap)
                 shutil.rmtree(Path(store).parent, ignore_errors=True)
             t_mean, t_hw = _mean_ci95(wallclocks)
-            b_mean = float(bytes_delta.mean())
-            rate_mean = n_edits / t_mean if t_mean > 0 else float('nan')
             rows.append({
                 'kind': kind,
                 'atomic': atomic,
                 'N_edits': n_edits,
                 'wall_s_mean': round(t_mean, 4),
                 'wall_s_hw':   round(t_hw, 4),
-                'rate_edits_per_s': round(rate_mean, 1),
-                'bytes_delta_mean': int(b_mean),
-                'bytes_per_edit': int(b_mean / max(n_edits, 1)),
-                'oid_remap_mean': float(round(oid_remap_size.mean(), 1)),
             })
 
 df = pd.DataFrame(rows)
@@ -1557,6 +1544,9 @@ df = pd.DataFrame(rows)
     ("code", "df"),
     ("md", "## 5 · Plot"),
     ("code", """\
+# Two panels: one for add/remove, one for move. Each plots wall time
+# (seconds) vs N_edits per session.  Lines are coloured by edit kind
+# and styled by atomicity (solid=atomic, dashed=overwrite).
 fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
 KIND_COLORS = {
     'move_in_chunk':    'C0',
@@ -1564,46 +1554,33 @@ KIND_COLORS = {
     'add':              'C2',
     'soft_delete':      'C3',
 }
+PANELS = [
+    ('Add / remove', ['add', 'soft_delete']),
+    ('Move',          ['move_in_chunk', 'move_cross_chunk']),
+]
 
-# Panel 1: edit-rate (edits/s) vs N_edits per session, one line per
-# (kind, atomic).
-ax = axes[0]
-for kind, color in KIND_COLORS.items():
-    for atomic in (True, False):
-        if kind == 'soft_delete' and not atomic:
-            continue
-        sub = df[(df['kind'] == kind) & (df['atomic'] == atomic)].sort_values('N_edits')
-        if sub.empty:
-            continue
-        style = '-' if atomic else '--'
-        label = f"{kind} ({'atomic' if atomic else 'overwrite'})"
-        ax.loglog(sub['N_edits'], sub['rate_edits_per_s'],
-                  marker='o', linestyle=style, color=color, label=label)
-ax.set_xlabel('N_edits per session')
-ax.set_ylabel('edits / second')
-ax.set_title('Edit rate vs session size')
-ax.grid(True, which='both', alpha=0.3)
-ax.legend(loc='best', fontsize=7, ncol=2)
-
-# Panel 2: bytes written per edit (amortised) vs N_edits.
-ax = axes[1]
-for kind, color in KIND_COLORS.items():
-    for atomic in (True, False):
-        if kind == 'soft_delete' and not atomic:
-            continue
-        sub = df[(df['kind'] == kind) & (df['atomic'] == atomic)].sort_values('N_edits')
-        if sub.empty:
-            continue
-        style = '-' if atomic else '--'
-        label = f"{kind} ({'atomic' if atomic else 'overwrite'})"
-        # Clip negatives so log axis is happy on the rare zero-delta case.
-        ypos = np.maximum(sub['bytes_per_edit'].values, 1)
-        ax.loglog(sub['N_edits'], ypos,
-                  marker='o', linestyle=style, color=color, label=label)
-ax.set_xlabel('N_edits per session')
-ax.set_ylabel('bytes / edit (amortised)')
-ax.set_title('Disk amplification per edit')
-ax.grid(True, which='both', alpha=0.3)
+for ax, (title, kinds) in zip(axes, PANELS):
+    for kind in kinds:
+        color = KIND_COLORS[kind]
+        for atomic in (True, False):
+            if kind == 'soft_delete' and not atomic:
+                continue
+            sub = df[(df['kind'] == kind) & (df['atomic'] == atomic)].sort_values('N_edits')
+            if sub.empty:
+                continue
+            style = '-' if atomic else '--'
+            label = f"{kind} ({'atomic' if atomic else 'overwrite'})"
+            mean = sub['wall_s_mean'].values
+            hw   = sub['wall_s_hw'].values
+            ax.fill_between(sub['N_edits'], mean - hw, mean + hw,
+                            color=color, alpha=0.2)
+            ax.loglog(sub['N_edits'], mean,
+                      marker='o', linestyle=style, color=color, label=label)
+    ax.set_xlabel('N_edits per session')
+    ax.set_ylabel('wall time (s)')
+    ax.set_title(title)
+    ax.grid(True, which='both', alpha=0.3)
+    ax.legend(loc='best', fontsize=8)
 
 fig.suptitle(
     f'Edit operations — N={N:,} baseline, {N_RUNS} runs, 95% CI',

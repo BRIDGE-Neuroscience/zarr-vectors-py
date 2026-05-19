@@ -92,6 +92,7 @@ class EditSession:
         message: str = "zarr-vectors edit session",
         concurrent_writers: bool = False,
         oid_prefix: OidPrefix | tuple[str, int] | tuple[int, int] | None = None,
+        auto_materialise_links: bool = True,
     ) -> None:
         if refresh_pyramid not in (True, False, "batch"):
             raise EditError(
@@ -105,6 +106,15 @@ class EditSession:
         self.message = message
         self.concurrent_writers = bool(concurrent_writers)
         self.oid_prefix: OidPrefix | None = _coerce_oid_prefix(oid_prefix)
+        # When True (the default), a link edit that needs an explicit
+        # convention (e.g. add_link / remove_link / split-at-link on
+        # an ``implicit_sequential*`` store) auto-runs
+        # ``materialise_object_links_explicit`` for every object at the
+        # affected level and flips ``links_convention`` to ``"explicit"``
+        # in-place, then proceeds with the edit and emits one
+        # UserWarning to make the conversion visible.  Set to False
+        # for fail-fast (raises EditError) behaviour.
+        self.auto_materialise_links = bool(auto_materialise_links)
 
         # Per-(level, chunk) builders, lazily filled.
         self._builders: dict[tuple[int, ChunkCoords], ChunkChangeBuilder] = {}

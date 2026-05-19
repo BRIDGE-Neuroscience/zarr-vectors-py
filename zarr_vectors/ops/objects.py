@@ -290,12 +290,19 @@ def _split_object_at_link_impl(
     meta = RootMetadata.from_dict(session.root.attrs.to_dict())
     conv = meta.links_convention or LINKS_EXPLICIT
     if conv in (LINKS_IMPLICIT_SEQUENTIAL, LINKS_IMPLICIT_BRANCHES):
-        raise EditError(
-            f"_split_object_at_link_impl: store has links_convention="
-            f"{conv!r}; deterministic split requires explicit edges. "
-            f"Call materialise_object_links_explicit(root, level, oid, "
-            f"flip_convention=True) first."
-        )
+        if getattr(session, "auto_materialise_links", True):
+            from zarr_vectors.ops.links import _auto_materialise_to_explicit
+            _auto_materialise_to_explicit(
+                session, level=level, prior_conv=conv,
+            )
+        else:
+            raise EditError(
+                f"_split_object_at_link_impl: store has links_convention="
+                f"{conv!r}; deterministic split requires explicit edges. "
+                f"Either set session.auto_materialise_links=True (the "
+                f"default), or call materialise_object_links_explicit("
+                f"root, level, oid, flip_convention=True) yourself first."
+            )
 
     chunk, src_local, dst_local = removed_endpoints
     chunk_t = tuple(int(c) for c in chunk)
